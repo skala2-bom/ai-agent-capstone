@@ -1,0 +1,24 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+dist/
+
+# java / spring
+build/
+target/
+.gradle/
+
+# ide / os
+.idea/
+.vscode/
+.DS_Store
