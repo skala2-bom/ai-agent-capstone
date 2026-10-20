@@ -1,0 +1,58 @@
+{
+  "policy_id": "POL-COST-EVAL",
+  "version": "v1.1",
+  "currency": "KRW",
+  "tax_basis": "VAT_EXCLUDED",
+  "amount_unit": 1,
+  "effective_from": "2026-01-01",
+  "effective_to": null,
+  "status": "MOCK_PROPOSAL",
+  "bands": [
+    {
+      "grade": "A",
+      "min_inclusive": 0,
+      "max_exclusive": 50000
+    },
+    {
+      "grade": "B",
+      "min_inclusive": 50000,
+      "max_exclusive": 200000
+    },
+    {
+      "grade": "C",
+      "min_inclusive": 200000,
+      "max_exclusive": 500000
+    },
+    {
+      "grade": "D",
+      "min_inclusive": 500000,
+      "max_exclusive": null
+    }
+  ],
+  "grade_direction": "A가 추가비용 부담 최소. 우선순위가 아님",
+  "unknown_grade": null,
+  "cost_basis": "확인된 직접 추가비용, KRW 부가세 제외",
+  "included_cost_types": [
+    "긴급운송비",
+    "분할납품수수료",
+    "발주변경수수료",
+    "확정된보관비",
+    "확정취소수수료"
+  ],
+  "excluded_cost_types": [
+    "정상구매원금",
+    "기존재고평가액",
+    "미확정기회손실",
+    "미확정고객지체비용"
+  ],
+  "review_owner": "U002",
+  "priority_owner": "U001",
+  "approval_owner": "U003",
+  "rules": [
+    "금액 미확정 또는 증빙누락은 확정평가불가",
+    "A/B/C/D는 비용부담등급이며 실행우선순위가아님",
+    "확정견적·비용·후보revision·규정version이 바뀌면 재검수",
+    "불확정 위험은 별도 공개하고 수치0으로 확정하지않음",
+    "생산관리에는 확정등급과 수량·날짜·위험만 전송"
+  ]
+}

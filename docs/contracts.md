@@ -29,6 +29,7 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 27 | **RAG 근거 문서 6개** (`data/docs/`, `data/documents.json`) — 시스템 ID·결정에 맞춘 v1.2. 조항 단위 `doc://{doc_id}/{clause_no}` | 2.2 근거 | – | 🔴 **색인(indexer)·`search_docs`·pgvector 테이블을 만들어 이 문서를 읽게.** rag-mcp 하드코딩 조항은 지운다 (`data/README.md`) |
 | 26 | `compare_options` 대안에 **`side_effects` 명세 형식**(NEW·WORSENED, 전후 결품량, `product_id`)과 **`remaining_issues`** 추가 | 2.3 | – | verify가 `remaining_issues`로 "왜 안 풀렸는지"를 설명할 수 있다. 기존 `resolves`는 그대로 |
 | 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
 | 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |

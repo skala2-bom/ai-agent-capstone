@@ -1,0 +1,56 @@
+[
+  {
+    "doc_id": "POL-PURCHASE",
+    "title": "구매 및 재고관리 규정",
+    "doc_type": "POLICY",
+    "version": "v1.2",
+    "effective_date": "2026-01-01",
+    "source_path": "data/docs/POL-PURCHASE.md",
+    "content_hash": "bd4b150b148d8ca25c43d4d51a6c819f88fd8af2beaaca4642504d760b579f08"
+  },
+  {
+    "doc_id": "ECN-2026-014",
+    "title": "도어센서 케이스 설계변경 통지서",
+    "doc_type": "ECN",
+    "version": "v1.2",
+    "effective_date": "2026-12-01",
+    "source_path": "data/docs/ECN-2026-014.md",
+    "content_hash": "640b3bf636d9e8d493328747ad018d37111ad9d3060cf5445bb06cb4db0b8f4f"
+  },
+  {
+    "doc_id": "CT-SUP01",
+    "title": "세미온반도체 공급계약",
+    "doc_type": "CONTRACT",
+    "version": "v1.2",
+    "effective_date": "2026-01-01",
+    "source_path": "data/docs/CT-SUP01.md",
+    "content_hash": "a6ac0b9ed9b5c4483c116739e46df3700272b73fdc692fde51f22d723caf8a0b"
+  },
+  {
+    "doc_id": "CT-SUP02",
+    "title": "파워링크전자 공급계약",
+    "doc_type": "CONTRACT",
+    "version": "v1.2",
+    "effective_date": "2026-01-01",
+    "source_path": "data/docs/CT-SUP02.md",
+    "content_hash": "84d914f05931098ba445da4aa0b6e897a3d74ddd75cbaa1501a444e9b6d5e83f"
+  },
+  {
+    "doc_id": "CT-SUP03",
+    "title": "한결정밀 공급계약",
+    "doc_type": "CONTRACT",
+    "version": "v1.2",
+    "effective_date": "2026-01-01",
+    "source_path": "data/docs/CT-SUP03.md",
+    "content_hash": "934e6fd22cbb7a9d2ca0444b4bdf8e654444d308c91bbec57561500957f4cc31"
+  },
+  {
+    "doc_id": "POL-COST-EVAL",
+    "title": "해결안 추가비용 등급 및 검수 규정",
+    "doc_type": "POLICY",
+    "version": "v1.2",
+    "effective_date": "2026-01-01",
+    "source_path": "data/docs/POL-COST-EVAL.md",
+    "content_hash": "93c38b4d8cd3d7e7bb8d6bfb34409373ddb5b59a6fcf5b0c69d29039910ee4ca"
+  }
+]

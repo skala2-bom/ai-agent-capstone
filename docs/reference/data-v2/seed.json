@@ -1,0 +1,1746 @@
+{
+  "supplier": [
+    {
+      "supplier_id": "SUP01",
+      "name": "세미온반도체(가상)",
+      "category": "반도체",
+      "lead_time_days": 56
+    },
+    {
+      "supplier_id": "SUP02",
+      "name": "파워링크전자(가상)",
+      "category": "전자부품·전원",
+      "lead_time_days": 28
+    },
+    {
+      "supplier_id": "SUP03",
+      "name": "한결정밀(가상)",
+      "category": "기구·포장",
+      "lead_time_days": 21
+    }
+  ],
+  "item": [
+    {
+      "item_id": "FG100",
+      "name": "스마트 플러그",
+      "item_type": "FG",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "FG200",
+      "name": "스마트 벽스위치",
+      "item_type": "FG",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "FG300",
+      "name": "도어 센서",
+      "item_type": "FG",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "FG400",
+      "name": "IoT 허브",
+      "item_type": "FG",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-PCB-100",
+      "name": "100 메인보드",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-PCB-200",
+      "name": "200 메인보드",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-PCB-300",
+      "name": "300 메인보드",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-PCB-400",
+      "name": "400 메인보드",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-WIFI",
+      "name": "Wi-Fi 모듈",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "SA-BLE",
+      "name": "BLE 모듈",
+      "item_type": "SA",
+      "supplier_id": null,
+      "lead_time_days": null,
+      "moq": null,
+      "order_multiple": null,
+      "unit_price": null,
+      "safety_stock": 0,
+      "value_class": null,
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-MCU01",
+      "name": "MCU",
+      "item_type": "PART",
+      "supplier_id": "SUP01",
+      "lead_time_days": 56,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 2800,
+      "safety_stock": 300,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-WIFI01",
+      "name": "Wi-Fi 칩",
+      "item_type": "PART",
+      "supplier_id": "SUP01",
+      "lead_time_days": 56,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 1800,
+      "safety_stock": 200,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-BLE01",
+      "name": "BLE 칩",
+      "item_type": "PART",
+      "supplier_id": "SUP01",
+      "lead_time_days": 56,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 1200,
+      "safety_stock": 200,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-HALL01",
+      "name": "홀 센서",
+      "item_type": "PART",
+      "supplier_id": "SUP01",
+      "lead_time_days": 56,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 400,
+      "safety_stock": 100,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-POWER01",
+      "name": "전원 모듈",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 2200,
+      "safety_stock": 100,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-RELAY01",
+      "name": "릴레이",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 900,
+      "safety_stock": 200,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-ADAPTER01",
+      "name": "어댑터",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 3500,
+      "safety_stock": 50,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-COIN01",
+      "name": "코인전지",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 250,
+      "safety_stock": 200,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-PMIC01",
+      "name": "전원 칩",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 80,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-USB01",
+      "name": "USB-C 커넥터",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 150,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-HOLDER01",
+      "name": "전지 홀더",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 28,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 100,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-XTAL01",
+      "name": "수정진동자",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 14,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 60,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-ANT01",
+      "name": "칩 안테나",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 14,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 50,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-CAP01",
+      "name": "캐패시터",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 14,
+      "moq": 1000,
+      "order_multiple": 100,
+      "unit_price": 5,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-RES01",
+      "name": "저항",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 14,
+      "moq": 1000,
+      "order_multiple": 100,
+      "unit_price": 2,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-LED01",
+      "name": "LED",
+      "item_type": "PART",
+      "supplier_id": "SUP02",
+      "lead_time_days": 14,
+      "moq": 500,
+      "order_multiple": 100,
+      "unit_price": 10,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-CASE-100",
+      "name": "플러그 케이스",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 1600,
+      "safety_stock": 100,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-CASE-200",
+      "name": "스위치 케이스",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 1800,
+      "safety_stock": 100,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-CASE-300",
+      "name": "도어센서 옛 케이스",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 800,
+      "safety_stock": 0,
+      "value_class": "HIGH",
+      "lifecycle": "PHASE_OUT"
+    },
+    {
+      "item_id": "P-CASE-300B",
+      "name": "도어센서 새 케이스",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 900,
+      "safety_stock": 0,
+      "value_class": "HIGH",
+      "lifecycle": "NEW"
+    },
+    {
+      "item_id": "P-CASE-400",
+      "name": "허브 케이스",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 2400,
+      "safety_stock": 50,
+      "value_class": "HIGH",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-BUTTON01",
+      "name": "버튼 캡",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 30,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-MAGNET01",
+      "name": "자석",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 40,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-SCREW01",
+      "name": "나사",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 21,
+      "moq": 300,
+      "order_multiple": 100,
+      "unit_price": 5,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-BOX-S",
+      "name": "박스(소)",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 7,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 120,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-BOX-M",
+      "name": "박스(중)",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 7,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 180,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-MANUAL01",
+      "name": "설명서",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 7,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 50,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    },
+    {
+      "item_id": "P-LABEL01",
+      "name": "라벨",
+      "item_type": "PART",
+      "supplier_id": "SUP03",
+      "lead_time_days": 7,
+      "moq": 100,
+      "order_multiple": 100,
+      "unit_price": 20,
+      "safety_stock": 300,
+      "value_class": "CONSUMABLE",
+      "lifecycle": "ACTIVE"
+    }
+  ],
+  "bom": [
+    {
+      "bom_id": 1,
+      "parent_id": "FG100",
+      "child_id": "SA-PCB-100",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 2,
+      "parent_id": "FG100",
+      "child_id": "P-CASE-100",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 3,
+      "parent_id": "FG100",
+      "child_id": "P-BOX-S",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 4,
+      "parent_id": "FG100",
+      "child_id": "P-MANUAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 5,
+      "parent_id": "FG100",
+      "child_id": "P-LABEL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 6,
+      "parent_id": "FG100",
+      "child_id": "P-BUTTON01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 7,
+      "parent_id": "FG100",
+      "child_id": "P-SCREW01",
+      "qty_per": 2,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 8,
+      "parent_id": "FG200",
+      "child_id": "SA-PCB-200",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 9,
+      "parent_id": "FG200",
+      "child_id": "P-CASE-200",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 10,
+      "parent_id": "FG200",
+      "child_id": "P-BOX-M",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 11,
+      "parent_id": "FG200",
+      "child_id": "P-MANUAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 12,
+      "parent_id": "FG200",
+      "child_id": "P-LABEL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 13,
+      "parent_id": "FG200",
+      "child_id": "P-BUTTON01",
+      "qty_per": 2,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 14,
+      "parent_id": "FG200",
+      "child_id": "P-SCREW01",
+      "qty_per": 4,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 15,
+      "parent_id": "FG300",
+      "child_id": "SA-PCB-300",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 16,
+      "parent_id": "FG300",
+      "child_id": "P-CASE-300",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": "2026-11-30"
+    },
+    {
+      "bom_id": 17,
+      "parent_id": "FG300",
+      "child_id": "P-BOX-S",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 18,
+      "parent_id": "FG300",
+      "child_id": "P-MANUAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 19,
+      "parent_id": "FG300",
+      "child_id": "P-LABEL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 20,
+      "parent_id": "FG300",
+      "child_id": "P-CASE-300B",
+      "qty_per": 1,
+      "eff_from": "2026-12-01",
+      "eff_to": null
+    },
+    {
+      "bom_id": 21,
+      "parent_id": "FG300",
+      "child_id": "P-MAGNET01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 22,
+      "parent_id": "FG400",
+      "child_id": "SA-PCB-400",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 23,
+      "parent_id": "FG400",
+      "child_id": "P-CASE-400",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 24,
+      "parent_id": "FG400",
+      "child_id": "P-BOX-M",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 25,
+      "parent_id": "FG400",
+      "child_id": "P-MANUAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 26,
+      "parent_id": "FG400",
+      "child_id": "P-LABEL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 27,
+      "parent_id": "FG400",
+      "child_id": "P-SCREW01",
+      "qty_per": 4,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 28,
+      "parent_id": "FG400",
+      "child_id": "P-ADAPTER01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 29,
+      "parent_id": "SA-WIFI",
+      "child_id": "P-WIFI01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 30,
+      "parent_id": "SA-WIFI",
+      "child_id": "P-ANT01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 31,
+      "parent_id": "SA-WIFI",
+      "child_id": "P-XTAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 32,
+      "parent_id": "SA-WIFI",
+      "child_id": "P-LED01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 33,
+      "parent_id": "SA-WIFI",
+      "child_id": "P-CAP01",
+      "qty_per": 3,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 34,
+      "parent_id": "SA-BLE",
+      "child_id": "P-BLE01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 35,
+      "parent_id": "SA-BLE",
+      "child_id": "P-ANT01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 36,
+      "parent_id": "SA-BLE",
+      "child_id": "P-XTAL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 37,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-MCU01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 38,
+      "parent_id": "SA-PCB-100",
+      "child_id": "SA-WIFI",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 39,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-PMIC01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 40,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-CAP01",
+      "qty_per": 11,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 41,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-RES01",
+      "qty_per": 6,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 42,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-POWER01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 43,
+      "parent_id": "SA-PCB-100",
+      "child_id": "P-RELAY01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 44,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-MCU01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 45,
+      "parent_id": "SA-PCB-200",
+      "child_id": "SA-WIFI",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 46,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-PMIC01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 47,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-CAP01",
+      "qty_per": 11,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 48,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-RES01",
+      "qty_per": 6,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 49,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-POWER01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 50,
+      "parent_id": "SA-PCB-200",
+      "child_id": "P-RELAY01",
+      "qty_per": 2,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 51,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-MCU01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 52,
+      "parent_id": "SA-PCB-300",
+      "child_id": "SA-BLE",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 53,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-PMIC01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 54,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-CAP01",
+      "qty_per": 8,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 55,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-RES01",
+      "qty_per": 4,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 56,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-LED01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 57,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-COIN01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 58,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-HOLDER01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 59,
+      "parent_id": "SA-PCB-300",
+      "child_id": "P-HALL01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 60,
+      "parent_id": "SA-PCB-400",
+      "child_id": "P-MCU01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 61,
+      "parent_id": "SA-PCB-400",
+      "child_id": "SA-WIFI",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 62,
+      "parent_id": "SA-PCB-400",
+      "child_id": "P-PMIC01",
+      "qty_per": 2,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 63,
+      "parent_id": "SA-PCB-400",
+      "child_id": "P-CAP01",
+      "qty_per": 16,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 64,
+      "parent_id": "SA-PCB-400",
+      "child_id": "P-RES01",
+      "qty_per": 8,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 65,
+      "parent_id": "SA-PCB-400",
+      "child_id": "SA-BLE",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    },
+    {
+      "bom_id": 66,
+      "parent_id": "SA-PCB-400",
+      "child_id": "P-USB01",
+      "qty_per": 1,
+      "eff_from": null,
+      "eff_to": null
+    }
+  ],
+  "inventory": [
+    {
+      "item_id": "P-MCU01",
+      "on_hand": 2700,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-WIFI01",
+      "on_hand": 200,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-BLE01",
+      "on_hand": 200,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-HALL01",
+      "on_hand": 100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-POWER01",
+      "on_hand": 100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-RELAY01",
+      "on_hand": 200,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-ADAPTER01",
+      "on_hand": 50,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-COIN01",
+      "on_hand": 200,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-PMIC01",
+      "on_hand": 5500,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-USB01",
+      "on_hand": 700,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-HOLDER01",
+      "on_hand": 1700,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-XTAL01",
+      "on_hand": 5500,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-ANT01",
+      "on_hand": 5500,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CAP01",
+      "on_hand": 61100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-RES01",
+      "on_hand": 27100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-LED01",
+      "on_hand": 5100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CASE-100",
+      "on_hand": 100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CASE-200",
+      "on_hand": 100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CASE-300",
+      "on_hand": 0,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CASE-300B",
+      "on_hand": 0,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-CASE-400",
+      "on_hand": 50,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-BUTTON01",
+      "on_hand": 4500,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-MAGNET01",
+      "on_hand": 1700,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-SCREW01",
+      "on_hand": 10300,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-BOX-S",
+      "on_hand": 3500,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-BOX-M",
+      "on_hand": 1900,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-MANUAL01",
+      "on_hand": 5100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "P-LABEL01",
+      "on_hand": 5100,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "FG100",
+      "on_hand": 150,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "FG200",
+      "on_hand": 80,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "FG300",
+      "on_hand": 120,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "item_id": "FG400",
+      "on_hand": 40,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    }
+  ],
+  "production_plan": [
+    {
+      "plan_id": "PP-01",
+      "seq_no": 1,
+      "product_id": "FG100",
+      "qty": 1000,
+      "start_date": "2026-11-16",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-02",
+      "seq_no": 2,
+      "product_id": "FG300",
+      "qty": 800,
+      "start_date": "2026-11-18",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-03",
+      "seq_no": 3,
+      "product_id": "FG200",
+      "qty": 600,
+      "start_date": "2026-11-23",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-04",
+      "seq_no": 4,
+      "product_id": "FG100",
+      "qty": 800,
+      "start_date": "2026-11-30",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-05",
+      "seq_no": 5,
+      "product_id": "FG400",
+      "qty": 400,
+      "start_date": "2026-12-14",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-06",
+      "seq_no": 6,
+      "product_id": "FG200",
+      "qty": 600,
+      "start_date": "2027-01-11",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "plan_id": "PP-07",
+      "seq_no": 7,
+      "product_id": "FG300",
+      "qty": 600,
+      "start_date": "2027-01-25",
+      "status": "CONFIRMED",
+      "version": 1,
+      "updated_by": "U001",
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    }
+  ],
+  "purchase_order": [
+    {
+      "po_id": "PO-DEMO-001",
+      "item_id": "P-WIFI01",
+      "supplier_id": "SUP01",
+      "qty": 1000,
+      "unit_price": 1800,
+      "order_date": "2026-09-18",
+      "due_date": "2026-11-13",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-002",
+      "item_id": "P-POWER01",
+      "supplier_id": "SUP02",
+      "qty": 1000,
+      "unit_price": 2200,
+      "order_date": "2026-10-16",
+      "due_date": "2026-11-13",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-003",
+      "item_id": "P-RELAY01",
+      "supplier_id": "SUP02",
+      "qty": 1000,
+      "unit_price": 900,
+      "order_date": "2026-10-16",
+      "due_date": "2026-11-13",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-004",
+      "item_id": "P-CASE-100",
+      "supplier_id": "SUP03",
+      "qty": 1000,
+      "unit_price": 1600,
+      "order_date": "2026-10-23",
+      "due_date": "2026-11-13",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-005",
+      "item_id": "P-BLE01",
+      "supplier_id": "SUP01",
+      "qty": 800,
+      "unit_price": 1200,
+      "order_date": "2026-09-20",
+      "due_date": "2026-11-15",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-006",
+      "item_id": "P-HALL01",
+      "supplier_id": "SUP01",
+      "qty": 800,
+      "unit_price": 400,
+      "order_date": "2026-09-20",
+      "due_date": "2026-11-15",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-007",
+      "item_id": "P-COIN01",
+      "supplier_id": "SUP02",
+      "qty": 800,
+      "unit_price": 250,
+      "order_date": "2026-10-18",
+      "due_date": "2026-11-15",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-008",
+      "item_id": "P-CASE-300",
+      "supplier_id": "SUP03",
+      "qty": 800,
+      "unit_price": 800,
+      "order_date": "2026-10-25",
+      "due_date": "2026-11-15",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-009",
+      "item_id": "P-WIFI01",
+      "supplier_id": "SUP01",
+      "qty": 600,
+      "unit_price": 1800,
+      "order_date": "2026-09-25",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-010",
+      "item_id": "P-POWER01",
+      "supplier_id": "SUP02",
+      "qty": 600,
+      "unit_price": 2200,
+      "order_date": "2026-10-23",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-2610-106",
+      "item_id": "P-RELAY01",
+      "supplier_id": "SUP02",
+      "qty": 1200,
+      "unit_price": 900,
+      "order_date": "2026-10-23",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-012",
+      "item_id": "P-CASE-200",
+      "supplier_id": "SUP03",
+      "qty": 600,
+      "unit_price": 1800,
+      "order_date": "2026-10-30",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-013",
+      "item_id": "P-WIFI01",
+      "supplier_id": "SUP01",
+      "qty": 400,
+      "unit_price": 1800,
+      "order_date": "2026-09-25",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-014",
+      "item_id": "P-BLE01",
+      "supplier_id": "SUP01",
+      "qty": 400,
+      "unit_price": 1200,
+      "order_date": "2026-09-25",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-015",
+      "item_id": "P-ADAPTER01",
+      "supplier_id": "SUP02",
+      "qty": 400,
+      "unit_price": 3500,
+      "order_date": "2026-10-23",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-016",
+      "item_id": "P-CASE-400",
+      "supplier_id": "SUP03",
+      "qty": 400,
+      "unit_price": 2400,
+      "order_date": "2026-10-30",
+      "due_date": "2026-11-20",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-017",
+      "item_id": "P-MCU01",
+      "supplier_id": "SUP01",
+      "qty": 800,
+      "unit_price": 2800,
+      "order_date": "2026-10-02",
+      "due_date": "2026-11-27",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-018",
+      "item_id": "P-WIFI01",
+      "supplier_id": "SUP01",
+      "qty": 800,
+      "unit_price": 1800,
+      "order_date": "2026-10-02",
+      "due_date": "2026-11-27",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-019",
+      "item_id": "P-POWER01",
+      "supplier_id": "SUP02",
+      "qty": 800,
+      "unit_price": 2200,
+      "order_date": "2026-10-30",
+      "due_date": "2026-11-27",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-020",
+      "item_id": "P-RELAY01",
+      "supplier_id": "SUP02",
+      "qty": 800,
+      "unit_price": 900,
+      "order_date": "2026-10-30",
+      "due_date": "2026-11-27",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-021",
+      "item_id": "P-CASE-100",
+      "supplier_id": "SUP03",
+      "qty": 800,
+      "unit_price": 1600,
+      "order_date": "2026-11-02",
+      "due_date": "2026-11-27",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-022",
+      "item_id": "P-MCU01",
+      "supplier_id": "SUP01",
+      "qty": 500,
+      "unit_price": 2800,
+      "order_date": "2026-10-17",
+      "due_date": "2026-12-12",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-023",
+      "item_id": "P-MCU01",
+      "supplier_id": "SUP01",
+      "qty": 1100,
+      "unit_price": 2800,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-06",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-024",
+      "item_id": "P-WIFI01",
+      "supplier_id": "SUP01",
+      "qty": 600,
+      "unit_price": 1800,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-08",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-025",
+      "item_id": "P-POWER01",
+      "supplier_id": "SUP02",
+      "qty": 600,
+      "unit_price": 2200,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-08",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-026",
+      "item_id": "P-RELAY01",
+      "supplier_id": "SUP02",
+      "qty": 1200,
+      "unit_price": 900,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-08",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-027",
+      "item_id": "P-CASE-200",
+      "supplier_id": "SUP03",
+      "qty": 600,
+      "unit_price": 1800,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-08",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-028",
+      "item_id": "P-BLE01",
+      "supplier_id": "SUP01",
+      "qty": 600,
+      "unit_price": 1200,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-22",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-029",
+      "item_id": "P-HALL01",
+      "supplier_id": "SUP01",
+      "qty": 600,
+      "unit_price": 400,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-22",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-030",
+      "item_id": "P-COIN01",
+      "supplier_id": "SUP02",
+      "qty": 600,
+      "unit_price": 250,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-22",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-DEMO-031",
+      "item_id": "P-CASE-300B",
+      "supplier_id": "SUP03",
+      "qty": 600,
+      "unit_price": 900,
+      "order_date": "2026-11-02",
+      "due_date": "2027-01-22",
+      "status": "OPEN",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    },
+    {
+      "po_id": "PO-HIST-001",
+      "item_id": "P-MCU01",
+      "supplier_id": "SUP01",
+      "qty": 300,
+      "unit_price": 2800,
+      "order_date": "2026-09-04",
+      "due_date": "2026-10-30",
+      "status": "RECEIVED",
+      "parent_po_id": null,
+      "version": 1,
+      "updated_at": "2026-11-02T09:00:00+09:00"
+    }
+  ],
+  "ecn": [
+    {
+      "ecn_id": "ECN-2026-014",
+      "old_item_id": "P-CASE-300",
+      "new_item_id": "P-CASE-300B",
+      "effective_date": "2026-12-01",
+      "old_stock_policy": "2026-12-01 이후 사용 금지. 미입고분 취소 또는 입고분 반품을 협의한다.",
+      "doc_id": "ECN-2026-014"
+    }
+  ],
+  "app_user": [
+    {
+      "user_id": "U001",
+      "login_id": "planner01",
+      "password_hash": "DISABLED_SET_DEMO_PASSWORD",
+      "name": "김계획",
+      "role": "PLANNER",
+      "dept": "생산관리팀",
+      "active": false
+    },
+    {
+      "user_id": "U002",
+      "login_id": "buyer01",
+      "password_hash": "DISABLED_SET_DEMO_PASSWORD",
+      "name": "박구매",
+      "role": "BUYER",
+      "dept": "구매팀",
+      "active": false
+    },
+    {
+      "user_id": "U003",
+      "login_id": "approver01",
+      "password_hash": "DISABLED_SET_DEMO_PASSWORD",
+      "name": "정팀장",
+      "role": "APPROVER",
+      "dept": "구매팀",
+      "active": false
+    }
+  ]
+}

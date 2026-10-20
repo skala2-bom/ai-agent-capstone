@@ -121,6 +121,7 @@ cd backend && mvn test
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
 | `db/` | `init.sql` 계정·스키마 / `schema.sql` 업무 테이블 / `seed.sql` 시연 데이터 ([decisions 7](docs/decisions.md)) | 백엔드 담당 | 작업·승인·이력 테이블 |
+| `data/` | RAG 근거 문서 6개(`docs/*.md`)와 목록(`documents.json`) — 시스템과 같은 ID·규칙 ([data/README](data/README.md)) | RAG 담당(색인)·백엔드(내용 대조) | 색인, `search_docs` |
 | `eval/` | `golden.json` — SC1~SC4 평가셋. **정답의 유일한 기준** ([eval/README](eval/README.md)) | 백엔드(정답)·AI(질문) | 문항 10~20개로 늘리기 |
 | `docs/` | 아키텍처, 결정 기록, 교재 정리 | 모두 | 결정이 바뀌면 `decisions.md`에 근거와 함께 남기기 |
 

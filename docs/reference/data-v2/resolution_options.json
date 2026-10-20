@@ -1,0 +1,1392 @@
+{
+  "time_basis": "기준업무데이터09:00스냅샷 이후,각SC별 독립적인10:00~11:00 검수·의사결정 목상태",
+  "options": [
+    {
+      "option_id": "SC1-OPT-01-R1",
+      "scenario_id": "SC1",
+      "revision": 1,
+      "title": "MCU 두 발주 전량 납기 당김",
+      "operations": [
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-017",
+          "new_due_date": "2026-11-25"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-022",
+          "new_due_date": "2026-11-30"
+        }
+      ],
+      "additional_cost_krw": 320000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC1-OPT-01-R1-C1",
+          "cost_type": "EXPEDITE_FEE",
+          "amount_krw": 320000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC1-OPT-01-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC1-OPT-01-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 320000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC1-OPT-01-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "C",
+        "reviewed_cost_total_krw": 320000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC1-OPT-01-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 1,
+        "selected": true,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "NO_PRODUCTION_DELAY",
+        "reason": "고객납기와다른제품영향을함께고려한담당자선정"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [
+        {
+          "item_id": "P-MCU01",
+          "max_new_excess_qty": 100
+        }
+      ],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC1-OPT-02-R1",
+      "scenario_id": "SC1",
+      "revision": 1,
+      "title": "MCU 400개씩 두 차례 선입고",
+      "operations": [
+        {
+          "op": "split_po",
+          "po_id": "PO-DEMO-017",
+          "split_qty": 400,
+          "new_due_date": "2026-11-25"
+        },
+        {
+          "op": "split_po",
+          "po_id": "PO-DEMO-022",
+          "split_qty": 400,
+          "new_due_date": "2026-11-30"
+        }
+      ],
+      "additional_cost_krw": 150000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC1-OPT-02-R1-C1",
+          "cost_type": "SPLIT_FEE",
+          "amount_krw": 150000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC1-OPT-02-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC1-OPT-02-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 150000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC1-OPT-02-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "B",
+        "reviewed_cost_total_krw": 150000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC1-OPT-02-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 2,
+        "selected": false,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "ALTERNATIVE",
+        "reason": "대안비교를위한순위.발주실행승인과별개"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC1-OPT-03-R1",
+      "scenario_id": "SC1",
+      "revision": 1,
+      "title": "허브만 11/27로 역제안",
+      "operations": [
+        {
+          "op": "reschedule_plan",
+          "plan_id": "PP-05",
+          "new_date": "2026-11-27"
+        }
+      ],
+      "additional_cost_krw": 20000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC1-OPT-03-R1-C1",
+          "cost_type": "RESCHEDULE_ADMIN",
+          "amount_krw": 20000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC1-OPT-03-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC1-OPT-03-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 20000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC1-OPT-03-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "A",
+        "reviewed_cost_total_krw": 20000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC1-OPT-03-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "FAIL"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 3,
+        "selected": false,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "CASCADE_SHORTAGE_REMAINS",
+        "reason": "대안비교를위한순위.발주실행승인과별개"
+      },
+      "remaining_shortages": [
+        {
+          "item_id": "P-MCU01",
+          "plan_id": "PP-04",
+          "date": "2026-11-30",
+          "qty": 100,
+          "recovery_date": "2026-12-12"
+        }
+      ],
+      "safety_stock_warnings": [],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "CUSTOMER_SHIP_DATE_RECONFIRMATION",
+          "severity": "REVIEW_REQUIRED",
+          "description": "생산일정 역제안은 고객출하약속 재협의가 필요하며 기회손실·지체비용은 미확정",
+          "financial_value_krw": null
+        },
+        {
+          "code": "SHORTAGE_NOT_RESOLVED",
+          "severity": "BLOCKING",
+          "description": "미해소결품이있어실행안으로선정할수없음",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC1-OPT-04-R1",
+      "scenario_id": "SC1",
+      "revision": 1,
+      "title": "추가 확약 대기",
+      "operations": [
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-017",
+          "new_due_date": "2026-11-25"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-022",
+          "new_due_date": "2026-11-30"
+        }
+      ],
+      "additional_cost_krw": 560000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC1-OPT-04-R1-C1",
+          "cost_type": "EXPEDITE_FEE",
+          "amount_krw": 560000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC1-OPT-04-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC1-OPT-04-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 560000,
+        "status": "ESTIMATE_ONLY",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC1-OPT-04-R1",
+        "status": "DRAFT",
+        "entered_grade": null,
+        "reviewed_cost_total_krw": null,
+        "reviewed_by": null,
+        "reviewed_at": null,
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC1-OPT-04-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PENDING"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "견적·확약을 추가확인한 뒤 담당자가 등급을 입력해야 함."
+      },
+      "production_priority": null,
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [
+        {
+          "item_id": "P-MCU01",
+          "max_new_excess_qty": 100
+        }
+      ],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC2-OPT-01-R1",
+      "scenario_id": "SC2",
+      "revision": 1,
+      "title": "릴레이·전원 당김과 정상 추가 발주·감량",
+      "operations": [
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-020",
+          "new_due_date": "2026-11-23"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-019",
+          "new_due_date": "2026-11-23"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-RELAY01",
+          "qty": 300,
+          "due_date": "2026-11-30",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-CASE-200",
+          "qty": 300,
+          "due_date": "2026-11-23",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "change_po_qty",
+          "po_id": "PO-DEMO-021",
+          "new_qty": 500
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-SCREW01",
+          "qty": 600,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-BUTTON01",
+          "qty": 300,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-BOX-M",
+          "qty": 300,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        }
+      ],
+      "additional_cost_krw": 260000,
+      "normal_purchase_principal_krw": 876000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC2-OPT-01-R1-C1",
+          "cost_type": "EXPEDITE_FEE",
+          "amount_krw": 210000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC2-OPT-01-R1"
+        },
+        {
+          "cost_line_id": "SC2-OPT-01-R1-C2",
+          "cost_type": "CHANGE_FEE",
+          "amount_krw": 50000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC2-OPT-01-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC2-OPT-01-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 260000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC2-OPT-01-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "C",
+        "reviewed_cost_total_krw": 260000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC2-OPT-01-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 1,
+        "selected": true,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "NO_PRODUCTION_DELAY",
+        "reason": "고객납기와다른제품영향을함께고려한담당자선정"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [
+        {
+          "item_id": "P-MCU01",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "balance": 0,
+          "safety_stock": 300
+        }
+      ],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "SAFETY_BUFFER_DEPLETED",
+          "severity": "WARNING",
+          "description": "결품과별개로안전재고미달이남음",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC2-OPT-02-R1",
+      "scenario_id": "SC2",
+      "revision": 1,
+      "title": "스위치 11/27 역제안과 정상 발주·감량",
+      "operations": [
+        {
+          "op": "reschedule_plan",
+          "plan_id": "PP-03",
+          "new_date": "2026-11-27"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-RELAY01",
+          "qty": 300,
+          "due_date": "2026-11-30",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-CASE-200",
+          "qty": 300,
+          "due_date": "2026-11-23",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "change_po_qty",
+          "po_id": "PO-DEMO-021",
+          "new_qty": 500
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-SCREW01",
+          "qty": 600,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-BUTTON01",
+          "qty": 300,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-BOX-M",
+          "qty": 300,
+          "due_date": "2027-01-11",
+          "order_date": "2026-11-02"
+        }
+      ],
+      "additional_cost_krw": 70000,
+      "normal_purchase_principal_krw": 876000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC2-OPT-02-R1-C1",
+          "cost_type": "RESCHEDULE_ADMIN",
+          "amount_krw": 70000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC2-OPT-02-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC2-OPT-02-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 70000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC2-OPT-02-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "B",
+        "reviewed_cost_total_krw": 70000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC2-OPT-02-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 2,
+        "selected": false,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "ALTERNATIVE",
+        "reason": "대안비교를위한순위.발주실행승인과별개"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "CUSTOMER_SHIP_DATE_RECONFIRMATION",
+          "severity": "REVIEW_REQUIRED",
+          "description": "생산일정 역제안은 고객출하약속 재협의가 필요하며 기회손실·지체비용은 미확정",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC2-OPT-03-R1",
+      "scenario_id": "SC2",
+      "revision": 1,
+      "title": "릴레이만 당김",
+      "operations": [
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-020",
+          "new_due_date": "2026-11-23"
+        }
+      ],
+      "additional_cost_krw": 40000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC2-OPT-03-R1-C1",
+          "cost_type": "EXPEDITE_FEE",
+          "amount_krw": 40000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC2-OPT-03-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC2-OPT-03-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 40000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC2-OPT-03-R1",
+        "status": "RETURNED",
+        "entered_grade": null,
+        "reviewed_cost_total_krw": null,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC2-OPT-03-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "FAIL"
+          }
+        ],
+        "review_comment": "실행조건 또는증빙 보완 필요. 확정평가로 사용하지 않음."
+      },
+      "production_priority": null,
+      "remaining_shortages": [
+        {
+          "item_id": "P-CASE-200",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "qty": 200,
+          "recovery_date": "2027-01-08"
+        },
+        {
+          "item_id": "P-POWER01",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "qty": 200,
+          "recovery_date": "2026-11-27"
+        },
+        {
+          "item_id": "P-RELAY01",
+          "plan_id": "PP-04",
+          "date": "2026-11-30",
+          "qty": 100,
+          "recovery_date": "2027-01-08"
+        },
+        {
+          "item_id": "P-CASE-200",
+          "plan_id": "PP-06",
+          "date": "2027-01-11",
+          "qty": 200,
+          "recovery_date": null
+        },
+        {
+          "item_id": "P-RELAY01",
+          "plan_id": "PP-06",
+          "date": "2027-01-11",
+          "qty": 100,
+          "recovery_date": null
+        },
+        {
+          "item_id": "P-SCREW01",
+          "plan_id": "PP-06",
+          "date": "2027-01-11",
+          "qty": 300,
+          "recovery_date": null
+        }
+      ],
+      "safety_stock_warnings": [
+        {
+          "item_id": "P-MCU01",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "balance": 0,
+          "safety_stock": 300
+        },
+        {
+          "item_id": "P-BOX-M",
+          "plan_id": "PP-06",
+          "date": "2027-01-11",
+          "balance": 0,
+          "safety_stock": 300
+        },
+        {
+          "item_id": "P-BUTTON01",
+          "plan_id": "PP-06",
+          "date": "2027-01-11",
+          "balance": 0,
+          "safety_stock": 300
+        }
+      ],
+      "residual_excesses": [
+        {
+          "item_id": "P-CASE-100",
+          "max_new_excess_qty": 300
+        }
+      ],
+      "additional_risks": [
+        {
+          "code": "SAFETY_BUFFER_DEPLETED",
+          "severity": "WARNING",
+          "description": "결품과별개로안전재고미달이남음",
+          "financial_value_krw": null
+        },
+        {
+          "code": "SHORTAGE_NOT_RESOLVED",
+          "severity": "BLOCKING",
+          "description": "미해소결품이있어실행안으로선정할수없음",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC3-OPT-01-R1",
+      "scenario_id": "SC3",
+      "revision": 1,
+      "title": "옛 케이스 취소·3종 연기·새 케이스 발주",
+      "operations": [
+        {
+          "op": "cancel_po",
+          "po_id": "PO-DEMO-008"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-005",
+          "new_due_date": "2026-12-28"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-006",
+          "new_due_date": "2026-12-28"
+        },
+        {
+          "op": "reschedule_po",
+          "po_id": "PO-DEMO-007",
+          "new_due_date": "2026-12-28"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-CASE-300B",
+          "qty": 800,
+          "due_date": "2027-01-04",
+          "order_date": "2026-11-02"
+        }
+      ],
+      "additional_cost_krw": 90000,
+      "normal_purchase_principal_krw": 720000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC3-OPT-01-R1-C1",
+          "cost_type": "DEFER_ADMIN",
+          "amount_krw": 90000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC3-OPT-01-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC3-OPT-01-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 90000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC3-OPT-01-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "B",
+        "reviewed_cost_total_krw": 90000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC3-OPT-01-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 1,
+        "selected": true,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "NO_PRODUCTION_DELAY",
+        "reason": "고객납기와다른제품영향을함께고려한담당자선정"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [
+        {
+          "item_id": "P-MCU01",
+          "max_new_excess_qty": 400
+        }
+      ],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC3-OPT-02-R1",
+      "scenario_id": "SC3",
+      "revision": 1,
+      "title": "부품은 선입고 보관·옛 케이스 취소·새 케이스 발주",
+      "operations": [
+        {
+          "op": "cancel_po",
+          "po_id": "PO-DEMO-008"
+        },
+        {
+          "op": "create_po",
+          "item_id": "P-CASE-300B",
+          "qty": 800,
+          "due_date": "2027-01-04",
+          "order_date": "2026-11-02"
+        }
+      ],
+      "additional_cost_krw": 280000,
+      "normal_purchase_principal_krw": 720000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC3-OPT-02-R1-C1",
+          "cost_type": "STORAGE_FEE",
+          "amount_krw": 280000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC3-OPT-02-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC3-OPT-02-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 280000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC3-OPT-02-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "C",
+        "reviewed_cost_total_krw": 280000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC3-OPT-02-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 2,
+        "selected": false,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "ALTERNATIVE",
+        "reason": "대안비교를위한순위.발주실행승인과별개"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [
+        {
+          "item_id": "P-BLE01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-COIN01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-HALL01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-MCU01",
+          "max_new_excess_qty": 400
+        }
+      ],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC3-OPT-03-R1",
+      "scenario_id": "SC3",
+      "revision": 1,
+      "title": "비용 미확정 대안",
+      "operations": [
+        {
+          "op": "create_po",
+          "item_id": "P-CASE-300B",
+          "qty": 800,
+          "due_date": "2027-01-04",
+          "order_date": "2026-11-02"
+        }
+      ],
+      "additional_cost_krw": 700000,
+      "normal_purchase_principal_krw": 720000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC3-OPT-03-R1-C1",
+          "cost_type": "STORAGE_FEE",
+          "amount_krw": 700000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC3-OPT-03-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC3-OPT-03-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 700000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC3-OPT-03-R1",
+        "status": "SUPERSEDED",
+        "entered_grade": null,
+        "reviewed_cost_total_krw": null,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC3-OPT-03-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "비교에서 제외한 이전 대안. 새후보에 이평가를 재사용하지 않음."
+      },
+      "production_priority": null,
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [
+        {
+          "item_id": "P-BLE01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-CASE-300",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-COIN01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-HALL01",
+          "max_new_excess_qty": 800
+        },
+        {
+          "item_id": "P-MCU01",
+          "max_new_excess_qty": 400
+        }
+      ],
+      "additional_risks": [],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC4-OPT-01-R1",
+      "scenario_id": "SC4",
+      "revision": 1,
+      "title": "릴레이 1,000개 선분할 입고",
+      "operations": [
+        {
+          "op": "split_po",
+          "po_id": "PO-2610-106",
+          "split_qty": 1000,
+          "new_due_date": "2026-11-23"
+        }
+      ],
+      "additional_cost_krw": 120000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC4-OPT-01-R1-C1",
+          "cost_type": "SPLIT_FEE",
+          "amount_krw": 120000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC4-OPT-01-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC4-OPT-01-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 120000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC4-OPT-01-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "B",
+        "reviewed_cost_total_krw": 120000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC4-OPT-01-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 1,
+        "selected": true,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "CUSTOMER_DUE_DATE_PRIORITY",
+        "reason": "고객납기와다른제품영향을함께고려한담당자선정"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [
+        {
+          "item_id": "P-RELAY01",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "balance": 0,
+          "safety_stock": 200
+        }
+      ],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "SAFETY_BUFFER_DEPLETED",
+          "severity": "WARNING",
+          "description": "결품과별개로안전재고미달이남음",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC4-OPT-02-R1",
+      "scenario_id": "SC4",
+      "revision": 1,
+      "title": "스위치 11/27 생산 역제안",
+      "operations": [
+        {
+          "op": "reschedule_plan",
+          "plan_id": "PP-03",
+          "new_date": "2026-11-27"
+        }
+      ],
+      "additional_cost_krw": 30000,
+      "normal_purchase_principal_krw": 0,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC4-OPT-02-R1-C1",
+          "cost_type": "RESCHEDULE_ADMIN",
+          "amount_krw": 30000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC4-OPT-02-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC4-OPT-02-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 30000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC4-OPT-02-R1",
+        "status": "CONFIRMED",
+        "entered_grade": "A",
+        "reviewed_cost_total_krw": 30000,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC4-OPT-02-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "PASS"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "직접추가비용 증빙과등급구간 확인. 잔여납기·재고위험은 생산관리 판단용으로 별도공개."
+      },
+      "production_priority": {
+        "rank": 2,
+        "selected": false,
+        "decided_by": "U001",
+        "decided_at": "2026-11-02T11:00:00+09:00",
+        "reason_code": "CUSTOMER_DELIVERY_DELAY",
+        "reason": "대안비교를위한순위.발주실행승인과별개"
+      },
+      "remaining_shortages": [],
+      "safety_stock_warnings": [],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "CUSTOMER_SHIP_DATE_RECONFIRMATION",
+          "severity": "REVIEW_REQUIRED",
+          "description": "생산일정 역제안은 고객출하약속 재협의가 필요하며 기회손실·지체비용은 미확정",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    },
+    {
+      "option_id": "SC4-OPT-03-R1",
+      "scenario_id": "SC4",
+      "revision": 1,
+      "title": "긴급 조달 후 지연발주 1,000개 감량",
+      "operations": [
+        {
+          "op": "create_po",
+          "item_id": "P-RELAY01",
+          "qty": 1000,
+          "due_date": "2026-11-23",
+          "order_date": "2026-11-02"
+        },
+        {
+          "op": "change_po_qty",
+          "po_id": "PO-2610-106",
+          "new_qty": 200
+        }
+      ],
+      "additional_cost_krw": 620000,
+      "normal_purchase_principal_krw": 900000,
+      "cost_lines": [
+        {
+          "cost_line_id": "SC4-OPT-03-R1-C1",
+          "cost_type": "EMERGENCY_PREMIUM",
+          "amount_krw": 620000,
+          "charge_basis": "건별총액",
+          "evidence_quote_id": "Q-SC4-OPT-03-R1"
+        }
+      ],
+      "quote": {
+        "quote_id": "Q-SC4-OPT-03-R1",
+        "issued_at": "2026-11-02T10:00:00+09:00",
+        "valid_until": "2026-11-04T18:00:00+09:00",
+        "currency": "KRW",
+        "tax_basis": "VAT_EXCLUDED",
+        "pricing_method": "LUMP_SUM_OPTION_ADDITIONAL_FEE",
+        "quoted_total_krw": 620000,
+        "status": "SUPPORTING_QUOTE",
+        "supplier_evidence_type": "가상 건별총액 견적·납기협의서",
+        "includes_purchase_principal": false,
+        "contract_unit_prices_included": false
+      },
+      "buyer_review": {
+        "evaluation_id": "EVAL-SC4-OPT-03-R1",
+        "status": "RETURNED",
+        "entered_grade": null,
+        "reviewed_cost_total_krw": null,
+        "reviewed_by": "U002",
+        "reviewed_at": "2026-11-02T10:30:00+09:00",
+        "policy_id": "POL-COST-EVAL",
+        "policy_version": "v1.1",
+        "evidence_quote_id": "Q-SC4-OPT-03-R1",
+        "checklist": [
+          {
+            "check": "견적총액과비용명세합계",
+            "result": "PASS"
+          },
+          {
+            "check": "품목별수량·도착일·MOQ·발주배수",
+            "result": "FAIL"
+          },
+          {
+            "check": "협력사확약증빙",
+            "result": "PASS"
+          },
+          {
+            "check": "전부품재계산후잔여결품",
+            "result": "PASS"
+          }
+        ],
+        "review_comment": "실행조건 또는증빙 보완 필요. 확정평가로 사용하지 않음."
+      },
+      "production_priority": null,
+      "remaining_shortages": [],
+      "safety_stock_warnings": [
+        {
+          "item_id": "P-RELAY01",
+          "plan_id": "PP-03",
+          "date": "2026-11-23",
+          "balance": 0,
+          "safety_stock": 200
+        }
+      ],
+      "residual_excesses": [],
+      "additional_risks": [
+        {
+          "code": "SAFETY_BUFFER_DEPLETED",
+          "severity": "WARNING",
+          "description": "결품과별개로안전재고미달이남음",
+          "financial_value_krw": null
+        }
+      ],
+      "purchase_approval_required": true,
+      "workflow_stage_at": "2026-11-02T11:00:00+09:00"
+    }
+  ]
+}
