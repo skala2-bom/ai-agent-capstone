@@ -8,7 +8,7 @@
 # 때문이다. agent가 먼저 떠도 MCP 서버가 준비되면 그때부터 정상 동작한다.
 # → 그래서 healthcheck가 아직 없다. (아키텍처 7장 표에는 서비스마다 있다)
 #
-# 아직 없는 것: postgres, indexer, rabbitmq(P2) — 담당자가 추가
+# 아직 없는 것: indexer, rabbitmq(P2) — 담당자가 추가
 # 설계 배경: docs/walking-skeleton.md
 services:
   frontend:
@@ -43,3 +43,22 @@ services:
   rag-mcp:
     build: ./rag-mcp
     # 포트 없음 = 내부 전용
+
+  postgres:
+    # pgvector가 들어 있는 이미지. 업무 DB와 벡터 DB를 하나로 쓴다 (contracts.md 5 "Vector DB")
+    image: pgvector/pgvector:pg16
+    # 포트 없음 = 내부 전용. 확인할 때는 docker compose exec postgres psql -U app bom
+    environment:
+      POSTGRES_DB: bom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}   # 관리자 계정. 서비스는 app/agent/rag 계정을 쓴다
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro   # 빈 볼륨일 때만 돈다
+      - pgdata:/var/lib/postgresql/data   # 재시작해도 작업·승인 기록이 남게. 초기화는 down -v
+    healthcheck:
+      # 다른 서비스가 DB를 쓰기 시작하면 depends_on: condition: service_healthy로 기다린다
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bom"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

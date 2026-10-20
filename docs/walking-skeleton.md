@@ -106,7 +106,7 @@
 | frontend | Vue 3 **+ Vite** (교재·아키텍처) | **CDN Vue** 한 장 | Vite는 파일이 7개 이상 필요함. 프론트 담당이 전환 |
 | 폴더 이름 | 노션 제안 `mcp/business`, `mcp/rag` | `business-mcp/`, `rag-mcp/` | compose 서비스 이름과 맞춤. 노션도 이걸로 고쳐 둠 |
 | `/internal/**` | 내부망 전용 + 서비스 토큰 (아키텍처 10장) | backend 공개 포트(8080)로도 열려 있음 | 인증 제외 범위. 백엔드 담당이 추가 |
-| postgres | 아키텍처 Data tier | 없음 | DB 제외 요청. 컨테이너 연결까지는 뼈대에 넣는 것을 추천 |
+| postgres | 아키텍처 Data tier | ~~없음~~ → 10/20 오후 추가 (스키마·계정만, `db/init.sql`) | 테이블·seed는 B 파트 다음 단계 |
 | 요청자 헤더 | `X-Task-Id`, `X-User-Id`, `X-Role` 전달 (아키텍처 6장) | 없음 | 인증이 없어서 전달할 값이 없음 |
 | rag-mcp | `search_docs` 도구 + Resource (8.2) | Resource만 | 요청이 "Resource 한 번 읽기"였음 |
 | healthcheck | 서비스마다 (7장 표) | 없음 | 시작 순서 문제는 "호출할 때 연결"로 피함 |

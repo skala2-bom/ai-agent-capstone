@@ -4,7 +4,7 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-20
+> **갱신**: 2026-10-20 (오후 — `/internal` 1차 응답 모양·DB 접속 정보 추가)
 
 ## 파트 구분
 
@@ -76,6 +76,11 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - **B가 `init.sql`로 스키마 3개와 계정 3개를 만든다.** 각 계정은 자기 스키마에만 권한을 갖는다.
 - `agent` 계정에는 `CREATE` 권한을 준다. checkpointer 테이블은 LangGraph가 직접 만든다.
 - 계정을 나누는 이유: 아키텍처 11장 보안성 증빙에 "DB 계정 분리"가 들어 있다. init SQL 몇 줄이면 된다.
+- **접속 정보** (✅ [`db/init.sql`](../db/init.sql)에 구현): 호스트 `postgres:5432`, DB `bom`, 계정·비밀번호 `app/app` · `agent/agent` · `rag/rag`. 포트를 밖으로 열지 않은 내부망 개발값이다.
+  - 계정마다 `search_path`가 자기 스키마라 테이블 이름에 스키마를 안 붙여도 된다.
+  - **pgvector 확장은 `rag` 스키마에 있다.** `rag` 계정은 `vector(1536)`처럼 그냥 쓰면 된다. 다른 계정에는 이 타입이 보이지 않는다.
+  - DB를 쓰기 시작하는 서비스는 `depends_on: postgres: condition: service_healthy`를 붙인다 (healthcheck 있음).
+  - `init.sql`은 **빈 볼륨일 때만** 돈다. 다시 돌리려면 `docker compose down -v`.
 
 ### 1.4 seed 데이터
 
@@ -104,6 +109,42 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 | `compare_options` | POST `/internal/analysis/options` | |
 | `request_due_date_change` | POST `/internal/purchase-orders/{id}/due-date` | ✅ |
 | `split_po` | POST `/internal/purchase-orders/{id}/split` | ✅ |
+
+#### 1차 응답 모양 (2.2·2.3 외 6개)
+
+✅ **backend가 이 모양으로 고정 응답을 내고 있다** (`backend/.../InternalApi.java`). ID·숫자는 SC1 시퀀스에서 가져온 예시이고 seed 단계에서 기획안 값으로 바뀐다. **모양은 그대로다.**
+키는 snake_case, 수량은 개, 금액은 원, 날짜는 `YYYY-MM-DD`.
+
+```jsonc
+// get_item  GET /internal/items/MCU
+{ "item_id": "MCU", "name": "MCU", "type": "PART", "unit": "EA",
+  "lead_time_days": 14, "moq": 300, "safety_stock": 50, "high_value": true,
+  "unit_price": 3200, "supplier_id": "SUP-01" }      // 완제품은 unit_price·supplier_id가 null
+
+// get_inventory  GET /internal/inventory?type=PART      (type·item_id 둘 다 선택)
+{ "as_of": "2026-11-02",
+  "items": [{ "item_id": "MCU", "type": "PART", "on_hand": 400, "safety_stock": 50 }] }
+
+// list_plans  GET /internal/plans?from=2026-11-01&to=2026-11-30   (양끝 포함, 둘 다 선택)
+{ "plans": [{ "plan_id": "PP-05", "product_id": "HUB", "plan_date": "2026-11-28", "qty": 200, "status": "PLANNED" }] }
+
+// list_receipts  GET /internal/purchase-orders?status=OPEN&item_id=MCU   (status 기본 OPEN)
+{ "purchase_orders": [{ "po_id": "PO-2609-001", "item_id": "MCU", "supplier_id": "SUP-01", "qty": 500,
+    "due_date": "2026-11-30", "status": "OPEN", "unit_price": 3200, "amount": 1600000, "parent_po_id": null }] }
+
+// request_due_date_change  POST /internal/purchase-orders/PO-2609-001/due-date
+//   body { "new_due_date": "2026-11-25", "approval_id": "..." }
+{ "po_id": "PO-2609-001", "before": { "due_date": "2026-11-30" }, "after": { "due_date": "2026-11-25" }, "status": "OPEN" }
+
+// split_po  POST /internal/purchase-orders/PO-2609-001/split
+//   body { "split_qty": 100, "new_due_date": "2026-11-25", "approval_id": "..." }
+{ "original": { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-11-30", "status": "OPEN" },
+  "new":      { "po_id": "PO-2609-012", "qty": 100, "due_date": "2026-11-25", "status": "OPEN", "parent_po_id": "PO-2609-001" } }
+```
+
+- 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "issues": [...] }` (`issues`는 `analyze_impact`의 `shortages` 항목을 그대로 넣는다).
+- 변경 2개는 고정 응답이어도 **검사는 진짜로 한다** (승인 ID 유무 → OPEN → 수량 → 리드타임 → 날짜 같음). 오류 경로를 지금 시험할 수 있다. 시험용으로 이미 입고된 `PO-2608-014`가 있다. 저장은 아직 안 한다.
+- 금액 필드(`unit_price`·`amount`·`added_cost`)는 지금 가리지 않는다. 마스킹(1.2)이 붙으면 **키는 남기고 값을 `null`로** 바꾼다 — 키가 사라지면 모양이 역할마다 달라져서 도구 결과를 읽는 쪽이 분기해야 한다.
 
 #### 2차 (조회 폭을 넓히는 것) — 5개
 
@@ -180,6 +221,8 @@ backend는 업무 오류를 **4xx + 아래 형식**으로 준다. business-mcp�
 → `ToolError("[BELOW_MOQ] 최소 발주 수량 미만입니다. 최소 수량은 300개입니다. ...")`
 
 **`retry_hint`는 비워 두지 않는다.** 모델이 이걸 읽고 인자를 고쳐 스스로 다시 부른다. 여기가 평가표 MCP 20점의 "오류·예외 처리"다.
+
+HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 · 나머지 400. business-mcp는 상태 코드로 분기하지 말고 `error` 코드를 읽으면 된다. 날짜 형식이 틀린 `new_due_date`도 `LEADTIME_INFEASIBLE`로 돌려준다 (retry_hint에 형식과 가장 빠른 가능일).
 
 | 코드 | 경우 | retry_hint |
 |---|---|---|

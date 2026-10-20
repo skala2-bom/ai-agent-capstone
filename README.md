@@ -41,7 +41,7 @@ ai-agent-capstone/
 SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](docs/BOM_Agent_아키텍처.md))
 
 > ⚠️ **여기 구조는 임시이며 토의로 바뀔 수 있음.**
-> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 인증, DB, 실제 계산, 승인 흐름은 없다.
+> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 인증, 실제 계산, 승인 흐름은 없다. postgres는 떠 있지만(스키마·계정만) 아직 아무 서비스도 쓰지 않는다.
 
 ## 요청 흐름
 
@@ -86,14 +86,15 @@ http://localhost:3000 에서 "질문"을 누르면 `TOOL_START → TOOL_END → 
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
 | `frontend/` | CDN Vue 한 장 + nginx | 프론트 담당 | Vite 전환, 진행 상태·결과·승인 카드·근거 패널, 로그인 |
-| `backend/` | 컨트롤러 하나 (작업 접수, SSE 중계, 고정 영향 분석) | 백엔드 담당 | 인증·권한, DB(ai_task·task_event 등), 계산 서비스, 승인, `/internal/**` 서비스 토큰 |
+| `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개 고정 응답(`InternalApi`) | 백엔드 담당 | 인증·권한, DB(ai_task·task_event 등), 계산 서비스, 승인, `/internal/**` 서비스 토큰 |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
+| `db/` | `init.sql` — 스키마 3개·계정 3개 ([contracts 1.3](docs/contracts.md)) | 백엔드 담당 | 테이블은 backend가 만든다 |
 | `docs/` | 아키텍처, 결정 기록, 교재 정리 | 모두 | 결정이 바뀌면 `decisions.md`에 근거와 함께 남기기 |
 
 ## 일부러 뺀 것
 
-- 인증, DB, 실제 계산, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck
+- 인증, DB 테이블·seed, 실제 계산, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck(postgres만 있음)
 - `/internal/**`가 지금은 backend 공개 포트로도 열려 있다. 서비스 토큰 검사는 백엔드 담당이 추가한다.
 - 작업과 이벤트는 backend 메모리에만 있어서 재시작하면 사라진다.
