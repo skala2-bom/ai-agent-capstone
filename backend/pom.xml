@@ -29,12 +29,33 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- 골든셋 테스트: 실제 postgres에 db/*.sql을 그대로 돌린 뒤 계산한다. H2로 흉내 내면 SQL 방언이 달라 seed가 안 돈다 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- Testcontainers 1.21의 기본 Docker API(1.32)를 Docker Desktop 최신판(Engine 29+)이 거부한다.
+                             1.44는 Docker Engine 25(2024-01) 이상이면 다 받는다. Testcontainers 2.x로 올리면 지워도 된다 -->
+                        <api.version>1.44</api.version>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

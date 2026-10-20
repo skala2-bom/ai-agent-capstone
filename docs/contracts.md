@@ -161,7 +161,25 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 | `change_po_qty` | POST `/internal/purchase-orders/{id}/qty` | ✅ |
 | `cancel_po` | POST `/internal/purchase-orders/{id}/cancel` | ✅ |
 
-### 2.2 `analyze_impact` 응답
+### 2.2 `analyze_impact` 요청과 응답
+
+✅ **실제 계산으로 동작한다** (`ImpactAnalysis.java`, 골든셋 테스트 통과). 아래는 SC1의 실제 응답이다.
+
+**요청** — `{ "whatif": [ {op, ...인자}, ... ] }`. 비우면 지금 상태 그대로 판정한다 (seed 기준 0건). 여러 개를 넣으면 순서대로 적용한다.
+
+| `op` | 인자 | 쓰는 곳 |
+|---|---|---|
+| `reschedule_plan` | `plan_id`, `new_date` | SC1·SC3 일정 변경 |
+| `change_plan_qty` | `plan_id`, `new_qty` | SC2 수량 변경 |
+| `request_due_date_change` | `po_id`, `new_due_date` | SC4 입고 지연, 대안 검증 |
+| `split_po` | `po_id`, `split_qty`, `new_due_date` | 대안 검증 |
+| `change_po_qty` | `po_id`, `new_qty` | 대안 검증 |
+| `cancel_po` | `po_id` | 대안 검증 |
+
+- 발주 쪽 `op` 이름과 인자는 **변경 도구와 같다.** verify는 `compare_options`의 `tool`·`args`를 그대로 `{"op": tool, **args}`로 넣으면 된다 (2.4). `approval_id`는 넣어도 무시한다.
+- 가정이라서 리드타임·승인은 보지 않는다. "실행할 수 없는 안이어도 어떻게 되는지"는 답한다. 날짜는 기준일(2026-11-02) 이후만 받는다.
+
+**응답**
 
 ```jsonc
 {
@@ -174,11 +192,22 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
       "plan_date": "2026-11-30", "projected_stock": -100, "threshold": 0, "qty": 100,
       "orderable": false }
   ],
-  "warnings": [],                      // INV-002: 0 ≤ P(t) < 안전재고
-  "excesses": [],                      // INV-003: 고가 부품만, N = max(리드타임, 30일)
-  "evidence_uri": "doc://ECN-2026-014/3.2"
+  "warnings": [                        // INV-002: 0 ≤ P(t) < 안전재고 (SC2의 예)
+    { "rule_id": "INV-002", "item_id": "MCU", "plan_id": "PP-03",
+      "plan_date": "2026-11-23", "projected_stock": 0, "threshold": 300 }
+  ],
+  "excesses": [                        // INV-003: 고가 부품만, 부품마다 가장 큰 날 1건 (SC3의 예)
+    { "rule_id": "INV-003", "item_id": "CASE-DOOR-V1", "date": "2026-11-15",
+      "projected_stock": 800, "threshold": 0, "qty": 800,
+      "window_days": 30,                // N = max(리드타임, 30)
+      "amount": 640000 }                // 원. 과잉량 × 단가 (마스킹 대상)
+  ]
 }
 ```
+
+- 결품·경고는 생산계획 단위로 나온다(`plan_id`). 같은 부족분이 다음 생산까지 이어지면 그 날짜에 다시 나온다 — 합산하지 않는다 (아키텍처 1.2).
+- 과잉의 `threshold`는 "안전재고 + 앞으로 N일 소요량"이다. `projected_stock`이 이 선을 `qty`만큼 넘었다는 뜻이다.
+- **`evidence_uri`는 뺐다** (10/20 오후). backend는 어느 문서가 근거인지 모른다 — 근거 찾기는 rag-mcp `search_docs`의 일이다. 고정 응답 시절 agent 흐름을 보여 주려고 넣었던 값이다 ([decisions.md 6.12](decisions.md)).
 
 - 경고 한 건마다 `rule_id`·`projected_stock`·`threshold`를 붙인다. 이게 있어야 AI가 "왜 결품인지"를 지어내지 않고 규칙 ID로 설명한다.
 - **`orderable`** (10/20 오후 추가, 결품에만): `true`면 "지금 발주하면 제때 도착"이라 위험이 아니라 **정상 안내**다 (기획안 1.3 "추가 발주 필요"). `false`면 이미 낸 발주를 당기거나 나눠야 한다. 이 칸이 없으면 모델이 리드타임을 보고 직접 날짜 계산을 하게 된다 — 계산은 backend가 한다는 원칙(아키텍처 1.1)에 어긋난다.
@@ -245,6 +274,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `BOM_CYCLE` | 순환 BOM | 순환 경로 |
 | `APPROVAL_REQUIRED` | 승인 없이 변경 시도 | 승인 절차 안내 |
 | `UPSTREAM_TIMEOUT` | 백엔드 응답 지연 | 잠시 후 재시도 |
+| `INVALID_ARGUMENT` | 인자가 없거나 형식이 틀림 (날짜 형식, 모르는 `op`, 0 이하 수량) — **10/20 오후 추가** | 맞는 형식이나 가능한 값 목록 |
 
 > **판정과 오류를 섞지 않는다.** 결품·경고·과잉은 정상 응답의 **결과**다. 오류는 **호출 자체가 성립하지 않을 때**만 쓴다.
 

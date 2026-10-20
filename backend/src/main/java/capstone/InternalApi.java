@@ -4,10 +4,10 @@ import java.time.LocalDate;
 import java.util.*;
 
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * business-mcp 도구 1차 8개가 부르는 {@code /internal/**} (contracts.md 2.1).
@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
  * <p>지금 상태
  * <ul>
  *   <li>조회 4개 — seed DB(db/seed.sql)에서 읽는다</li>
- *   <li>계산 2개 — 아직 고정 응답. 값은 seed 데이터로 계산한 SC1 정답이다 (→ analysis 모듈에서 실제 계산)</li>
+ *   <li>계산 2개 — analyze_impact는 실제 계산({@link ImpactAnalysis}), compare_options는 아직 고정 응답</li>
  *   <li>변경 2개 — DB에서 발주를 읽어 검사는 진짜로 하고, 저장은 아직 안 한다 (→ 승인 API와 함께)</li>
  * </ul>
  * 모양은 계약대로 고정이다. 안쪽이 바뀌어도 AI·MCP 파트는 고칠 것이 없다.
@@ -37,9 +37,11 @@ class InternalApi {
     static final LocalDate TODAY = LocalDate.of(2026, 11, 2);
 
     private final JdbcTemplate db;
+    private final ImpactAnalysis impact;
 
-    InternalApi(JdbcTemplate db) {
+    InternalApi(JdbcTemplate db, ImpactAnalysis impact) {
         this.db = db;
+        this.impact = impact;
     }
 
     // ------------------------------------------------------------------
@@ -103,31 +105,22 @@ class InternalApi {
     /**
      * analyze_impact — 가정 변경(whatif)을 적용했을 때의 결품·경고·과잉 (contracts.md 2.2).
      *
-     * <p><b>계산이 여기 있는 이유</b>: 업무 규칙을 한 곳에만 두기 위해서다 (아키텍처 1.1).
+     * <p><b>계산이 여기(backend) 있는 이유</b>: 업무 규칙을 한 곳에만 두기 위해서다 (아키텍처 1.1).
      * business-mcp가 직접 계산하면 화면 조회와 AI 분석이 서로 다른 숫자를 낼 수 있다.
-     *
-     * <p>지금 값은 seed 데이터에서 SC1(PP-05를 11/25로)을 계산한 정답이다 (decisions.md 7.3).
-     * 실제 계산을 넣을 때 (→ analysis 모듈):
-     * <ul>
-     *   <li>P(t) = 초기재고 + 누적입고 − 누적소요 를 날짜별로 만든다 (아키텍처 1.2 F-01)</li>
-     *   <li>결품 P(t)&lt;0 / 경고 0≤P(t)&lt;안전재고 / 과잉은 고가 부품만, 기간은 max(리드타임, 30일)</li>
-     *   <li>같은 날 결품과 경고가 겹치면 결품만 남긴다</li>
-     *   <li>orderable = 오늘 새로 발주해서 그 날짜까지 받을 수 있나 (LT-001, 오늘 + 주 협력사 리드타임 ≤ 필요일)</li>
-     * </ul>
+     * 계산 자체는 {@link ImpactAnalysis}. body: {@code {"whatif": [{"op": ..., ...}]}}
      */
     @PostMapping("/analysis/impact")
     Map<String, Object> analyzeImpact(@RequestBody(required = false) Map<String, Object> body) {
-        return m("policy_version", "v0.1",
-                "shortages", List.of(
-                        // MCU 리드타임 56일 → 새 발주는 12/28에야 온다. 그래서 orderable=false, 기존 발주를 당겨야 한다
-                        m("rule_id", "INV-001", "item_id", "MCU", "plan_id", "PP-05", "plan_date", "2026-11-25",
-                                "projected_stock", -100, "threshold", 0, "qty", 100, "orderable", false),
-                        m("rule_id", "INV-001", "item_id", "MCU", "plan_id", "PP-04", "plan_date", "2026-11-30",
-                                "projected_stock", -100, "threshold", 0, "qty", 100, "orderable", false)),
-                "warnings", List.of(),   // INV-002: 0 ≤ P(t) < 안전재고
-                "excesses", List.of(),   // INV-003: 고가 부품만
-                // agent가 이 주소로 rag-mcp Resource를 읽어 근거로 인용한다
-                "evidence_uri", "doc://ECN-2026-014/3.2");
+        Object whatif = body == null ? null : body.get("whatif");
+        if (whatif != null && !(whatif instanceof List<?>))
+            throw ApiError.invalid("whatif는 목록이어야 합니다.", "예: {\"whatif\": [{\"op\": \"reschedule_plan\", \"plan_id\": \"PP-05\", \"new_date\": \"2026-11-25\"}]}");
+        List<Map<String, Object>> ops = new ArrayList<>();
+        if (whatif != null) for (Object o : (List<?>) whatif) {
+            if (!(o instanceof Map<?, ?> op)) throw ApiError.invalid("whatif 항목은 객체여야 합니다: " + o, "각 항목에 op와 인자를 넣으세요.");
+            @SuppressWarnings("unchecked") Map<String, Object> cast = (Map<String, Object>) op;
+            ops.add(cast);
+        }
+        return impact.analyze(ops);
     }
 
     /**
@@ -245,7 +238,7 @@ class InternalApi {
         try {
             newDue = LocalDate.parse(String.valueOf(newDueDate));
         } catch (Exception e) {
-            throw new ApiError("LEADTIME_INFEASIBLE", "new_due_date를 읽지 못했습니다.",
+            throw ApiError.invalid("new_due_date를 읽지 못했습니다.",
                     "YYYY-MM-DD 형식으로 주세요. 가장 빠른 가능일은 " + earliest + "입니다.");
         }
         if (newDue.isBefore(earliest))
@@ -258,33 +251,16 @@ class InternalApi {
     // 오류 응답 (contracts.md 2.5)
     // ------------------------------------------------------------------
 
-    /**
-     * 업무 오류. 4xx + {@code {error, message, retry_hint}}로 나간다.
-     * retry_hint는 비워 두지 않는다 — 모델이 이걸 읽고 인자를 고쳐 스스로 다시 부른다.
-     *
-     * <p>판정(결품·경고·과잉)은 오류가 아니다. 호출 자체가 성립하지 않을 때만 쓴다.
-     */
-    static class ApiError extends RuntimeException {
-        final String code, retryHint;
-        final HttpStatus status;
-
-        ApiError(String code, String message, String retryHint) {
-            super(message);
-            this.code = code;
-            this.retryHint = retryHint;
-            // 없는 것은 404, 상태가 안 맞는 것은 409, 승인 없음은 403, 나머지는 요청이 틀린 것이라 400
-            this.status = switch (code) {
-                case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
-                case "PO_NOT_OPEN" -> HttpStatus.CONFLICT;
-                case "APPROVAL_REQUIRED" -> HttpStatus.FORBIDDEN;
-                default -> HttpStatus.BAD_REQUEST;
-            };
-        }
-    }
-
     @ExceptionHandler(ApiError.class)
     ResponseEntity<Map<String, Object>> onApiError(ApiError e) {
         return ResponseEntity.status(e.status).body(m("error", e.code, "message", e.getMessage(), "retry_hint", e.retryHint));
+    }
+
+    /** ?from=bad 처럼 쿼리 값 형식이 틀린 경우. Spring 기본 400 대신 같은 오류 형식으로 낸다. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<Map<String, Object>> onBadParam(MethodArgumentTypeMismatchException e) {
+        return onApiError(ApiError.invalid(e.getName() + " 값을 읽지 못했습니다: " + e.getValue(),
+                "날짜는 YYYY-MM-DD 형식으로 주세요. 예: 2026-11-25"));
     }
 
     // ------------------------------------------------------------------
