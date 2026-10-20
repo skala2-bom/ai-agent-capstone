@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="가온스마트 BOM Agent A1~A3 기획안을 바탕으로 한 ISO 참고 기준, 실무 판정 정책, SC1~SC4 사례 및 판정기 실습">
+  <title>BOM Agent | ISO 기반 판단 기준 설계안</title>
+  <style>
+    :root { --navy:#13233b; --navy2:#0b1729; --ink:#1b2b42; --body:#35445b; --muted:#67768c; --teal:#0c826e; --teal-light:#e8f5f0; --blue:#3266ad; --blue-light:#edf3fc; --amber:#aa680e; --amber-light:#fff4df; --red:#b33b42; --red-light:#fff0f0; --surface:#fff; --bg:#f4f6f9; --line:#e3e9ef; --shadow:0 16px 45px rgba(32,48,72,.07); --radius:16px; --title-letter:-.045em; }
+    *{box-sizing:border-box} html{scroll-behavior:smooth;scroll-padding-top:100px} body{margin:0;background:var(--bg);color:var(--body);font-family:Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:15px;line-height:1.75;word-break:keep-all} button,input,select{font:inherit} a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline} button{cursor:pointer} code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,Monaco,monospace} code{font-size:.88em;background:#f1f4f8;padding:2px 5px;border-radius:4px;color:#305376} h1,h2,h3,h4,p{margin-top:0} h1,h2,h3,h4{color:var(--ink);line-height:1.35;letter-spacing:var(--title-letter)} h1{font-size:clamp(32px,4.4vw,51px);font-weight:790;letter-spacing:-.055em;margin-bottom:15px} h2{font-size:28px;margin-bottom:12px} h3{font-size:19px;margin-bottom:10px} h4{font-size:15px;margin-bottom:7px} p{margin-bottom:12px} small,.small{font-size:12px} .muted{color:var(--muted)} .wrapper{max-width:1350px;margin:0 auto;padding:0 30px} .topbar{background:var(--navy2);color:#dbe5f3;height:57px} .top-inner{height:100%;display:flex;align-items:center;justify-content:space-between;gap:15px}.brand{display:flex;align-items:center;gap:11px;font-size:13px;font-weight:760;letter-spacing:.07em;color:#fff}.logo{display:grid;place-items:center;width:29px;height:29px;border:1px solid #6bc7ae;border-radius:8px;background:rgba(111,205,179,.08);color:#8ae1ca;font-size:12px;letter-spacing:-.02em}.top-meta{display:flex;gap:17px;font-size:11px;color:#a5b3c7}.top-meta span{white-space:nowrap}.hero{position:relative;overflow:hidden;background:linear-gradient(116deg,#122640 0%,#172b44 62%,#203b52 100%);color:#e1e9f3;padding:49px 0 44px}.hero:after{content:"";position:absolute;right:-210px;top:-270px;width:650px;height:650px;border:1px solid rgba(145,208,197,.16);border-radius:50%;box-shadow:0 0 0 60px rgba(145,208,197,.03),0 0 0 150px rgba(145,208,197,.025);pointer-events:none}.hero-inner{position:relative;z-index:1}.kicker{text-transform:uppercase;font-size:11px;letter-spacing:.14em;font-weight:800;color:#8bdfc6;display:flex;align-items:center;gap:10px;margin-bottom:19px}.kicker:before{content:"";width:24px;height:1px;background:#8bdfc6}.hero h1{color:#fff;max-width:850px}.hero h1 strong{color:#8fe6cc}.hero-lead{max-width:810px;font-size:16px;color:#c4d2e2;line-height:1.9;margin:0 0 28px}.hero-stats{display:flex;flex-wrap:wrap;gap:10px}.hero-stat{background:rgba(255,255,255,.07);border:1px solid rgba(218,233,247,.11);border-radius:10px;padding:13px 17px;min-width:141px;backdrop-filter:blur(4px)}.hero-stat b{font-size:22px;color:#fff;display:block;line-height:1.2;letter-spacing:-.04em}.hero-stat span{display:block;font-size:11px;color:#bdcbda;margin-top:6px}.subnav{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.97);border-bottom:1px solid var(--line);box-shadow:0 6px 14px rgba(26,42,65,.035)}.subnav-inner{display:flex;align-items:center;gap:7px;overflow-x:auto;scrollbar-width:none;min-height:58px}.subnav-inner::-webkit-scrollbar{display:none}.navlink{white-space:nowrap;font-size:12px;color:#627187;padding:9px 13px;border-radius:8px;font-weight:680}.navlink:hover{background:#eef5f5;color:#116c61;text-decoration:none}.navlink.active{background:#e9f5f0;color:#067665}.navspace{flex:1}.small-btn{background:#fff;border:1px solid #d7e0e8;color:#34435c;font-weight:700;padding:7px 12px;border-radius:8px;font-size:12px;white-space:nowrap}.small-btn:hover{background:#f3f6f9}.container{max-width:1260px;margin:0 auto;padding:34px 30px 85px}.section{margin-bottom:65px;scroll-margin-top:82px}.section-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:20px}.section-n{flex:0 0 auto;width:36px;height:36px;border-radius:9px;background:#e4f1ed;color:#087563;font-size:13px;font-weight:800;display:grid;place-items:center}.section-head p{margin:0;color:var(--muted);max-width:920px}.summary-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.card{border:1px solid var(--line);background:#fff;border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}.card.compact{padding:19px}.card-title{font-size:17px;font-weight:760;color:var(--ink);margin-bottom:11px}.eyebrow{font-size:11px;font-weight:760;letter-spacing:.08em;color:var(--teal);text-transform:uppercase;margin-bottom:10px}.concept{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}.concept-block{background:#f5f7fa;border:1px solid var(--line);border-radius:12px;padding:16px}.concept-block.standard{background:#eef4fc;border-color:#d7e5f6}.concept-block.policy{background:#edf7f2;border-color:#d5ebe2}.concept-block .cap{font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:780;margin-bottom:8px;color:#4b6c9e}.concept-block.policy .cap{color:#117460}.concept-block strong{display:block;color:var(--ink);font-size:17px;margin-bottom:5px}.concept-block p{font-size:12px;margin:0;color:#56647b;line-height:1.8}.notice{border-left:3px solid var(--teal);padding:12px 16px;background:#eff8f4;border-radius:0 9px 9px 0;color:#285548;font-size:13px}.notice.amber{border-color:#d69b41;background:#fff8ec;color:#775317}.notice.red{border-color:var(--red);background:var(--red-light);color:#8b3338}.key-list{list-style:none;padding:0;margin:0}.key-list li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #ebeff3;font-size:13px}.key-list li:last-child{border-bottom:0;padding-bottom:0}.check{color:var(--teal);font-weight:900;margin-top:0}.tag{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:#e9eef4;color:#516174;font-size:10.5px;font-weight:780;white-space:nowrap;vertical-align:middle;line-height:1.3}.tag.teal{background:var(--teal-light);color:#117461}.tag.blue{background:var(--blue-light);color:#3265a3}.tag.red{background:var(--red-light);color:var(--red)}.tag.amber{background:var(--amber-light);color:var(--amber)}.tag.dark{background:#dce6f3;color:#324761}.strategy{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:17px}.strategy-step{border-radius:13px;border:1px solid var(--line);background:#fff;padding:19px;position:relative}.strategy-step .num{font-size:11px;color:var(--teal);font-weight:850;letter-spacing:.06em;margin-bottom:8px}.strategy-step h3{font-size:16px;margin-bottom:9px}.strategy-step p{font-size:12px;line-height:1.75;color:#647186;margin-bottom:0}.formula-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px;margin-top:18px}.formula{padding:19px;border:1px solid var(--line);border-radius:13px;background:#fff}.formula .id{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--blue);margin-bottom:7px}.formula strong{display:block;color:var(--ink);font-size:14px;margin-bottom:8px}.formula .expression{background:#f3f6fa;color:#254567;border-radius:8px;padding:13px 12px;font-family:ui-monospace,Consolas,Monaco,monospace;font-size:12px;font-weight:700;white-space:normal;overflow-wrap:anywhere}.formula p{font-size:12px;color:#65738b;margin-top:11px;margin-bottom:0}.table-wrap{width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:#fff}.table-wrap table{border-collapse:collapse;width:100%;font-size:12px;min-width:785px;line-height:1.65}.table-wrap thead{background:#eef2f6}.table-wrap th{padding:13px 14px;text-align:left;color:#3f516b;font-weight:800;border-bottom:1px solid #dce4ed;white-space:nowrap}.table-wrap td{padding:13px 14px;vertical-align:top;border-bottom:1px solid #edf0f3;color:#48576d}.table-wrap tr:last-child td{border-bottom:0}.table-wrap strong{color:#24384e}.table-wrap td:first-child{font-family:ui-monospace,Consolas,monospace;font-size:11px;font-weight:750;color:#326c81}.table-wrap tr:hover td{background:#fcfdfd}.row-sub{display:block;color:#758298;font-size:11px;margin-top:4px}.section-callout{font-size:13px;border-radius:12px;padding:15px 18px;background:#e9f6f2;border:1px solid #d1e7df;color:#215e51;margin-top:18px}.priority-ladder{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:15px 0 20px}.priority-item{padding:17px 12px;border-radius:12px;background:#fff;border:1px solid var(--line);position:relative}.priority-item:not(:last-child):after{content:"›";position:absolute;top:50%;right:-11px;transform:translateY(-50%);z-index:2;font-size:24px;color:#a0b6c7;font-weight:500}.priority-item .small{font-size:10px;color:#8290a0;font-weight:800}.priority-item strong{display:block;margin-top:6px;font-size:13px;color:#22364d}.priority-item span{font-size:11px;color:#78869b;line-height:1.5;display:block;margin-top:5px}.option-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}.option{border:1px solid var(--line);border-radius:14px;background:#fff;padding:21px}.option.recommended{border-color:#8ac9b2;box-shadow:0 0 0 2px rgba(35,153,112,.07)}.option .option-label{font-size:10px;color:#728196;font-weight:800;letter-spacing:.09em}.option h3{margin:8px 0;font-size:17px}.option p{font-size:12px;color:#6c7a8b;margin:0}.option ul{margin:12px 0 0;padding-left:17px;font-size:12px;line-height:1.9}.sc-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.sc-tab{border:1px solid #d9e2ec;background:#fff;color:#596983;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:720}.sc-tab.active{border-color:#087c6b;background:#e9f6f0;color:#087967}.scenario{display:grid;grid-template-columns:1.12fr .88fr;gap:15px;align-items:stretch}.scenario-main h3{font-size:21px;margin-bottom:7px}.scenario-kicker{font-size:11px;letter-spacing:.04em;font-weight:800;color:var(--teal);margin-bottom:8px}.scenario-summary{font-size:14px;color:#56677b;margin-bottom:19px}.evidence{background:#f6f8fa;border-radius:11px;padding:14px 17px;margin-bottom:12px}.evidence dl{display:grid;grid-template-columns:118px 1fr;gap:9px 12px;margin:0;font-size:12px}.evidence dt{font-weight:780;color:#485a71}.evidence dd{margin:0;color:#55647a}.alert-result{display:flex;gap:15px;align-items:center;background:#fff3ed;border:1px solid #f3d8c6;border-radius:13px;padding:15px;margin:14px 0}.alert-result .big{font-size:34px;font-weight:820;line-height:1.05;letter-spacing:-.06em;color:#bd4a30}.alert-result strong{display:block;font-size:13px;color:#683527}.alert-result .small{display:block;color:#95604f;font-size:11px;margin-top:4px}.scenario-rulebox{border:1px dashed #bfccd9;background:#fafbfd;border-radius:12px;padding:18px}.scenario-rulebox h4{margin-bottom:9px}.scenario-rulebox .mini-row{font-size:12px;padding:7px 0;border-bottom:1px solid #e8edf1;display:flex;gap:13px;justify-content:space-between}.scenario-rulebox .mini-row:last-child{border:0}.scenario-rulebox .mini-row span:first-child{color:#748198}.scenario-rulebox .mini-row span:last-child{text-align:right;font-weight:700;color:#3c4b60}.scenario-rulebox .fineprint{font-size:11px;color:#748198;margin-top:10px}.demo-columns{display:grid;grid-template-columns:1fr 1fr;gap:17px}.demo-card{border:1px solid var(--line);background:#fff;border-radius:var(--radius);padding:24px}.demo-card h3{font-size:18px}.demo-desc{font-size:12px;color:#6f7d91;margin-bottom:17px}.preset-wrap{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}.preset{border:1px solid #d6e0ea;background:#f8fafc;font-size:11px;color:#596b83;padding:7px 10px;border-radius:7px;font-weight:670}.preset:hover{border-color:#8cbdb2;color:#086d5e}.preset.active{background:#e6f5ef;border-color:#80c6af;color:#0a755f}.fieldgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:6px}.field>label{font-size:12px;color:#54667d;font-weight:720}.field input,.field select{min-width:0;background:#fff;width:100%;border:1px solid #cfd9e4;border-radius:8px;padding:10px 11px;color:#243b58;font-size:14px;outline:none}.field input:focus,.field select:focus{border-color:#308a79;box-shadow:0 0 0 3px rgba(58,161,140,.11)}.field small{font-size:10px;color:#8390a0;line-height:1.5}.checks{display:flex;flex-wrap:wrap;gap:14px;margin:13px 0 17px}.checks label{display:flex;align-items:center;gap:8px;font-weight:710;font-size:12px;color:#52627a;cursor:pointer}.checks input{accent-color:#127d66;width:15px;height:15px}.result-panel{margin-top:16px;padding:17px 18px;border-radius:12px;border:1px solid #dae6ef;background:#f8fbfe}.result-panel.danger{background:#fff2f1;border-color:#f2cbc8}.result-panel.warning{background:#fff8e9;border-color:#f0deac}.result-panel.success{background:#edf8f3;border-color:#c7e9d9}.result-panel.neutral{background:#f3f6fb;border-color:#dce4ed}.result-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.result-title{font-weight:790;color:var(--ink);font-size:16px}.result-number{font-size:25px;letter-spacing:-.05em;font-weight:800;color:var(--ink);margin-right:3px}.result-text{font-size:12px;color:#576780;margin:7px 0 0}.result-formula{background:#fff;border:1px solid rgba(130,150,165,.2);border-radius:7px;padding:9px 11px;font-family:ui-monospace,Consolas,monospace;font-size:11px;overflow-wrap:anywhere;color:#45647c}.inline-fields{display:grid;grid-template-columns:1fr 1fr;gap:13px}.mini-header{font-size:13px;color:var(--ink);font-weight:800;margin:18px 0 11px}.divider{height:1px;background:#e6ebf0;margin:19px 0}.checkline{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#52647b;margin-top:12px}.dot{width:8px;height:8px;background:#1b8c79;border-radius:50%;margin-top:7px;flex:0 0 auto}.implementation-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.flow-card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:22px}.flow-card h3{font-size:17px}.flow-stack{display:grid;gap:7px;margin-top:16px}.flow-item{border-radius:9px;background:#f4f7fa;border:1px solid #e1e7ed;padding:12px 13px;display:flex;align-items:flex-start;gap:12px}.flow-item strong{color:#294257;display:block;font-size:12px;margin-bottom:3px}.flow-item span{color:#63738b;font-size:11px;display:block}.flow-index{background:#dbece7;color:#16806b;font-size:10px;min-width:24px;height:24px;border-radius:7px;display:grid;place-items:center;font-weight:800}.codepanel{position:relative;background:#142339;border-radius:13px;overflow:hidden;margin-top:16px}.code-top{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.09)}.code-top span{font-size:11px;color:#b8c8d9;font-weight:700}.copy-btn{font-size:10px;color:#fff;border:1px solid #52677e;background:#263e57;border-radius:6px;padding:5px 10px}.codepanel pre{padding:17px 18px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#c5e6df;font-size:11px;line-height:1.7}.test-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:15px}.testcase{padding:12px 13px;border:1px solid #e0e7ee;border-radius:9px;background:#fff;font-size:12px;color:#53667a}.testcase strong{display:block;color:#314861;margin-bottom:5px}.testcase span{font-size:11px;color:#718296}.actionrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:17px}.primary-btn{border:0;border-radius:9px;background:var(--teal);color:white;font-size:12px;font-weight:800;padding:11px 17px}.primary-btn:hover{background:#066d5f}.secondary-btn{border-radius:9px;border:1px solid #d3e0e7;background:#fff;color:#435a74;font-weight:760;font-size:12px;padding:10px 15px}.test-output{font-size:12px;color:#476477;margin:10px 0 0;min-height:20px}.question-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.question{border-radius:12px;background:#fff;border:1px solid var(--line);padding:17px 19px}.question b{color:#21374f;font-size:13px}.question p{color:#66768e;font-size:12px;margin:6px 0 0}.source-card{border-radius:13px;border:1px solid var(--line);background:#fff;padding:20px 22px}.sources{margin:0;padding-left:18px}.sources li{font-size:12px;color:#526279;margin:9px 0}.sources li a{font-weight:750}.footer{background:#13243c;color:#b6c6d7;padding:27px 0 38px;margin-top:58px}.footer-inner{display:flex;justify-content:space-between;gap:30px;align-items:center;font-size:11px}.footer strong{color:#fff}.footer p{margin:4px 0 0}.tooltip{border-bottom:1px dotted #9aafc2;cursor:help}.v-sticky{position:sticky;top:74px}.badge-flex{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.print-note{font-size:11px;color:#7f8b9e;margin-top:15px}.deep-note{background:#fff8eb;border-left:3px solid #d5a357;padding:14px 18px;font-size:12px;color:#775a32;border-radius:0 9px 9px 0;margin-top:16px}.page-break{page-break-before:always}
+    @media(max-width:960px){.summary-grid,.scenario,.demo-columns,.implementation-grid{grid-template-columns:1fr}.strategy{grid-template-columns:repeat(2,1fr)}.priority-ladder{grid-template-columns:repeat(3,1fr)}.priority-item:not(:last-child):after{display:none}.hero{padding:37px 0 40px}.hero-stats{gap:8px}.hero-stat{min-width:125px}.v-sticky{position:static}}
+    @media(max-width:640px){body{font-size:14px}.brand{font-size:11px;white-space:nowrap;gap:7px}.brand>span:last-child{display:none}.wrapper,.container{padding-left:16px;padding-right:16px}.top-meta{gap:7px;font-size:10px}.top-meta span:nth-child(1){display:none}.hero{padding:30px 0 31px}.hero h1{font-size:33px}.hero-lead{font-size:13px}.hero-stat{flex:1 1 42%;min-width:0}.section{margin-bottom:49px}.section-head{gap:11px}.section-n{width:31px;height:31px}.section-head h2{font-size:23px}.card,.demo-card{padding:18px}.concept,.formula-grid,.question-grid,.option-grid{grid-template-columns:1fr}.strategy{gap:9px}.strategy-step{padding:14px}.priority-ladder{grid-template-columns:repeat(2,1fr)}.scenario-main h3{font-size:18px}.evidence dl{grid-template-columns:85px 1fr}.fieldgrid{gap:9px}.demo-card h3{font-size:17px}.navlink{padding:8px 10px}.topbar{height:50px}.subnav-inner{min-height:53px}.footer-inner{display:block}.footer-inner>div+div{margin-top:12px}}
+    @media print{body{background:#fff;font-size:10.5pt}.topbar,.subnav,.print-controls,.preset-wrap,.actionrow,.copy-btn,.test-output{display:none!important}.hero{background:#172c46!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:28px 0 25px}.container{padding:21px 23px}.card,.demo-card,.option,.formula,.strategy-step,.question,.flow-card,.source-card{box-shadow:none;break-inside:avoid}.section{margin-bottom:25px}.section-head h2{font-size:19px}.section-head p,.notice,.strategy-step p,.formula p{font-size:9px}.table-wrap{overflow:visible}.table-wrap table{min-width:0;font-size:8.5px}.table-wrap td,.table-wrap th{padding:7px 8px}.demo-card{display:none}.footer{background:none;color:#627080;padding:10px}.footer strong{color:#1c3348}}
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrapper top-inner">
+    <div class="brand"><span class="logo">B/A</span> BOM AGENT <span style="color:#6d7e94;font-weight:500">/ POLICY LAB</span></div>
+    <div class="top-meta"><span>GAON SMART · A1–A3</span><span>v0.1 · 2026.10.20</span><span>단일 HTML · 오프라인 작동</span></div>
+  </div>
+</header>
+<div class="hero">
+  <div class="wrapper hero-inner">
+    <div class="kicker">Decision policy & ISO reference</div>
+    <h1>BOM Agent<br><strong>판단 기준 설계안</strong></h1>
+    <p class="hero-lead">ISO는 <b>무엇을 식별·관리·추적할지</b> 참고하는 기준이고, 결품과 과잉을 나누는 숫자는 <b>우리 서비스가 정하는 운영 정책</b>입니다. 현재 기획안의 4개 시나리오를 유지하며 구현 가능한 규칙, 근거, 테스트까지 하나로 정리했습니다.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><b>4종</b><span>시연 완제품</span></div>
+      <div class="hero-stat"><b>28종</b><span>구매 부품 (공용 17종)</span></div>
+      <div class="hero-stat"><b>3단계</b><span>BOM 깊이</span></div>
+      <div class="hero-stat"><b>SC1–4</b><span>기준 정답 시나리오</span></div>
+      <div class="hero-stat"><b>11/02</b><span>2026년 시연 기준일</span></div>
+    </div>
+  </div>
+</div>
+<nav class="subnav" aria-label="문서 목차"><div class="wrapper subnav-inner">
+  <a class="navlink active" href="#conclusion">01 핵심 제안</a>
+  <a class="navlink" href="#method">02 기준 선정 방법</a>
+  <a class="navlink" href="#rulebook">03 권장 룰북</a>
+  <a class="navlink" href="#scenario">04 시나리오 적용</a>
+  <a class="navlink" href="#lab">05 판정기 실습</a>
+  <a class="navlink" href="#build">06 구현·평가</a>
+  <a class="navlink" href="#decisions">07 팀 합의 사항</a>
+  <a class="navlink" href="#references">08 출처</a>
+  <span class="navspace"></span><button class="small-btn print-controls" type="button" onclick="window.print()">인쇄 / PDF</button>
+</div></nav>
+<main class="container">
+  <section class="section" id="conclusion">
+    <div class="section-head"><span class="section-n">01</span><div><h2>핵심 제안: 표준과 내부 정책을 구분한다</h2><p>기획안 A1~A3를 최대한 유지하면서, 판정 결과에 재현 가능한 근거와 승인 흐름을 추가합니다.</p></div></div>
+    <div class="summary-grid">
+      <div class="card">
+        <div class="eyebrow">One-page recommendation</div><h3>지금은 2개 ISO를 참조하고, 5개 판정 기준을 우선 구현</h3>
+        <div class="concept">
+          <div class="concept-block standard"><div class="cap">국제표준 · 참고 프레임</div><strong>ISO 7573:2008</strong><p>부품 명세서의 최소 정보 요건. 부품 식별, 수량, 명세서 누락 등 데이터 품질 검증의 참고 기준.</p></div>
+          <div class="concept-block policy"><div class="cap">국제표준 · 참고 프레임</div><strong>ISO 10007:2017</strong><p>형상 식별, 변경 통제, 상태 기록, 감사. ECN/Revision/승인 이력 관리에 적용.</p></div>
+        </div>
+        <div class="notice"><b>중요:</b> 이 표준들은 결품 수량, 안전재고, 30일 과잉재고 기준을 직접 규정하지 않습니다. 수치 임계값은 기획안과 가상 회사 정책으로 설정하며, 인증·ISO 적합 판정을 주장하지 않습니다.</div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Recommended MVP scope</div><h3>우선 구현할 판단 5종</h3>
+        <ul class="key-list">
+          <li><span class="check">01</span><span><b>설계변경 차단</b> — 적용일에 허용되지 않는 Revision 사용 금지</span><span class="tag red">차단</span></li>
+          <li><span class="check">02</span><span><b>결품 탐지</b> — 시점별 예상 재고 &lt; 0</span><span class="tag red">위험</span></li>
+          <li><span class="check">03</span><span><b>안전재고 경고</b> — 0 이상, 안전재고 미만</span><span class="tag amber">주의</span></li>
+          <li><span class="check">04</span><span><b>과잉재고 식별</b> — 고가 부품만, 30일 수요·안전재고 초과</span><span class="tag amber">주의</span></li>
+          <li><span class="check">05</span><span><b>추가 발주 가능성</b> — 발주일 + 리드타임 ≤ 필요일</span><span class="tag teal">안내</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="option-grid">
+      <div class="option"><span class="option-label">MUST PRESERVE</span><h3>기존 정답 유지</h3><p>SC1~SC4의 날짜와 수량을 기본 테스트의 정답으로 고정합니다. 새 규정 때문에 원래 판정이 바뀌지 않도록 합니다.</p></div>
+      <div class="option recommended"><span class="tag teal">권장</span><h3>규칙 엔진 + RAG</h3><p>수량·날짜는 코드에서 계산하고, LLM은 규정 근거 검색, 영향 설명, 조치 제안을 담당하게 합니다.</p></div>
+      <div class="option"><span class="option-label">NOT IN MVP</span><h3>ISO 인증 판정 제외</h3><p>ISO 원문 전체 구현, 복잡한 STEP 데이터 교환, ISO 9001 인증 심사는 이번 실습에서 제외합니다.</p></div>
+    </div>
+  </section>
+  <section class="section" id="method">
+    <div class="section-head"><span class="section-n">02</span><div><h2>그렇다면 판단 기준을 어떻게 정할까?</h2><p>표준 문구에서 임계값을 찾기보다, 업무 위험 → 측정식 → 경계 조건 → 테스트 데이터 순서로 확정합니다.</p></div></div>
+    <div class="strategy">
+      <div class="strategy-step"><div class="num">STEP 01 · 근거 구분</div><h3>출처 등급 표시</h3><p><b>ISO 참고</b>, <b>기획안 확정</b>, <b>우리 팀 신규 제안</b>, <b>추후 검증 필요</b>를 분리합니다. 문서에 없는 규칙은 ISO 의무사항처럼 쓰지 않습니다.</p></div>
+      <div class="strategy-step"><div class="num">STEP 02 · 실패 비용</div><h3>무엇이 더 위험한가</h3><p>생산 중단과 무효 Revision 사용은 높은 우선순위, 안전재고와 과잉은 주의 수준. 구매 실행은 언제나 승인 필요.</p></div>
+      <div class="strategy-step"><div class="num">STEP 03 · 수식 정의</div><h3>경계값을 고정</h3><p>‘0 미만’과 ‘0 이하’를 구분하고, 당일 입고 사용 가능 여부, 30일 범위, 안전재고 포함 여부를 정확히 명시합니다.</p></div>
+      <div class="strategy-step"><div class="num">STEP 04 · 골든셋 검사</div><h3>오탐과 미탐 확인</h3><p>기획안 SC1~SC4를 회귀 테스트하고, 경계값·날짜·수량을 바꾼 10~20개 사례로 정책을 검증합니다.</p></div>
+    </div>
+    <div class="formula-grid">
+      <div class="formula"><div class="id">F-01 · 시점별 예상 재고</div><strong>결품·안전재고 판정에 사용하는 값</strong><div class="expression">P(t) = 초기재고 + t까지 누적 입고 − t까지 누적 생산소요</div><p>구매 부품의 소요량은 유효한 다단계 BOM을 전개해 계산합니다. P(t) &lt; 0은 <b>실물 재고가 음수</b>라는 뜻이 아니라 계획상 <b>충족하지 못한 소요</b>를 나타냅니다.</p></div>
+      <div class="formula"><div class="id">F-02 · 생산 소요량</div><strong>제품별·부품별 기초 계산</strong><div class="expression">소요량(p,m,t) = 생산수량(p,t) × BOM 전개수량(p,m,t)</div><p>허브에 들어가는 Wi-Fi 모듈과 그 내부 Wi-Fi 칩을 이중으로 합산하지 않도록, 이번 시연에서는 <b>재고를 관리하는 구매 부품 단위</b>로 전개합니다.</p></div>
+      <div class="formula"><div class="id">F-03 · 고가 부품 과잉량</div><strong>30일 관찰 정책 · 내부 기준</strong><div class="expression">과잉량(t) = max(0, P(t) − 안전재고 − 향후 30일 소요량)</div><p>기획안 SC3의 계산과 일치하는 권장 명시식입니다. 기간은 t 다음 날부터 30일. <b>과잉 경고 ≠ 즉시 폐기 결정</b>입니다.</p></div>
+      <div class="formula"><div class="id">F-04 · 발주 가능 여부</div><strong>데모의 역산 규칙 · 내부 기준</strong><div class="expression">가장 늦은 발주일 = 필요일 − 기준 리드타임</div><p>시연에서는 달력일로 계산하고, 필요일 당일 입고는 사용 가능하다고 가정합니다. 공급사 확약·휴일·검수시간 반영은 MVP 밖입니다.</p></div>
+    </div>
+    <div class="section-callout"><b>기준을 정하는 근거:</b> 날짜·수량·안전재고·고가 여부는 기획안의 초기 데이터에서 가져옵니다. ISO 7573과 ISO 10007은 각각 <b>어떤 정보를 관리할지</b>, <b>어떤 변경통제 절차를 기록할지</b>의 참조 역할입니다.</div>
+  </section>
+  <section class="section" id="rulebook">
+    <div class="section-head"><span class="section-n">03</span><div><h2>권장 정책 룰북 v0.1</h2><p>LLM 프롬프트에 숫자 규칙을 맡기지 않고, 코드가 규칙 ID별로 판정하도록 정의합니다.</p></div></div>
+    <div class="priority-ladder">
+      <div class="priority-item"><div class="small">GATE 0</div><strong>입력 유효성</strong><span>데이터 누락·구조 오류 → 분석 보류</span></div>
+      <div class="priority-item"><div class="small">GATE 1</div><strong>ECN 사용 제한</strong><span>부적합 Revision → 차단</span></div>
+      <div class="priority-item"><div class="small">GATE 2</div><strong>재고 위험</strong><span>결품 → 안전재고 → 과잉</span></div>
+      <div class="priority-item"><div class="small">GATE 3</div><strong>조치 실행 가능성</strong><span>리드타임·타제품 영향 확인</span></div>
+      <div class="priority-item"><div class="small">GATE 4</div><strong>사람의 승인</strong><span>승인 전 발주 변경 금지</span></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>규칙 ID</th><th>권장 판정 조건</th><th>결과·우선순위</th><th>근거 유형</th><th>적용 위치</th></tr></thead>
+      <tbody>
+        <tr><td>DATA-001</td><td><strong>부품 ID/단위/BOM 관계 필수값</strong>이 비거나, 수량이 0 이하이거나, 구매 부품 참조가 없거나, BOM 순환이 발견되면 중단<span class="row-sub">유일 ID·정상 수량·트리 구조는 제안한 내부 규칙</span></td><td><span class="tag dark">분석 보류</span><span class="row-sub">잘못된 입력으로 결품을 단정하지 않음</span></td><td>ISO 7573 참고 + 팀 추가 규칙</td><td>BOM 등록 / 입력 검증</td></tr>
+        <tr><td>ECN-001</td><td><strong>승인되어 발효된 ECN</strong>의 생산일 기준 허용 Revision과 실제 BOM Revision이 불일치</td><td><span class="tag red">차단</span><span class="row-sub">대체 부품 검증 필요</span></td><td>ISO 10007 참고 + SC3 정책</td><td>SC3</td></tr>
+        <tr><td>INV-001</td><td><strong>P(t) &lt; 0</strong>인 생산일 발생<span class="row-sub">필요부품 부족량 = max(0, −P(t))</span></td><td><span class="tag red">위험</span><span class="row-sub">날짜·영향 제품·부족량 표시</span></td><td>A1~A3 기획안 확정</td><td>SC1, SC2, SC4</td></tr>
+        <tr><td>INV-002</td><td><strong>0 ≤ P(t) &lt; 안전재고</strong><span class="row-sub">P(t)=안전재고는 경고하지 않음</span></td><td><span class="tag amber">주의</span><span class="row-sub">결품과 중복 경고하지 않음</span></td><td>A1~A3 기획안 확정</td><td>SC2 MCU</td></tr>
+        <tr><td>INV-003</td><td>고가 부품만: <strong>P(t) &gt; 향후 30일 수요 + 안전재고</strong><span class="row-sub">P(t)는 해당일 입출고 후의 예상 잔고</span></td><td><span class="tag amber">과잉 주의</span><span class="row-sub">조기 입고 조정 대상, 폐기 아님</span></td><td>기획안 30일 기준 + 수식 명확화</td><td>SC2, SC3</td></tr>
+        <tr><td>LT-001</td><td><strong>발주일 + 리드타임 ≤ 필요일</strong>이면 시간상 신규 발주 가능<span class="row-sub">공급사 수락 여부는 별도 확인</span></td><td><span class="tag teal">정상 안내</span><span class="row-sub">최종 발주일 표시</span></td><td>기획안 + 데모 계산 가정</td><td>SC2, SC3</td></tr>
+        <tr><td>WF-001</td><td>발주 수량·입고일 변경은 <strong>구매 담당자 요청 → 팀장 승인</strong>을 통과해야 적용</td><td><span class="tag dark">실행 대기</span><span class="row-sub">반려 시 대안 재제안</span></td><td>ISO 10007 참고 + 기획안 권한</td><td>SC1~SC4 공통</td></tr>
+        <tr><td>AUD-001</td><td>모든 승인 건에 <strong>요청자·승인자·변경 전후·시간·근거</strong> 기록<span class="row-sub">이력 필드의 세부 구성은 팀 제안</span></td><td><span class="tag dark">감사 기록</span></td><td>ISO 10007 참고 + 팀 제안</td><td>공통</td></tr>
+        <tr><td>SEC-001</td><td>생산관리: 금액 비공개 / 구매: 총액 표시 / 팀장: 계약 단가 표시. <strong>LLM 전달 전 필터링</strong></td><td><span class="tag dark">권한 필터</span></td><td>A1~A3 기획안 확정</td><td>공통</td></tr>
+      </tbody>
+    </table></div>
+    <div class="deep-note"><b>동일 시점에 경고가 겹칠 때:</b> DATA 오류는 ‘분석 보류’, 유효한 ECN 사용 제한은 ‘차단’, 재고 음수는 ‘결품 위험’을 우선 보여줍니다. 결품 발생일의 안전재고 경고는 별도로 중복 계산하지 않습니다. 서로 다른 날의 결품 이벤트는 모두 기록하되 <b>각 이벤트 부족량을 무조건 합산해 총 구매량으로 취급하지 않습니다.</b></div>
+  </section>
+  <section class="section" id="scenario">
+    <div class="section-head"><span class="section-n">04</span><div><h2>기획안 4개 시나리오에 대입하면</h2><p>아래 값은 사용자 제공 기획안의 날짜와 예상재고 수치를 사용합니다. 시나리오별 버튼을 눌러 확인해 보세요.</p></div></div>
+    <div class="sc-tabs" role="tablist" aria-label="시나리오 선택">
+      <button class="sc-tab active" type="button" data-scenario="sc1" role="tab" aria-selected="true">SC1 · 일정 당김</button>
+      <button class="sc-tab" type="button" data-scenario="sc2" role="tab" aria-selected="false">SC2 · 주문 변경</button>
+      <button class="sc-tab" type="button" data-scenario="sc3" role="tab" aria-selected="false">SC3 · ECN</button>
+      <button class="sc-tab" type="button" data-scenario="sc4" role="tab" aria-selected="false">SC4 · 입고 지연</button>
+    </div>
+    <div class="scenario" id="scenario-render" aria-live="polite"></div>
+    <div class="notice amber" style="margin-top:16px">SC2의 일부 스위치 케이스 및 릴레이 수요는 <b>기준일에 신규 발주하면 제때 조달 가능한 정상 안내</b>로 구분해야 합니다. 위험 예측과 ‘발주로 해결 가능한 소요’를 하나의 결품 오탐으로 섞지 않는 것이 중요합니다.</div>
+  </section>
+  <section class="section" id="lab">
+    <div class="section-head"><span class="section-n">05</span><div><h2>직접 숫자를 바꿔보는 판정기</h2><p>브라우저에서만 실행되는 실습 도구입니다. 서버나 외부 API 없이 정책 수식과 경계 조건을 즉시 확인할 수 있습니다.</p></div></div>
+    <div class="demo-columns">
+      <div class="demo-card">
+        <h3>① 재고·ECN 판정 실습</h3><p class="demo-desc">SC1~SC4의 대표 입력값을 미리 준비했습니다. 누적 입고와 누적 소요를 포함한 시점별 예상 재고를 계산합니다.</p>
+        <div class="preset-wrap" aria-label="예제 설정"><button class="preset active" type="button" data-preset="sc1">SC1 MCU</button><button class="preset" type="button" data-preset="sc2">SC2 릴레이</button><button class="preset" type="button" data-preset="sc3stock">SC3 BLE 과잉</button><button class="preset" type="button" data-preset="sc3ecn">SC3 구형 케이스</button><button class="preset" type="button" data-preset="sc4">SC4 릴레이</button></div>
+        <div class="fieldgrid">
+          <div class="field"><label for="initial">초기 재고 (개)</label><input id="initial" type="number" min="0" step="1" value="2700"><small>시연 기준일 11/02 시점</small></div>
+          <div class="field"><label for="receipts">판정일까지 누적 입고 (개)</label><input id="receipts" type="number" min="0" step="1" value="0"><small>해당일 입고 포함</small></div>
+          <div class="field"><label for="required">판정일까지 누적 소요 (개)</label><input id="required" type="number" min="0" step="1" value="2800"><small>해당일 생산 소요 포함</small></div>
+          <div class="field"><label for="safety">안전재고 (개)</label><input id="safety" type="number" min="0" step="1" value="300"><small>부품별 마스터 데이터</small></div>
+          <div class="field" style="grid-column:1/-1"><label for="future">판정일 다음 날~30일 동안의 소요 (개)</label><input id="future" type="number" min="0" step="1" value="0"><small>과잉 경고에만 사용합니다. 시나리오의 일부 대표값을 넣어 두었습니다.</small></div>
+        </div>
+        <div class="checks"><label><input id="highcost" type="checkbox" checked> 고가 부품</label><label><input id="ecnvalid" type="checkbox" checked> 생산일에 사용 가능한 Revision</label></div>
+        <div id="inventory-result" class="result-panel" aria-live="polite"></div>
+      </div>
+      <div class="demo-card">
+        <h3>② 추가 발주 리드타임 실습</h3><p class="demo-desc">가상 회사의 달력일 기준 단순 계산입니다. ‘시간상 가능’과 ‘공급사가 확약한 입고’는 다릅니다.</p>
+        <div class="fieldgrid">
+          <div class="field"><label for="orderDate">발주 검토일</label><input type="date" id="orderDate" value="2026-11-02"></div>
+          <div class="field"><label for="needDate">부품 필요일</label><input type="date" id="needDate" value="2026-11-23"></div>
+          <div class="field" style="grid-column:1/-1"><label for="leadDays">리드타임 (달력일)</label><input type="number" min="0" step="1" id="leadDays" value="28"></div>
+        </div>
+        <div id="lead-result" class="result-panel" aria-live="polite"></div>
+        <div class="mini-header">자주 쓰는 대입 예시</div>
+        <div class="testcase"><strong>SC2 · 스위치 케이스</strong><span>11/02 발주 + 21일 = 11/23 도착 → 시간상 가능</span><button class="secondary-btn" type="button" style="margin-top:9px" id="setCase">이 값으로 바꾸기</button></div>
+        <div class="testcase" style="margin-top:9px"><strong>SC3 · 도어센서 새 케이스</strong><span>12/14 발주 + 21일 = 01/04 도착 → 마지막 발주 가능일</span><button class="secondary-btn" type="button" style="margin-top:9px" id="setEcnLead">이 값으로 바꾸기</button></div>
+        <div class="divider"></div>
+        <h4>결품 조치 추천 순서</h4>
+        <div class="checkline"><span class="dot"></span>먼저 ECN 위반과 생산 중단 여부를 해소할 것</div>
+        <div class="checkline"><span class="dot"></span>다른 제품의 공용 부품을 빼앗지 않는지 재계산할 것</div>
+        <div class="checkline"><span class="dot"></span>조기입고·분할납품은 공급사 확약 전까지 <b>제안</b>으로 표시</div>
+        <div class="checkline"><span class="dot"></span>발주 변경은 구매팀장 승인 후 실행할 것</div>
+      </div>
+    </div>
+  </section>
+  <section class="section" id="build">
+    <div class="section-head"><span class="section-n">06</span><div><h2>AI Agent 구현 설계와 평가 방식</h2><p>기획안의 ‘계산 프로그램이 숫자를 만들고 LLM은 설명한다’는 역할 분담을 그대로 확장합니다.</p></div></div>
+    <div class="implementation-grid">
+      <div class="flow-card"><div class="eyebrow">Suggested orchestration</div><h3>규칙 실행 → 문서 근거 검색 → LLM 설명</h3>
+        <div class="flow-stack">
+          <div class="flow-item"><span class="flow-index">1</span><div><strong>이벤트 입력</strong><span>일정 날짜·수량·입고일 변경 요청, 사용자 역할 확인</span></div></div>
+          <div class="flow-item"><span class="flow-index">2</span><div><strong>BOM 전개 & 데이터 검증</strong><span>유효한 부품 구조, 단위, Revision, 재고·발주 기록 검사</span></div></div>
+          <div class="flow-item"><span class="flow-index">3</span><div><strong>정책 엔진 (결정적 계산)</strong><span>DATA / ECN / INV / LT 규칙 실행, 날짜·수량·근거 ID 출력</span></div></div>
+          <div class="flow-item"><span class="flow-index">4</span><div><strong>RAG 규정·ECN 조회</strong><span>가상 구매 규정, ECN 통지서의 문서 ID와 적용일 검색</span></div></div>
+          <div class="flow-item"><span class="flow-index">5</span><div><strong>LLM 조치 제안 & 시뮬레이션</strong><span>납기 조정, 대체 발주, 생산일 변경을 각각 재계산</span></div></div>
+          <div class="flow-item"><span class="flow-index">6</span><div><strong>HITL 승인, 기록, 권한 필터</strong><span>승인 전 DB 원본 변경 금지; 역할별 정보 필터링</span></div></div>
+        </div>
+      </div>
+      <div class="flow-card"><div class="eyebrow">Developer handoff</div><h3>최소 정책 설정 예시</h3><p class="muted small">내부 시연 규칙을 코드로 관리하고 policy_version을 결과에 붙입니다. 아래 JSON은 프로젝트 팀을 위한 제안이지 ISO 원문 재현이 아닙니다.</p>
+        <div class="codepanel"><div class="code-top"><span>policy_v0.1.json (예시)</span><button type="button" class="copy-btn" id="copyPolicy">JSON 복사</button></div><pre id="policy-json"></pre></div>
+        <div class="notice" style="margin-top:16px"><b>LLM이 하지 않을 것:</b> BOM 소요량 재계산, 실제 발주 수정, 승인 누락 상태에서 실행, 없는 조항 번호 생성, 근거 없는 공급 가능성 확약.</div>
+        <div class="divider"></div>
+        <h4>추천 근거 출력 형식</h4><p class="small muted" style="margin-bottom:0">각 경고는 <code>rule_id</code>, <code>part_id</code>, <code>plan_date</code>, <code>projected_stock</code>, <code>threshold</code>, <code>source_doc_id</code>, <code>policy_version</code>를 갖습니다. 문서 근거가 없으면 ‘규정 확인 필요’로 표시합니다.</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:15px">
+      <div class="eyebrow">Acceptance tests</div><h3>골든셋과 경계 테스트를 나눠 평가</h3>
+      <div class="test-grid">
+        <div class="testcase"><strong>기획안 4개 골든 시나리오</strong><span>SC1 −100(2시점), SC2 릴레이 −400/케이스 과잉 300, SC3 구형 케이스 800, SC4 릴레이 −1,000 등</span></div>
+        <div class="testcase"><strong>숫자 경계 검증</strong><span>P = −1 / 0 / 안전재고−1 / 안전재고 / 과잉량 = 0과 1</span></div>
+        <div class="testcase"><strong>날짜 경계 검증</strong><span>ECN 적용일 전날·당일, 입고일=생산일, 리드타임 도착일=필요일</span></div>
+        <div class="testcase"><strong>Agent 안전·설명 검증</strong><span>근거 없는 문서 조항 생성 금지, 승인 전 변경 금지, 생산관리 역할의 금액 유출 방지</span></div>
+      </div>
+      <div class="actionrow"><button class="primary-btn" type="button" id="runTests">브라우저 판정 로직 자가 테스트</button><span class="small muted">내장 10개 단위 테스트 · 현재 파일의 JS만 검사</span></div>
+      <div id="test-output" class="test-output" aria-live="polite"></div>
+      <div class="notice amber" style="margin-top:15px"><b>평가 분리:</b> (1) 규칙 엔진은 기대 수량·날짜의 일치율로 평가하고, (2) LLM은 설명의 사실성, 근거 문서 연결, 해결책의 실행 가능성, 비인가 정보 노출 여부를 따로 평가합니다. 이 HTML 자가 테스트는 실제 DB/RAG/LLM을 검증하지 않습니다.</div>
+    </div>
+  </section>
+  <section class="section" id="decisions">
+    <div class="section-head"><span class="section-n">07</span><div><h2>팀에서 확정해야 할 정책 6개</h2><p>기획안에 없거나 모호한 부분입니다. 아래 권장값은 구현을 위한 제안이며, 최종 요구사항은 팀 합의가 필요합니다.</p></div></div>
+    <div class="question-grid">
+      <div class="question"><b>Q1. 안전재고를 물리적으로 사용 가능한가?</b><p><b>권장:</b> 사용 가능하지만 P(t) &lt; 안전재고이면 경고. 안전재고 부족을 결품과 혼동하지 않습니다.</p></div>
+      <div class="question"><b>Q2. 30일 이후 생산 예정 재고는 폐기 대상인가?</b><p><b>권장:</b> 아니요. ‘과잉 주의’로만 표시하고, 31~90일 수요 및 취소 가능 여부를 보여줍니다. 8주 리드타임 부품의 오탐을 방지합니다.</p></div>
+      <div class="question"><b>Q3. 같은 부품의 여러 날짜 부족량을 더할까?</b><p><b>권장:</b> 날짜별 부족 이벤트는 모두 제시하되, 추가 구매 수량은 입고·배분·생산 조정 후 <b>재시뮬레이션</b>으로 산출합니다.</p></div>
+      <div class="question"><b>Q4. ECN이 미승인 또는 적용일 불명확이면?</b><p><b>권장:</b> 자동 사용 가능 판정 금지. ‘규정 확인 필요’로 보류하고, 승인된 변경 문서와 생산일의 효력 관계를 확인합니다.</p></div>
+      <div class="question"><b>Q5. 이론적 납기 가능과 실제 확정 납기는?</b><p><b>권장:</b> 두 상태를 분리합니다. LT-001이 가능이라고 하더라도 공급사가 확약하지 않았다면 ‘구매 요청 후보’로만 표시합니다.</p></div>
+      <div class="question"><b>Q6. 검증 기준을 언제 다시 조정할까?</b><p><b>권장:</b> MVP에서는 기존 30일·안전재고를 고정하고, 테스트 10~20개 수행 후 과잉 오탐과 납기 미탐을 보고 버전업합니다.</p></div>
+    </div>
+  </section>
+  <section class="section" id="references">
+    <div class="section-head"><span class="section-n">08</span><div><h2>근거 문서와 적용 범위</h2><p>ISO 공식 소개 자료로 적용 범위를 확인했습니다. 표준 전문을 확보하지 않은 상태에서 조항별 인증 판정을 내리지 않습니다.</p></div></div>
+    <div class="source-card">
+      <h3>프로젝트 내부 자료</h3>
+      <ul class="sources">
+        <li><strong>BOM_Agent_기획안_A1-A3 (3).pdf</strong> (2026-10-19): p.2 판단기준과 7개 문제 유형, p.3~4 승인·권한, p.5~9 가온스마트 데이터, p.10~16 SC1~SC4, p.17 차기 안건.</li>
+        <li><strong>기획안 확정값:</strong> 결품 &lt; 0, 안전재고 미만 경고, 고가 부품 30일 기준 과잉, 당일 입고 사용 가능, 1창고, 불량 없음, 시연 기준일 2026-11-02.</li>
+        <li><strong>이번 HTML에서 추가한 정책:</strong> DATA-001 구조 검사, ECN/GATE 선후관계, 과잉량의 명시식, 원인·근거 ID, 우선순위, 경계 테스트, 리드타임 계산 가정.</li>
+      </ul>
+      <div class="divider"></div>
+      <h3>국제표준 · ISO 공식 자료</h3>
+      <ul class="sources">
+        <li><a href="https://www.iso.org/standard/43883.html" target="_blank" rel="noreferrer noopener">ISO 7573:2008 — Technical product documentation — Parts lists ↗</a><br><span class="muted">부품 명세서에 필요한 최소 정보 요구사항과 적용 범위. 2023년 재확인 상태.</span></li>
+        <li><a href="https://www.iso.org/standard/70400.html" target="_blank" rel="noreferrer noopener">ISO 10007:2017 — Quality management — Guidelines for configuration management ↗</a><br><span class="muted">형상관리 지침. 변경통제, 형상 식별, 상태 관리와 관련된 역할을 참고. ISO 공식 페이지상 2017판이 현행 출판판이며 개정 작업 진행 중.</span></li>
+        <li><a href="https://committee.iso.org/sites/tc176/home/projects/published/iso-10007-2017.html" target="_blank" rel="noreferrer noopener">ISO/TC 176의 ISO 10007 설명 페이지 ↗</a><br><span class="muted">책임·권한, 형상관리 계획, 형상 식별, 변경통제, 상태 기록, 감사에 관한 개요.</span></li>
+        <li><a href="https://www.iso.org/standard/78832.html" target="_blank" rel="noreferrer noopener">ISO 10303-239:2024 — Product life cycle support ↗</a><br><span class="muted">복잡한 제품 구조, 버전, 변경 이력 데이터 표현 참조. 이번 MVP에서는 구현하지 않음.</span></li>
+      </ul>
+      <p class="print-note">작성 기준일: 2026-10-20. ISO 표준은 유료 원문을 별도 확보해야 세부 조항에 따른 규범적 적합성 검토를 할 수 있습니다. 본 문서는 교육용·기획용 참고자료입니다.</p>
+    </div>
+  </section>
+</main>
+<footer class="footer"><div class="wrapper footer-inner"><div><strong>BOM AGENT / DECISION POLICY</strong><p>가온스마트 가상 시나리오 · ISO 참고 기반 규칙 설계</p></div><div>Version 0.1 · 2026.10.20 · Static offline HTML<br>숫자 판정은 규칙 엔진, 설명과 제안은 AI Agent</div></div></footer>
+<script>
+'use strict';
+const scenarios={
+  sc1:{label:'SC1 · 일정 당김',name:'허브만 앞당겼는데 플러그까지 영향',desc:'IoT 허브 400대의 생산일을 2026-12-14에서 2026-11-25로 당깁니다. 4개 제품이 공유하는 MCU 재고가 문제입니다.',metric:'−100개',metricLabel:'MCU 예상 부족량',metricDate:'11/25 허브, 11/30 플러그에 각각 부족 이벤트',facts:[['변경 입력','허브 400대 · 12/14 → 11/25'],['11/25 재고','MCU 예상 잔고 −100개'],['11/30 재고','MCU 예상 잔고 −100개'],['관련 규칙','INV-001 · 공동 부품 영향 재검사']],action:'11/27 MCU 입고분의 조기·분할 납품 가능성을 협력사에 확인하고, 각 안을 다시 시뮬레이션한 후 발주 변경 승인 요청.',tip:'11/25와 11/30의 각각 −100은 위험이 발생한 두 시점이지 곧바로 추가 구매 200개를 의미하지 않습니다.',pages:'기획안 p.10~11',tags:['위험','공용 부품']},
+  sc2:{label:'SC2 · 주문 변경',name:'생산 총대수는 같아도 소요 부품은 다름',desc:'스위치는 600→900대, 플러그는 800→500대로 변경합니다. 릴레이 사용량과 생산시점 차이 때문에 부족과 과잉이 동시에 발생합니다.',metric:'−400개',metricLabel:'11/23 릴레이 예상 부족량',metricDate:'같은 날 전원 모듈 −200 / MCU 잔고 0(안전재고 300 미만)',facts:[['결품 위험','11/23 릴레이 −400, 전원 모듈 −200'],['안전재고 경고','11/23 MCU 0 < 안전재고 300'],['과잉 경고','플러그 케이스 300개 · 관리자 조회 시 48만 원'],['정상 추가 발주','스위치 케이스 300개(11/23까지 가능), 11/30 릴레이 300개']],action:'11/27 릴레이·전원 모듈 입고 당김을 요청하고, 스위치 케이스·추가 릴레이는 리드타임을 확인해 정상 발주로 안내. 플러그 케이스는 발주 축소 검토.',tip:'“발주하면 제때 도착하는 추가 소요”는 자동으로 결품 오류라고 판정하지 않습니다. 현재 확정 발주 기준 위험과 새 발주 대안을 분리 표시합니다.',pages:'기획안 p.12~13',tags:['위험','주의','정상 발주']},
+  sc3:{label:'SC3 · 설계변경',name:'생산은 미뤘지만 ECN 적용일을 넘어감',desc:'도어센서 800대 생산일이 2026-11-18에서 2027-01-04로 변경됩니다. 구형 케이스는 12/01부터 사용할 수 없습니다.',metric:'800개',metricLabel:'사용 불가 구형 케이스',metricDate:'신형 케이스 800개 필요 · 12/14까지 발주 가능',facts:[['ECN 적용일','2026-12-01 · 구형 케이스 사용 금지'],['구형 케이스','800개 사용 불가 · 관리자 조회 시 64만 원'],['신형 케이스','800개 필요 · 마지막 발주 가능일 12/14'],['30일 과잉','11/20 기준 BLE·홀 센서·코인전지 각각 800개']],action:'승인된 ECN을 근거로 구형 케이스 사용을 차단하고, 계약 조항 확인 후 취소·반품을 요청합니다. 신형 케이스 발주와 다른 세 부품의 입고 연기를 승인 요청합니다.',tip:'구형 케이스는 단순 “30일 과잉”이 아니라 ECN에 따른 사용 불가 재고입니다. 폐기·반품 결정은 별도 내부 절차와 계약에 따릅니다.',pages:'기획안 p.14~15',tags:['차단','과잉','ISO 10007']},
+  sc4:{label:'SC4 · 입고 지연',name:'릴레이 입고가 1주 늦어 스위치 생산 차질',desc:'11/20 입고 예정 릴레이 1,200개가 11/27로 연기됩니다. 11/23에 스위치 600대를 생산하려면 릴레이 1,200개가 필요합니다.',metric:'−1,000개',metricLabel:'11/23 릴레이 예상 부족량',metricDate:'스위치 500대분에 해당 · 11/27 입고 시 해소',facts:[['기존 입고','11/20 릴레이 1,200개'],['변경 입고','11/27 릴레이 1,200개'],['11/23 생산','릴레이 예상 잔고 −1,000개'],['영향 생산량','스위치 500대분']],action:'11/23 전 릴레이 1,000개 분할 납품 또는 11/27 생산일 조정을 각각 시뮬레이션한 뒤, 구매팀장 승인 대상으로 제안합니다.',tip:'협력사 지연 사유가 확인되더라도 “11/23 분할납품 가능”은 아직 확정된 사실이 아닙니다. 요청 후보와 확정 입고를 구분합니다.',pages:'기획안 p.16',tags:['위험','납기']}
+};
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function scenarioHTML(s){return `<article class="card scenario-main"><div class="scenario-kicker">${esc(s.label)} / ${esc(s.pages)}</div><h3>${esc(s.name)}</h3><p class="scenario-summary">${esc(s.desc)}</p><div class="evidence"><dl>${s.facts.map(x=>`<dt>${esc(x[0])}</dt><dd>${esc(x[1])}</dd>`).join('')}</dl></div><h4>Agent가 추천할 다음 단계</h4><p class="small">${esc(s.action)}</p><div class="notice amber"><b>판정 시 유의점:</b> ${esc(s.tip)}</div></article><aside class="card"><div class="eyebrow">Expected output · 골든셋</div><div class="alert-result"><div class="big">${esc(s.metric)}</div><div><strong>${esc(s.metricLabel)}</strong><span class="small">${esc(s.metricDate)}</span></div></div><div class="badge-flex" style="margin-bottom:15px">${s.tags.map(t=>`<span class="tag ${t==='차단'||t==='위험'?'red':t==='주의'||t==='과잉'?'amber':'teal'}">${esc(t)}</span>`).join('')}</div><div class="scenario-rulebox"><h4>판정 근거가 남아야 하는 이유</h4><div class="mini-row"><span>데이터 원천</span><span>기획안 생산·재고·발주 기록</span></div><div class="mini-row"><span>규칙 원천</span><span>INV / ECN / LT, ISO 참고 개념</span></div><div class="mini-row"><span>출력 형태</span><span>부품, 필요일, 예상 잔고, 규칙 ID</span></div><div class="mini-row"><span>권한 처리</span><span>금액·단가 역할별 표시</span></div><div class="fineprint">주의: “표준 참조”와 “ISO 위반 확정”은 다릅니다.</div></div></aside>`}
+function showScenario(key){document.getElementById('scenario-render').innerHTML=scenarioHTML(scenarios[key]); document.querySelectorAll('[data-scenario]').forEach(b=>{const v=b.dataset.scenario===key;b.classList.toggle('active',v);b.setAttribute('aria-selected',v?'true':'false');});}
+for(const b of document.querySelectorAll('[data-scenario]')) b.addEventListener('click',()=>showScenario(b.dataset.scenario));showScenario('sc1');
+const inputs=['initial','receipts','required','safety','future'];
+const presets={
+ sc1:{initial:2700,receipts:0,required:2800,safety:300,future:0,highcost:true,ecnvalid:true,detail:'2026-11-25 · 허브 생산 후 MCU'},
+ sc2:{initial:200,receipts:2200,required:2800,safety:200,future:0,highcost:true,ecnvalid:true,detail:'2026-11-23 · 스위치 생산 후 릴레이'},
+ sc3stock:{initial:200,receipts:1200,required:0,safety:200,future:400,highcost:true,ecnvalid:true,detail:'2026-11-20 · BLE 칩의 30일 과잉'},
+ sc3ecn:{initial:0,receipts:800,required:0,safety:0,future:0,highcost:true,ecnvalid:false,detail:'2027-01-04 · 구형 케이스, ECN 사용 금지'},
+ sc4:{initial:200,receipts:1000,required:2200,safety:200,future:0,highcost:true,ecnvalid:true,detail:'2026-11-23 · 입고 지연 후 릴레이'}
+};
+let selectedPreset='sc1';
+function intVal(id){const x=Number(document.getElementById(id).value);return Number.isFinite(x)?x:NaN;}
+const fmt=x=>new Intl.NumberFormat('ko-KR',{maximumFractionDigits:0}).format(x);
+function calculateInventory(x){const v=[x.initial,x.receipts,x.required,x.safety,x.future];if(v.some(k=>!Number.isFinite(k)||k<0||!Number.isInteger(k)))return {status:'invalid',label:'입력 확인 필요',details:'음수가 아닌 정수로 수량을 입력하세요.'};const projected=x.initial+x.receipts-x.required,over=x.highcost&&x.ecnvalid&&projected>=0?Math.max(0,projected-x.safety-x.future):0;let status='normal',label='정상',details='결품·안전재고 부족·30일 과잉 조건에 해당하지 않습니다.';if(!x.ecnvalid){status='blocked';label='ECN 사용 제한 · 차단';details='생산일에 허용되지 않는 Revision입니다. 이 부품의 계획 사용을 중단하고 승인된 ECN과 대체 부품을 확인하세요.';}else if(projected<0){status='shortage';label='결품 위험';details=`예상 소요를 ${fmt(-projected)}개 충족하지 못합니다. 다른 제품 영향과 입고 일정도 확인해야 합니다.`;}else if(projected<x.safety){status='safety';label='안전재고 주의';details=`재고는 음수가 아니지만 안전재고보다 ${fmt(x.safety-projected)}개 부족합니다.`;}else if(over>0){status='excess';label='30일 과잉 주의';details=`고가 부품 기준으로 ${fmt(over)}개가 30일 수요 및 안전재고를 초과합니다. 폐기가 아닌 입고·발주 조정 후보입니다.`;}return {status,label,details,projected,over,unavailable:x.ecnvalid?0:Math.max(0,x.initial+x.receipts)};}
+function formInventory(){return {initial:intVal('initial'),receipts:intVal('receipts'),required:intVal('required'),safety:intVal('safety'),future:intVal('future'),highcost:document.getElementById('highcost').checked,ecnvalid:document.getElementById('ecnvalid').checked}}
+function renderInventory(){const x=formInventory(),r=calculateInventory(x);const el=document.getElementById('inventory-result');const cls=r.status==='blocked'||r.status==='shortage'?'danger':r.status==='safety'||r.status==='excess'?'warning':r.status==='normal'?'success':'neutral';el.className='result-panel '+cls;const num=r.projected===undefined?'—':(r.projected>=0?'+':'')+fmt(r.projected)+'개';let parts=`<div class="result-top"><div class="result-title">${esc(r.label)}</div><span class="tag ${cls==='danger'?'red':cls==='warning'?'amber':cls==='success'?'teal':'dark'}">${r.status==='blocked'?'BLOCK':r.status==='shortage'?'RISK':r.status==='excess'?'EXCESS':r.status==='safety'?'WARN':r.status==='normal'?'PASS':'CHECK'}</span></div>`;if(r.status!=='invalid')parts+=`<div><span class="result-number">${num}</span><span class="small muted">예상 잔고 P(t)</span></div>`;parts+=`<p class="result-text">${esc(r.details)}</p>`;if(r.status!=='invalid')parts+=`<div class="result-formula">P = ${fmt(x.initial)} + ${fmt(x.receipts)} − ${fmt(x.required)} = ${fmt(r.projected)}<br>고가부품 30일 과잉 = ${!x.ecnvalid?'판정 제외 (ECN 차단 우선)':x.highcost?fmt(r.over)+'개':'검사 제외 (소모품)'}</div>`;el.innerHTML=parts;}
+function setPreset(key){selectedPreset=key;const p=presets[key];for(const id of inputs)document.getElementById(id).value=p[id];document.getElementById('highcost').checked=p.highcost;document.getElementById('ecnvalid').checked=p.ecnvalid;document.querySelectorAll('[data-preset]').forEach(b=>b.classList.toggle('active',b.dataset.preset===key));renderInventory();}
+for(const b of document.querySelectorAll('[data-preset]'))b.addEventListener('click',()=>setPreset(b.dataset.preset));for(const id of inputs)document.getElementById(id).addEventListener('input',()=>{document.querySelectorAll('[data-preset]').forEach(b=>b.classList.remove('active'));renderInventory();});for(const id of ['highcost','ecnvalid'])document.getElementById(id).addEventListener('change',()=>{document.querySelectorAll('[data-preset]').forEach(b=>b.classList.remove('active'));renderInventory();});setPreset('sc1');
+function parseDate(v){if(!/^\d{4}-\d{2}-\d{2}$/.test(v))return NaN;const [y,m,d]=v.split('-').map(Number);const n=Date.UTC(y,m-1,d);const dt=new Date(n);return dt.getUTCFullYear()===y&&dt.getUTCMonth()===m-1&&dt.getUTCDate()===d?n:NaN;}
+function isoDate(n){return new Date(n).toISOString().slice(0,10)}
+function leadCheck(o,n,d){const ov=parseDate(o),nv=parseDate(n);if(!Number.isFinite(ov)||!Number.isFinite(nv)||!Number.isInteger(d)||d<0)return {valid:false};const arrival=ov+d*86400000,latest=nv-d*86400000;return {valid:true,ok:arrival<=nv,arrival:isoDate(arrival),latest:isoDate(latest),slack:Math.round((nv-arrival)/86400000)}}
+function renderLead(){const order=document.getElementById('orderDate').value,need=document.getElementById('needDate').value,lead=Number(document.getElementById('leadDays').value);const r=leadCheck(order,need,lead),el=document.getElementById('lead-result');el.className='result-panel '+(!r.valid?'neutral':r.ok?'success':'danger');if(!r.valid){el.innerHTML='<div class="result-title">날짜와 리드타임을 확인하세요.</div>';return;}el.innerHTML=`<div class="result-top"><div class="result-title">${r.ok?'시간상 발주 가능':'기준 리드타임으로는 늦음'}</div><span class="tag ${r.ok?'teal':'red'}">${r.ok?'FEASIBLE':'LATE'}</span></div><div class="result-formula">예상 도착: ${r.arrival}<br>마지막 발주 가능일: ${r.latest}<br>필요일 대비 ${r.slack>=0?'여유 '+fmt(r.slack)+'일':'지연 '+fmt(-r.slack)+'일'}</div><p class="result-text">${r.ok?'기준 리드타임 상 시간은 맞습니다. 공급사 확약과 발주 승인은 별도로 필요합니다.':'발주만으로 맞출 수 없습니다. 조기 입고·긴급 구매·생산일 변경 후보를 검토하세요.'}</p>`}
+for(const id of ['orderDate','needDate','leadDays'])document.getElementById(id).addEventListener('input',renderLead);document.getElementById('setCase').addEventListener('click',()=>{document.getElementById('orderDate').value='2026-11-02';document.getElementById('needDate').value='2026-11-23';document.getElementById('leadDays').value=21;renderLead();});document.getElementById('setEcnLead').addEventListener('click',()=>{document.getElementById('orderDate').value='2026-12-14';document.getElementById('needDate').value='2027-01-04';document.getElementById('leadDays').value=21;renderLead();});renderLead();
+const policy={policy_version:'demo-v0.1',baseline_date:'2026-11-02',scope:'GAON_SMART_A1-A3',iso_reference:['ISO 7573:2008','ISO 10007:2017'],inventory:{same_day_receipt_usable:true,shortage_if_projected_lt:0,safety_warning_if_projected_lt_part_safety:true,excess_window_days:30,excess_high_value_only:true,excess_formula:'max(0, projected - safety - demand_next_30d)'},ecn:{approved_effective_revision_required:true,invalid_revision_action:'BLOCK'},procurement:{lead_time_unit:'calendar_days',arrival_same_day_usable:true,supplier_confirmation_required:true},workflow:{po_change_requester:'BUYER',approver:'MANAGER',change_without_approval:'DENY',audit_log_required:true},notes:'Simulation policy; not an ISO compliance certification'};
+const policyText=JSON.stringify(policy,null,2);document.getElementById('policy-json').textContent=policyText;
+document.getElementById('copyPolicy').addEventListener('click',async()=>{const b=document.getElementById('copyPolicy');try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(policyText);else{const t=document.createElement('textarea');t.value=policyText;t.style.position='fixed';t.style.left='-9999px';document.body.appendChild(t);t.select();if(!document.execCommand('copy'))throw Error('copy');t.remove();}b.textContent='복사됨';setTimeout(()=>b.textContent='JSON 복사',1700);}catch(e){b.textContent='복사 불가';setTimeout(()=>b.textContent='JSON 복사',1700);}});
+const tc=(stock,receipts,required,safety,future,highcost=true,ecnvalid=true)=>calculateInventory({initial:stock,receipts,required,safety,future,highcost,ecnvalid});
+document.getElementById('runTests').addEventListener('click',()=>{
+  const tests=[
+    ['SC1 MCU -100',tc(2700,0,2800,300,0).projected===-100 && tc(2700,0,2800,300,0).status==='shortage'],
+    ['SC2 릴레이 -400',tc(200,2200,2800,200,0).projected===-400],
+    ['SC3 BLE 과잉 800',tc(200,1200,0,200,400).over===800 && tc(200,1200,0,200,400).status==='excess'],
+    ['SC3 구형 케이스 차단',tc(0,800,0,0,0,true,false).status==='blocked'],
+    ['SC4 릴레이 -1000',tc(200,1000,2200,200,0).projected===-1000],
+    ['재고 0/안전재고 0: 정상',tc(0,0,0,0,0).status==='normal'],
+    ['잔고가 안전재고와 같으면 정상',tc(200,0,0,200,0).status==='normal'],
+    ['안전재고보다 1개 적으면 주의',tc(199,0,0,200,0).status==='safety'],
+    ['리드타임 경계: 당일 도착 가능',leadCheck('2026-11-02','2026-11-23',21).ok===true],
+    ['리드타임 초과: 28일은 불가능',leadCheck('2026-11-02','2026-11-23',28).ok===false]
+  ];const failed=tests.filter(x=>!x[1]);const out=document.getElementById('test-output');out.innerHTML=failed.length?`<b style="color:#b33b42">${tests.length-failed.length}/${tests.length} 통과</b> · 실패: ${failed.map(x=>esc(x[0])).join(', ')}`:`<b style="color:#087563">${tests.length}/${tests.length} 통과</b> · SC1~SC4 핵심값과 숫자·날짜 경계 통과 (브라우저 내장 계산만)`;
+});
+const navs=Array.from(document.querySelectorAll('.navlink'));const sections=navs.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(visible){navs.forEach(n=>n.classList.toggle('active',n.getAttribute('href')==='#'+visible.target.id));}},{rootMargin:'-90px 0px -60% 0px',threshold:[0,.1,.3]});sections.forEach(s=>observer.observe(s));
+</script>
+</body>
+</html>

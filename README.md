@@ -12,6 +12,7 @@ ai-agent-capstone/
 ├─ README.md
 ├─ docs/
 │  ├─ decisions.md             결정 기록 (스크럼 확정 + 판단 근거)
+│  ├─ bom_agent_policy_v0.1.html  판단 기준 설계안 (규칙 ID·수식, 브라우저로 열기)
 │  ├─ walking-skeleton.md      이 뼈대의 근거·의도·기준과 다른 점
 │  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
 │  └─ AI_Agent_Capstone_MCP_정리.md   교재 정리 노트

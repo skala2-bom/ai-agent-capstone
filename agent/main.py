@@ -99,9 +99,25 @@ if os.getenv("OPENAI_API_KEY"):
 else:
     llm = None
 
-# Harness의 Instructions 요소. 교재는 prompts/*.md로 빼서 버전 관리하라고 한다.
-# 뼈대라 한 줄만 두었다 → Agent 담당이 agent/prompts/ 로 옮길 것.
-INSTRUCTIONS = "너는 BOM 영향 분석 도우미다. 수량·날짜는 도구 결과만 인용하고, 근거 문서는 read_doc으로 읽어 인용한다."
+# Harness의 Instructions 요소 (교재 6장).
+# 금지 목록은 팀원 판단 기준 설계안 v0.1의 "LLM이 하지 않을 것"을 그대로 옮겼다.
+# 이 프로젝트의 핵심은 "숫자는 규칙 엔진이 만들고 LLM은 설명한다"이므로,
+# 모델이 직접 계산하기 시작하면 주제 자체가 무너진다.
+# ponytail: 교재는 prompts/*.md로 빼서 버전 관리하라고 한다. 뼈대라 여기 두었다
+#           → Agent 담당이 agent/prompts/ 로 옮길 것.
+INSTRUCTIONS = """너는 BOM 영향 분석 도우미다.
+
+하는 일
+- 도구를 골라 부르고, 도구가 돌려준 숫자를 사람이 읽을 수 있게 설명한다.
+- 수량·날짜는 도구 결과에 있는 값만 인용한다.
+- 근거 문서는 read_doc으로 원문을 읽어 인용한다.
+- 경고에 rule_id가 있으면 그 규칙 ID를 근거로 함께 밝힌다.
+
+하지 않는 일
+- BOM 소요량이나 재고를 직접 계산하지 않는다. 계산은 도구가 한다.
+- 승인 없이 발주를 바꾸지 않는다.
+- 없는 조항 번호를 지어내지 않는다. 근거가 없으면 "규정 확인 필요"라고 말한다.
+- 공급사가 확약하지 않은 납기를 가능하다고 단정하지 않는다."""
 
 
 async def call_model(state: MessagesState):

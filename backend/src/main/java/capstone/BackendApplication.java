@@ -151,20 +151,34 @@ public class BackendApplication {
      * <p>지금은 고정 JSON이다. 값은 아키텍처 4.3 시퀀스(SC1 "허브를 11/25로 당기면?")의
      * 정답을 그대로 적었다. 화면까지 흐름이 맞는지 보는 용도다.
      *
+     * <p><b>응답 모양은 가짜가 아니라 계약이다.</b> 판단 기준 설계안 v0.1의
+     * "근거 출력 형식"을 따른다. 경고 한 건마다 아래를 붙인다.
+     * <ul>
+     *   <li>{@code rule_id} — 어느 규칙으로 걸렸나 (INV-001 결품 / INV-002 경고 / INV-003 과잉)</li>
+     *   <li>{@code projected_stock}, {@code threshold} — 어떤 숫자가 어떤 선을 넘었나</li>
+     *   <li>{@code policy_version} — 어느 기준으로 나온 숫자인가. 기준을 바꿔도 과거 결과를 해석할 수 있다</li>
+     * </ul>
+     * 이게 있어야 AI가 "왜 결품인지"를 지어내지 않고 규칙 ID로 설명할 수 있다.
+     *
      * <p>실제 계산을 넣을 때 (→ analysis 모듈):
      * <ul>
-     *   <li>날짜별 재고 흐름을 만든 뒤 아키텍처 1.2 기준으로 판정</li>
-     *   <li>결품 = 재고 &lt; 0 / 경고 = 안전재고 미만 / 과잉 = 리드타임 기간 소요량 초과</li>
-     *   <li>역할에 따라 금액·단가를 가린 뒤 돌려준다 (masking 모듈)</li>
+     *   <li>P(t) = 초기재고 + 누적입고 − 누적소요 를 날짜별로 만든다 (아키텍처 1.2 F-01)</li>
+     *   <li>결품 P(t)&lt;0 / 경고 0≤P(t)&lt;안전재고 / 과잉은 고가 부품만</li>
+     *   <li>같은 날 결품과 경고가 겹치면 결품만 남긴다</li>
+     *   <li>역할에 따라 금액·단가를 가린 뒤 돌려준다 (masking 모듈, 규칙 SEC-001)</li>
      * </ul>
      */
     @PostMapping("/internal/analysis/impact")
     Map<String, Object> analyzeImpact(@RequestBody(required = false) Map<String, Object> whatif) {
         return Map.of(
+                "policy_version", "v0.1",
                 "shortages", List.of(
-                        Map.of("item_id", "MCU", "plan_id", "PP-05", "qty", 100, "date", "2026-11-25"),
-                        Map.of("item_id", "MCU", "plan_id", "PP-04", "qty", 100, "date", "2026-11-26")),
-                "excesses", List.of(),
+                        Map.of("rule_id", "INV-001", "item_id", "MCU", "plan_id", "PP-05",
+                                "plan_date", "2026-11-25", "projected_stock", -100, "threshold", 0, "qty", 100),
+                        Map.of("rule_id", "INV-001", "item_id", "MCU", "plan_id", "PP-04",
+                                "plan_date", "2026-11-26", "projected_stock", -100, "threshold", 0, "qty", 100)),
+                "warnings", List.of(),   // INV-002: 0 ≤ P(t) < 안전재고
+                "excesses", List.of(),   // INV-003: 고가 부품만
                 // agent가 이 주소로 rag-mcp Resource를 읽어 근거로 인용한다.
                 // 실제로는 analysis가 아니라 rag-mcp 검색 결과에서 나와야 할 값이다.
                 "evidence_uri", "doc://ECN-2026-014/3.2");
