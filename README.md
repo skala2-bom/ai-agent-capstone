@@ -8,7 +8,7 @@
 
 ```
 ai-agent-capstone/
-├─ docker-compose.yml          상시 서비스 6개 + 수동 rag-index (공개 포트: frontend 3000, backend 8080)
+├─ docker-compose.yml          상시 서비스 7개 + 수동 rag-index (공개 포트: frontend 3000, backend 8080)
 ├─ .env.example                OPENAI_API_KEY, OPENAI_MODEL (복사해서 .env로)
 ├─ .gitignore
 ├─ README.md
@@ -29,6 +29,7 @@ ai-agent-capstone/
 │  └─ src/main/java/capstone/
 │     ├─ BackendApplication.java   시작점, 모듈 목록
 │     ├─ Tasks.java                AI 작업 접수(202), 이벤트 저장·SSE 중계, 승인 결정 후 재개
+│     ├─ TaskQueue.java            AI 작업 대기열(RabbitMQ) 설정 — 30초·2분 재시도, DLQ
 │     ├─ InternalApi.java          /internal/** 도구 8개
 │     ├─ ImpactAnalysis.java · OptionAnalysis.java   영향 분석·대안 비교 계산
 │     ├─ Approvals.java            승인 카드·대기함·실행 전 확인·변경 이력
@@ -63,7 +64,7 @@ SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](do
   ▼
 frontend (nginx, /api/** 를 backend로 넘김)
   ▼
-backend :8080 ── ② POST /agent/tasks ──▶ agent :8000 (FastAPI + LangGraph)
+backend :8080 ── ② RabbitMQ → backend 소비자 → POST /agent/tasks ──▶ agent :8000
   ▲  ▲                                     │ ④ MCP Streamable HTTP /mcp
   │  │                                     ├─▶ business-mcp :9101  업무 도구 13개
   │  └── ⑤ /internal/** ──────────────────┘     (backend의 실제 계산·승인된 변경)
@@ -72,7 +73,7 @@ backend :8080 ── ② POST /agent/tasks ──▶ agent :8000 (FastAPI + Lang
 ```
 
 1. 화면이 질문을 보내면 backend가 작업을 만들고 바로 `202 {taskId}`를 돌려준다.
-2. backend가 agent에 작업 실행을 요청한다.
+2. backend가 RabbitMQ에 작업을 넣고, backend 소비자가 agent에 HTTP로 실행을 요청한다. 승인 후 재개도 같은 대기열을 거치며, 전달 실패 시 30초·2분 뒤 재시도한다.
 3. 영향 분석은 `analyze_impact`, 문서 근거는 `search_docs`로 찾고 해당 URI의 원문을 읽는다. 해결 요청은 품목·규칙별 비교 → 재계산 검증 → 근거 확인 → 승인 → 실행 → 남은 문제 분석을 반복한다.
 4. 도구 실행 전후와 끝날 때 agent가 backend로 이벤트를 보내고, backend가 SSE로 화면에 넘긴다. 구독 전에 쌓인 이벤트는 구독할 때 다시 보낸다.
 
@@ -124,7 +125,7 @@ cd backend && mvn test
 | 폴더              | 지금 들어 있는 것                                                                                                                                                                                                           | 채울 사람                         | 채울 내용 (아키텍처 문서 기준)                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------- |
 | `frontend/`     | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드)                                                                                                                                                                            | 프론트 담당                       | (API 모드 화면 전부 연결됨) 과잉 해결안의 승인 요청은 agent 처리 후 |
-| `backend/`      | 작업 접수·이벤트 저장·SSE 중계(`Tasks`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당                       | (1~9단계 완료) 대기열(RabbitMQ, 가산점)                             |
+| `backend/`      | 작업 접수·대기열·이벤트 저장·SSE 중계(`Tasks`·`TaskQueue`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당                       | (1~9단계, 대기열 완료)                             |
 | `agent/`        | 의도 분류·영향 분석·문서 QA·품목별 결품/과잉 승인·실행, checkpointer                                                                                                                                                    | Agent 담당                        | 실제 모델 회귀 평가·프롬프트 개선                                  |
 | `business-mcp/` | 조회·계산·변경 도구 13개, 서비스 토큰 분리                                                                                                                                                                                | MCP 담당                          | backend 계약 동기화                                                 |
 | `rag-mcp/`      | 실제 원문 Resource·`search_docs`·pgvector·증분 indexer                                                                                                                                                                 | RAG 담당                          | 문서 갱신·재색인·검색 품질 평가                                   |
@@ -135,5 +136,5 @@ cd backend && mvn test
 
 ## 일부러 뺀 것
 
-- `TOKEN` 스트리밍, healthcheck(postgres만 있음)
-- 대기열(RabbitMQ, 가산점)은 아직 없다.
+- `TOKEN` 스트리밍, 서비스별 healthcheck(postgres·rabbitmq만 있음)
+- 작업 대기열(RabbitMQ)은 backend가 넣고 backend가 꺼내 agent에 보낸다. agent가 꺼져 있으면 30초·2분 뒤 다시 보낸다 ([decisions 6.24](docs/decisions.md)).

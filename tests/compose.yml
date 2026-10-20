@@ -22,8 +22,23 @@ services:
       JWT_SECRET: test-only-secret-at-least-thirty-two-bytes
       AGENT_SERVICE_TOKEN: test-agent-token
       BUSINESS_MCP_SERVICE_TOKEN: test-business-token
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: test
+      SPRING_RABBITMQ_PASSWORD: test-only
     depends_on:
       postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+  rabbitmq:
+    image: rabbitmq:4.1
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: test
+      RABBITMQ_DEFAULT_PASS: test-only
+    volumes: [testmq:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      retries: 30
   business-mcp:
     build: ../business-mcp
     image: capstone-ai-test-business
@@ -67,3 +82,4 @@ services:
     command: ["python", "-u", "integration_scenarios.py"]
 volumes:
   testdata:
+  testmq:

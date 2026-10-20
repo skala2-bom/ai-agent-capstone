@@ -2,14 +2,16 @@ package capstone;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -21,6 +23,9 @@ import static capstone.InternalApi.m;
 
 /**
  * task 모듈 — AI 작업 접수, 진행 이벤트 저장·중계(SSE), 승인 결정 후 재개 (아키텍처 4.3·4.4·9장).
+ *
+ * <p><b>agent에 바로 보내지 않고 대기열을 거친다</b> ({@link TaskQueue}). 접수·재개 요청을 {@code ai.tasks}에 넣고,
+ * {@link #deliver}가 꺼내 agent에 보낸다. agent가 죽어 있어도 작업이 사라지지 않고 30초·2분 뒤 다시 보낸다.
  *
  * <p><b>저장은 DB, 연결만 메모리.</b> 작업(ai_task)과 이벤트(task_event)는 DB에 두어 backend를 재시작해도 남는다.
  * 지금 화면에 열려 있는 SSE 연결(emitter)만 메모리에 둔다 — 연결은 재시작하면 어차피 끊기고, 화면이 다시 붙으면
@@ -49,12 +54,20 @@ class Tasks {
     private final Approvals approvals;
     /** agent 호출용. compose 안에서는 서비스 이름이 그대로 주소가 된다 (http://agent:8000) */
     private final RestClient agent;
+    private final AmqpTemplate queue;
 
-    Tasks(JdbcTemplate db, ObjectMapper json, Approvals approvals, @Value("${AGENT_URL:http://agent:8000}") String agentUrl) {
+    Tasks(JdbcTemplate db, ObjectMapper json, Approvals approvals, @Value("${AGENT_URL:http://agent:8000}") String agentUrl,
+          AmqpTemplate queue) {
         this.db = db;
         this.json = json;
         this.approvals = approvals;
-        this.agent = RestClient.create(agentUrl);
+        this.queue = queue;
+        // 3초 제한 (아키텍처 4.2 "백엔드 → AI 서버 실행 요청"). agent는 202를 바로 준다. 제한이 없으면
+        // agent가 멈췄을 때 대기열 소비자가 같이 멈춰 뒤의 작업이 전부 밀린다
+        SimpleClientHttpRequestFactory http = new SimpleClientHttpRequestFactory();
+        http.setConnectTimeout(3_000);
+        http.setReadTimeout(3_000);
+        this.agent = RestClient.builder().baseUrl(agentUrl).requestFactory(http).build();
     }
 
     // ------------------------------------------------------------------
@@ -85,21 +98,14 @@ class Tasks {
         // threadId는 taskId와 같게 쓴다. 승인 후 재개 때 agent checkpointer에서 같은 대화를 꺼내는 열쇠다
         db.update("insert into ai_task (task_id, thread_id, user_id, role, question, trigger) values (?, ?, ?, ?, ?, ?)",
                 id, id, userId, role, question, trigger);
-        CompletableFuture.runAsync(() -> {
-            try {
-                Map<String, Object> req = new HashMap<>();
-                req.put("taskId", id);
-                req.put("threadId", id);
-                req.put("userId", userId);
-                req.put("role", role);
-                req.put("question", question);
-                req.put("whatif", whatif);
-                agent.post().uri("/agent/tasks").body(req).retrieve().toBodilessEntity();
-            } catch (Exception e) {
-                // 여기서 FAILED를 안 남기면 화면이 영원히 기다린다
-                addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE", "message", String.valueOf(e.getMessage())));
-            }
-        });
+        Map<String, Object> req = new HashMap<>();
+        req.put("taskId", id);
+        req.put("threadId", id);
+        req.put("userId", userId);
+        req.put("role", role);
+        req.put("question", question);
+        req.put("whatif", whatif);
+        enqueue(id, "start", req);
         return id;
     }
 
@@ -165,8 +171,8 @@ class Tasks {
     /**
      * POST /api/ai/tasks/{id}/approval {@code {approvalId, decision, reason}} — 팀장의 승인·거절 (contracts.md 3.1·3.3).
      *
-     * <p>결정을 저장한 뒤 agent에 재개를 요청하고 202를 바로 돌려준다. 결정 저장과 agent 호출을 묶지 않는다 —
-     * agent가 죽어 있어도 팀장의 결정은 남아야 한다.
+     * <p>결정을 저장한 뒤 재개 요청을 대기열에 넣고 202를 바로 돌려준다. 결정 저장과 agent 호출을 묶지 않는다 —
+     * agent가 죽어 있어도 팀장의 결정은 남아야 한다. 재개도 접수와 같은 대기열이라 agent가 살아나면 이어진다.
      */
     @PostMapping("/api/ai/tasks/{id}/approval")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -175,20 +181,58 @@ class Tasks {
         find(id);
         Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
         db.update("update ai_task set status = 'RUNNING' where task_id = ? and status = 'WAITING_APPROVAL'", id);
-        CompletableFuture.runAsync(() -> {
-            try {
-                Map<String, Object> req = new HashMap<>();
-                req.put("threadId", id);
-                req.put("approvalId", card.get("approval_id"));
-                req.put("decision", card.get("status"));
-                req.put("reason", card.get("reason"));
-                agent.post().uri("/agent/tasks/{id}/resume", id).body(req).retrieve().toBodilessEntity();
-            } catch (Exception e) {
-                addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE",
-                        "message", "승인은 저장됐지만 AI 작업을 이어 가지 못했습니다: " + e.getMessage()));
-            }
-        });
+        Map<String, Object> req = new HashMap<>();
+        req.put("threadId", id);
+        req.put("approvalId", card.get("approval_id"));
+        req.put("decision", card.get("status"));
+        req.put("reason", card.get("reason"));
+        enqueue(id, "resume", req);
         return Map.of("approvalId", card.get("approval_id"), "status", card.get("status"));
+    }
+
+    // ------------------------------------------------------------------
+    // 대기열 (TaskQueue)
+    // ------------------------------------------------------------------
+
+    /** 대기열에 넣는다. RabbitMQ에도 못 넣으면 바로 FAILED — 안 남기면 화면이 영원히 기다린다 */
+    private void enqueue(String id, String kind, Map<String, Object> body) {
+        try {
+            queue.convertAndSend(TaskQueue.TASKS, m("kind", kind, "taskId", id, "attempt", 1, "body", body));
+        } catch (Exception e) {
+            addEvent(id, Map.of("type", "FAILED", "errorCode", "QUEUE_UNAVAILABLE",
+                    "message", "작업 대기열에 넣지 못했습니다: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 대기열에서 하나 꺼내 agent에 보낸다. 실패하면 다음 재시도 대기열로, 마지막 시도까지 실패하면 DLQ로 보내고 FAILED.
+     *
+     * <p><b>이미 시작했거나 끝난 작업은 보내지 않는다.</b> backend가 처리 도중 죽으면 RabbitMQ가 같은 메시지를
+     * 다시 준다. 그때 agent가 같은 작업을 두 번 돌리지 않게 한다 (아키텍처 7.1 "중복 방지"를 backend 쪽에서).
+     * 접수는 agent가 첫 이벤트를 보내면 QUEUED가 아니게 되고, 재개는 작업이 끝나면 더 보낼 이유가 없다.
+     */
+    @RabbitListener(queues = TaskQueue.TASKS)
+    void deliver(Map<String, Object> msg) {
+        String id = (String) msg.get("taskId");
+        boolean resume = "resume".equals(msg.get("kind"));
+        List<String> status = db.queryForList("select status from ai_task where task_id = ?", String.class, id);
+        if (status.isEmpty()) return;  // DB를 지운 뒤 남은 메시지. 다시 넣으면 영원히 돈다
+        if (resume ? List.of("DONE", "FAILED").contains(status.getFirst()) : !"QUEUED".equals(status.getFirst())) return;
+        try {
+            agent.post().uri(resume ? "/agent/tasks/{id}/resume" : "/agent/tasks", id).body(msg.get("body")).retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            int attempt = ((Number) msg.get("attempt")).intValue();
+            Map<String, Object> next = new LinkedHashMap<>(msg);
+            next.put("error", String.valueOf(e.getMessage()));
+            if (attempt <= TaskQueue.RETRIES.size()) {
+                next.put("attempt", attempt + 1);
+                queue.convertAndSend(TaskQueue.RETRIES.get(attempt - 1), next);
+                return;
+            }
+            queue.convertAndSend(TaskQueue.DLQ, next);  // 사람이 원인을 볼 수 있게 마지막 오류와 함께 남긴다
+            addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE",
+                    "message", (resume ? "승인은 저장됐지만 " : "") + "AI 서버에 " + attempt + "번 보냈지만 닿지 않았습니다: " + e.getMessage()));
+        }
     }
 
     // ------------------------------------------------------------------

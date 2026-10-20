@@ -9,7 +9,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <table>
  *   <tr><th>모듈</th><th>파일</th></tr>
  *   <tr><td>auth</td><td>{@link Auth} — 로그인, JWT, 역할 검사</td></tr>
- *   <tr><td>task</td><td>{@link Tasks} — AI 작업 접수, 진행 이벤트 저장·SSE 중계, 승인 결정 후 재개</td></tr>
+ *   <tr><td>task</td><td>{@link Tasks} — AI 작업 접수, 진행 이벤트 저장·SSE 중계, 승인 결정 후 재개 / {@link TaskQueue} — 작업 대기열(RabbitMQ)</td></tr>
  *   <tr><td>approval</td><td>{@link Approvals} — 승인 카드, 실행 전 승인 확인, 변경 이력</td></tr>
  *   <tr><td>analysis</td><td>{@link ImpactAnalysis} · {@link OptionAnalysis} — 결품·과잉 판정, 해결 대안 비교</td></tr>
  *   <tr><td>master·plan·purchase·inventory</td><td>{@link InternalApi}(AI 도구용) · {@link ScreenApi}(화면용)</td></tr>

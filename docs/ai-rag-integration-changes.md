@@ -1,6 +1,6 @@
 # AI·MCP·RAG 수정 및 검증 기록
 
-기준: `origin/main`의 `fc60a88`을 merge한 `ai-rag-scenario-integration` 브랜치.
+기준: `fc60a88`에서 구현한 AI·MCP·RAG 작업에 `origin/main`의 `11f728e`(RabbitMQ 작업 대기열)를 merge한 `rag` 브랜치.
 사용자가 AI·MCP·RAG 구현을 승인한 범위의 변경이다. 프론트·백엔드 업무 코드는 수정하지 않았다.
 
 ## 무엇이 달라졌는가
@@ -61,7 +61,7 @@ flowchart TD
 | `tests/compose.yml`, `tests/compose.real.yml` **신규**        | 기존 개발 환경과 분리된 가짜/실제 모델 테스트 환경                                                                                                                                                                                   |
 | `tests/README.md` **신규**                                      | 재현 명령, 실제 모델 전송 범위·비용, 테스트 환경 정리 방법                                                                                                                                                                          |
 | `data/README.md`                                                      | 색인·재색인 명령, 저장/검색 계약, 정책 문서의 금액 기준 확인 사항                                                                                                                                                                   |
-| `docs/contracts.md`                                                   | 변경 29번과 ADJUST 추가 필드·순차 승인 의미 명시                                                                                                                                                                                    |
+| `docs/contracts.md`                                                   | 변경 30번과 ADJUST 추가 필드·순차 승인 의미 명시                                                                                                                                                                                    |
 | `README.md`                                                           | 실제 RAG/승인 흐름·설정·실행 안내 갱신                                                                                                                                                                                             |
 | 이 파일 **신규**                                                  | 수정 목록·검증 결과·팀 후속 작업                                                                                                                                                                                                   |
 
@@ -81,6 +81,16 @@ flowchart TD
 승인한 발주 변경은 실제 DB에 저장된다. `post_execution_impact`는 현재 DB에 `remaining_whatif`를 함께 적용한 결과다.
 실제 화면 전체를 같은 상태로 만들려면 생산관리 담당자가 계획 변경을 별도로 저장해야 한다.
 
+## 최신 main 병합
+
+`11f728e`의 RabbitMQ 변경을 merge로 반영했다. backend 구현과 테스트는 main의 내용을 그대로 유지했다.
+AI·MCP·RAG 코드와 원문 문서는 병합 전 구현에서 바뀌지 않았다.
+
+- `README.md`: 서비스 수를 7개로 맞추고, 작업 접수·승인 재개가 RabbitMQ → backend 소비자 → agent HTTP 호출을 거치는 흐름을 설명했다.
+- `docker-compose.yml`: main의 RabbitMQ 설정·볼륨·backend 연결과 AI 파트의 RAG 환경변수·수동 `rag-index`를 모두 유지했다.
+- `docs/contracts.md`: backend 대기열 변경은 29번, AI·RAG 변경은 30번으로 구분하고 참조 번호를 맞췄다.
+- `tests/compose.yml`, `tests/README.md`: 독립 테스트 환경에도 RabbitMQ와 전용 볼륨을 추가했다.
+
 ## 검증 결과
 
 검증 환경: 호스트 포트 없는 `capstone-ai-test` 프로젝트, 별도 `capstone_ai_test` DB.
@@ -97,6 +107,19 @@ flowchart TD
 | 실제 `gpt-4o-mini` 평가                      | 의도/whatif 5개 + verify 3개 통과                                       |
 | 실제 모델 SC1~4 승인·실행                     | 통과 — SC1 1건, SC2 3건, SC3 2건, SC4 1건 개별 승인·실행              |
 | 실제 모델 거절·SYSTEM·문서 QA                | 통과. QA는 ECN 1.1·3.1 원문으로 케이스 변경이며 MCU 교체가 아님을 답변 |
+
+위 실제 모델 검사는 RabbitMQ 병합 전 AI 구현의 결과다. 병합 후에는 외부 모델 호출 없이 실제 대기열 연결을 검사했다.
+
+| RabbitMQ 병합 후 검사 | 결과 |
+|---|---|
+| backend `mvn -q test` | 25개 통과, 실패·오류·건너뜀 0개 |
+| AI·RAG 단위 + 실제 pgvector 회귀 | 18개 통과 |
+| 골든셋 숫자/대안 | 8개 통과 |
+| 실제 RabbitMQ 경유 SC1~4 분석·개별 승인·실행·DB 이력·SSE | 모두 통과 (모델·임베딩은 테스트 대역) |
+| 실제 RabbitMQ 경유 거절 후 재제안·SYSTEM 자동 분석·문서 QA | 모두 통과 |
+| 기본/테스트 Compose 설정, Python 문법, `git diff --check` | 통과 |
+
+backend는 `11f728e`와 동일하고, AI·MCP·RAG·프론트·원문 문서는 병합 전 `4096a35`와 동일함을 확인했다.
 
 실제 모델 호출은 사용자가 문서 6개와 데모 시나리오 데이터를 `api.openai.com`에 보내는 것과 비용을 명시적으로 허용한 뒤 진행했다.
 운영 DB에 색인하거나 운영 서비스로 배포하지 않았다. 재현 명령은 [tests/README.md](../tests/README.md).
@@ -141,4 +164,4 @@ SC3에서는 의도 선택 이유를 `unclear`에 넣는 사례도 발견해, �
    문서 QA의 `{intent: "QA", impact: null}`도 통과해 빈 영향 결과·정책 버전 미제공·해결안 버튼이 나온다.
    `impact`가 실제로 있는 응답에만 영향 결과를 표시하도록 A 파트에서 조건을 바꿔야 한다. 이번 AI 변경에서는 수정하지 않았다.
 
-새로 필요한 로컬 작업은 RAG 이미지 재빌드와 **rag 스키마 색인**이다. 이 변경 적용 때문에 업무 DB 전체를 `down -v`로 지울 필요는 없다.
+새로 필요한 로컬 작업은 backend·RAG 이미지 재빌드, RabbitMQ 기동과 **rag 스키마 색인**이다. 이 변경 적용 때문에 업무 DB 전체를 `down -v`로 지울 필요는 없다.

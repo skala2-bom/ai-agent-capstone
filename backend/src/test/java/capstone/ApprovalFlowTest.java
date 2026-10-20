@@ -47,8 +47,9 @@ class ApprovalFlowTest {
         approvals = new Approvals(db, new ObjectMapper());
         impact = new ImpactAnalysis(db);
         internal = new InternalApi(db, impact, new OptionAnalysis(db, impact), approvals, tx);
-        // agent에 못 닿는 주소 — 자동 분석 작업은 만들어지고 FAILED로 끝난다 (여기서는 작업이 생기는지만 본다)
-        screen = new ScreenApi(internal, db, approvals, tx, new Tasks(db, new ObjectMapper(), approvals, "http://localhost:1"));
+        // 대기열은 가짜 — 자동 분석 작업은 만들어지고 QUEUED로 남는다 (여기서는 작업이 생기는지만 본다)
+        screen = new ScreenApi(internal, db, approvals, tx,
+                new Tasks(db, new ObjectMapper(), approvals, "http://localhost:1", org.mockito.Mockito.mock(org.springframework.amqp.core.AmqpTemplate.class)));
         // 승인 카드는 작업(ai_task)을 참조한다. agent 없이 카드를 만들려고 작업 행만 넣어 둔다
         db.update("insert into ai_task (task_id, thread_id, user_id, role, question) values ('T-1', 'T-1', 'buyer', 'BUYER', 'q'), ('T-2', 'T-2', 'planner', 'PLANNER', 'q')");
     }
