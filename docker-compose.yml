@@ -1,30 +1,45 @@
-# 공개 포트는 frontend · backend만. 나머지는 compose 내부망에서 서비스 이름으로 부른다.
+# 배포 뷰 (아키텍처 7장)
+#
+# 공개 포트는 frontend · backend만 둔다. agent와 MCP 서버는 ports를 주지 않아서
+# 브라우저에서 닿지 않고, compose 내부망에서 **서비스 이름**으로만 불린다
+# (예: http://business-mcp:9101/mcp). 교재 5장 "브라우저에 노출되는 주소를 줄인다".
+#
+# 시작 순서를 거의 신경 쓰지 않는 이유: 서비스끼리는 실제로 호출할 때 연결하기
+# 때문이다. agent가 먼저 떠도 MCP 서버가 준비되면 그때부터 정상 동작한다.
+# → 그래서 healthcheck가 아직 없다. (아키텍처 7장 표에는 서비스마다 있다)
+#
+# 아직 없는 것: postgres, indexer, rabbitmq(P2) — 담당자가 추가
+# 설계 배경: docs/walking-skeleton.md
 services:
   frontend:
     build: ./frontend
-    ports: ["3000:80"]
+    ports: ["3000:80"]        # 공개. 브라우저가 여기로 들어온다
     depends_on: [backend]
 
   backend:
     build: ./backend
-    ports: ["8080:8080"]
+    ports: ["8080:8080"]      # 공개. 화면이 /api/**로 부른다
     environment:
       AGENT_URL: http://agent:8000
 
   agent:
     build: ./agent
+    # 포트 없음 = 내부 전용. backend만 부른다
     environment:
       BACKEND_URL: http://backend:8080
-      BUSINESS_MCP_URL: http://business-mcp:9101/mcp
+      BUSINESS_MCP_URL: http://business-mcp:9101/mcp   # /mcp 빠뜨리면 404
       RAG_MCP_URL: http://rag-mcp:9102/mcp
+      # 키가 비어 있으면 agent가 가짜 모델로 돈다. 키는 .env에만 두고 커밋하지 않는다
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     depends_on: [business-mcp, rag-mcp]
 
   business-mcp:
     build: ./business-mcp
+    # 포트 없음 = 내부 전용. agent만 MCP로 부른다
     environment:
-      BACKEND_URL: http://backend:8080
+      BACKEND_URL: http://backend:8080   # 업무 데이터는 전부 backend를 거친다
 
   rag-mcp:
     build: ./rag-mcp
+    # 포트 없음 = 내부 전용

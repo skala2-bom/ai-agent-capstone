@@ -1,6 +1,8 @@
 # AI Agent Capstone
 
-> 📌 **이 뼈대를 무엇을 기반으로, 왜 이렇게 만들었는지**는 [docs/walking-skeleton.md](docs/walking-skeleton.md)에 정리돼 있다. 작업 시작 전에 먼저 읽기.
+> 📌 **먼저 읽을 것**
+> - [docs/walking-skeleton.md](docs/walking-skeleton.md) — 이 뼈대를 무엇을 기반으로, 왜 이렇게 만들었는지
+> - [docs/decisions.md](docs/decisions.md) — 무엇이 정해졌고, **Claude가 판단한 부분은 어디이며 근거가 무엇인지**
 
 ```
 ai-agent-capstone/
@@ -9,6 +11,7 @@ ai-agent-capstone/
 ├─ .gitignore
 ├─ README.md
 ├─ docs/
+│  ├─ decisions.md             결정 기록 (스크럼 확정 + 판단 근거)
 │  ├─ walking-skeleton.md      이 뼈대의 근거·의도·기준과 다른 점
 │  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
 │  └─ AI_Agent_Capstone_MCP_정리.md   교재 정리 노트
@@ -84,7 +87,7 @@ http://localhost:3000 에서 "질문"을 누르면 `TOOL_START → TOOL_END → 
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
-| `docs/` | 아키텍처, 교재 정리 | 모두 | |
+| `docs/` | 아키텍처, 결정 기록, 교재 정리 | 모두 | 결정이 바뀌면 `decisions.md`에 근거와 함께 남기기 |
 
 ## 일부러 뺀 것
 

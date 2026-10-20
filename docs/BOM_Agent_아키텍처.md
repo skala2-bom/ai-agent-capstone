@@ -1,6 +1,6 @@
 # BOM Agent 아키텍처
 
-> **작성일**: 2026-10-19 · **수정일**: 2026-10-20 · **상태**: 초안 v0.2 (교재 기준 보완) · **관련 문서**: BOM Agent PRD, BOM Agent DB 스키마, 기획안(A1~A3)
+> **작성일**: 2026-10-19 · **수정일**: 2026-10-20 · **상태**: 초안 v0.3 (10/20 오전 스크럼 반영) · **관련 문서**: [결정 기록](decisions.md), [Walking Skeleton 근거](walking-skeleton.md), BOM Agent PRD, BOM Agent DB 스키마, 기획안(A1~A3)
 >
 > **기준**: 교재 5장 레퍼런스 아키텍처, 6장 Harness
 >
@@ -26,6 +26,19 @@
 | 10 | 인증·권한 | 누가 무엇을 할 수 있고 어디서 막나 |
 | 11 | 품질 | ISO/IEC 25010 특성별로 어떻게 대응했나 |
 | 12 | 미결 사항 | |
+
+### v0.3 변경 이력 (10/20 오전 스크럼)
+
+> 결정 근거와 Claude가 판단한 부분은 [decisions.md](decisions.md)에 따로 적었다.
+
+| # | 위치 | 바꾼 내용 | 이유 |
+|---|---|---|---|
+| 1 | 1.2 (신설) | 안전재고·결품·과잉 판정 기준 추가 | 스크럼에서 기준을 정함 |
+| 2 | 4.2, 12장 | 승인 대기 만료(24시간 → `EXPIRED`) 삭제 | 스크럼: `approval.status`에서 `EXPIRED` 제거 |
+| 3 | 4.4, 10장 | 승인 요청 생성 가능 역할을 BUYER → **BUYER 또는 APPROVER** | 스크럼: 팀장은 팀원 권한을 모두 가짐 |
+| 4 | 4.4, 10장 | **요청자 ≠ 승인자** 규칙 삭제 | 스크럼: 팀장이 직접 요청하고 본인이 승인 |
+| 5 | 8.1 | `split_po` 절차·검사 규칙 구체화 | 절차가 비어 있었음 (decisions.md 3절) |
+| 6 | 8.1 | 협력사 평가지표 조회 도구 추가 | 스크럼 2.4 (decisions.md 2절) |
 
 ### v0.2 변경 이력 (교재 기준으로 바로잡은 부분)
 
@@ -65,6 +78,19 @@
 | **B. 계산 로직을 백엔드에** ✅ | 업무 규칙이 **한 곳**. 화면 조회와 AI 분석이 같은 계산을 씀 | business-mcp는 얇은 연결 계층이 됨 |
 
 → **B를 추천한다.** 교재의 "business-mcp 금지사항: 업무 규칙 복제"를 지키는 가장 단순한 방법이다. business-mcp는 도구 설명·인자 검사·오류 메시지 변환을 맡는다.
+
+### 1.2 판정 기준 (확정, 10/20 스크럼)
+
+계산 서비스가 날짜별 재고 흐름을 만든 뒤, 각 날짜·부품마다 아래 기준으로 판정한다.
+
+| 판정 | 기준 | 비고 |
+|---|---|---|
+| **결품** | 예상 재고 < 0 | 승인 흐름으로 이어지는 유일한 판정 |
+| **경고** | 0 ≤ 예상 재고 < 안전재고 | 안전재고는 **부품마다 다르고 담당자가 직접 입력**한다 (자동 산출 아님) |
+| **과잉** | 예상 재고 > 리드타임 기간의 소요량 | 기준 기간은 **부품별 리드타임** |
+
+- 안전재고를 계산식으로 뽑지 않는 이유: 담당자가 부품 특성(단종 위험, 협력사 안정성)을 보고 정하는 값이기 때문이다.
+- 과잉 기준이 리드타임인 이유: 리드타임은 "지금 주문해도 이만큼 기다린다"는 기간이라, 그 기간에 쓸 양까지는 들고 있는 것이 정상이고 그 위가 묶인 돈이다.
 
 ---
 
@@ -199,7 +225,7 @@ flowchart TB
 | AI 서버 → 백엔드 진행 이벤트 | 0.05초 | 2초 | 3회 재시도, 실패해도 작업은 계속 |
 | SSE 연결 유지 | – | 15초마다 heartbeat | 화면이 다시 연결, 지난 이벤트 재전송 |
 | **작업 전체** (승인 대기 시간 제외) | **20~40초** | **120초** | `FAILED`, 추적 링크 저장 |
-| 승인 대기 | 사람에 따라 다름 | 24시간 | `EXPIRED`, 작업 `CANCELLED` |
+| 승인 대기 | 사람에 따라 다름 | **없음** | 만료시키지 않는다. 승인·거절할 때까지 `WAITING_APPROVAL` 유지 (10/20 스크럼) |
 
 > 시퀀스 그림의 구간별 시간은 이 표를 따른다.
 
@@ -271,14 +297,14 @@ sequenceDiagram
     BM-->>AG: 새 결품 없음 ✅
     Note over AG: 변경 도구 → Guardrails가 멈춤<br/>checkpointer에 상태 저장 (thread_id)
     AG->>BE: 이벤트 APPROVAL_REQUIRED (도구·인자·요약·금액·근거)
-    Note over BE: 요청자 역할 BUYER 확인 (아니면 403)<br/>approval 저장 (PENDING) → approvalId 생성<br/>작업 WAITING_APPROVAL
+    Note over BE: 요청자 역할 BUYER 또는 APPROVER 확인 (아니면 403)<br/>approval 저장 (PENDING) → approvalId 생성<br/>작업 WAITING_APPROVAL
     BE-->>FE: SSE APPROVAL_REQUIRED (approvalId 포함) → 요청자 화면 "승인 대기 중"
     AP->>FE: 승인 대기함 열기
     FE->>BE: GET /api/approvals?status=PENDING
     BE-->>FE: 대기 중인 승인 카드 목록
     AP->>FE: 승인 카드 확인 → 승인
     FE->>BE: POST /api/ai/tasks/{id}/approval (approvalId, APPROVED)
-    Note over BE: 팀장 역할 · 요청자≠승인자 확인<br/>approval APPROVED
+    Note over BE: 팀장(APPROVER) 역할 확인<br/>요청자==승인자면 감사 플래그만 남기고 통과<br/>approval APPROVED
     BE-->>FE: 202
     BE->>AG: POST /agent/tasks/{id}/resume (thread_id, approvalId, 결정)
     AG->>BM: tools/call request_due_date_change (approval_id 포함)
@@ -498,9 +524,11 @@ flowchart LR
 | 계산 | `compare_options` | issue 목록 | 해결 방법 후보와 비용·위험·영향 | POST `/internal/analysis/options` | |
 | 변경 | `request_due_date_change` | po_id, new_due_date, approval_id | 변경 결과 | POST `/internal/purchase-orders/{id}/due-date` | ✅ |
 | 변경 | `split_po` | po_id, split_qty, new_due_date, approval_id | 새 발주 ID | POST `/internal/purchase-orders/{id}/split` | ✅ |
+| 조회 | `get_supplier_metrics` | item_id | 협력사별 단가·긴급 비용·납기 준수율 | GET `/internal/suppliers/metrics?item_id=` | |
 | 변경 | `change_po_qty` | po_id, new_qty, approval_id | 변경 결과 | POST `/internal/purchase-orders/{id}/qty` | ✅ |
 | 변경 | `cancel_po` | po_id, approval_id | 변경 결과 | POST `/internal/purchase-orders/{id}/cancel` | ✅ |
 
+- `split_po`의 절차·검사 순서·MOQ 처리는 [decisions.md 3절](decisions.md)에 적었다. `get_supplier_metrics`가 읽는 평가지표의 출처와 **입력을 도구로 열지 않는 이유**는 [decisions.md 2절](decisions.md).
 - 변경 도구는 `annotations`의 `destructive_hint = true`로 표시한다. Harness는 도구 이름이 아니라 이 값을 보고 `approval_gate`에서 멈춘다 (두 Server를 한 Client로 묶으면 도구 이름에 `business_` 접두어가 붙기 때문).
 - 모든 도구 설명에 **단위**(개 · 원 · `YYYY-MM-DD`)와 오류 경우를 적는다.
 
@@ -526,6 +554,8 @@ flowchart LR
 | `BELOW_MOQ` | 최소 발주 수량 미만 | 최소 수량 |
 | `LEADTIME_INFEASIBLE` | 리드타임상 불가능한 입고일 | 가장 빠른 가능일 |
 | `PO_NOT_OPEN` | 이미 입고·취소된 발주 변경 | 변경 불가 |
+| `INVALID_SPLIT_QTY` | 분할 수량이 0 이하이거나 원 수량 이상 | 가능한 범위 (1 ~ 원수량−1) |
+| `SPLIT_NOT_USEFUL` | 분할 후 입고일이 원래와 같음 | 나눌 이유가 없음을 안내 |
 | `BOM_CYCLE` | 순환 BOM | 순환 경로 |
 | `APPROVAL_REQUIRED` | 승인 없이 변경 시도 | 승인 절차 안내 |
 | `UPSTREAM_TIMEOUT` | 백엔드 응답 시간 초과 | 잠시 후 재시도 |
@@ -625,8 +655,8 @@ flowchart LR
 | 업무 API | Spring Security | 모든 `/api/**`에 JWT 필수, 역할 검사 (`@PreAuthorize`) |
 | 작업 생성 | backend task | 요청자·역할을 작업에 저장하고 AI 서버에 넘김 |
 | 도구 결과 | backend masking + Harness | 역할에 맞게 금액·단가 숨김 (6장) |
-| 승인 요청 생성 | backend approval | 작업 요청자 역할이 BUYER가 아니면 approval 생성을 거부(403). Agent는 거부를 받으면 "발주 조정은 구매 담당자가 요청할 수 있습니다"로 답하고 `DONE` |
-| 승인 | backend approval | 팀장 역할, **요청자 ≠ 승인자**, 거절 사유 필수 |
+| 승인 요청 생성 | backend approval | 작업 요청자 역할이 **BUYER도 APPROVER도 아니면** approval 생성을 거부(403). Agent는 거부를 받으면 "발주 조정은 구매 담당자가 요청할 수 있습니다"로 답하고 `DONE` |
+| 승인 | backend approval | 팀장(APPROVER) 역할, 거절 사유 필수. **요청자 ≠ 승인자 규칙은 없앴다** (10/20 스크럼) — 대신 요청자==승인자인 건은 `self_approved` 플래그로 남겨 감사 추적한다 |
 | 발주 변경 | backend purchase | `approval_id`가 `APPROVED`이고 도구·인자가 같을 때만 실행 → `EXECUTED` |
 | 내부 API | `/internal/**` | 내부망에서만 열림 + 서비스 토큰 헤더 확인 |
 
@@ -666,7 +696,7 @@ flowchart LR
 | A4 통합 발주 범위 | 8.1에 통합 발주 도구 추가 여부 |
 | B1 자동 분석 | 4.6 3단계, `trigger = SYSTEM` |
 | B2 해결 방법 비교 기준 | `compare_options` 반환 항목, `verify` 통과 기준 |
-| B5 승인 정책 | 승인 대상·금액 기준, 거절 반복 횟수(현재 2회), 승인 만료(현재 24시간) |
+| B5 승인 정책 | 승인 대상·금액 기준, 거절 반복 횟수(현재 2회). ~~승인 만료~~는 10/20 스크럼에서 없애기로 함 |
 | C1·C2 도구 계약 | 8.1 도구 이름·인자·오류 코드 확정 |
 | C3 문서 체계 | 8.3 색인 대상과 조항 번호 형식 |
 | D1 비기능 수치 | 4.2 시간 제한, 11장 목표 |
