@@ -732,7 +732,8 @@ flowchart LR
 |---|---|---|
 | **역할 분담** | 팀 | 조원 6명을 세 파트(Frontend / Backend·DB / AI·MCP·RAG)에 배정. **기술 안건이 아니라 사람 문제라 팀만 정할 수 있다** |
 | **LLM 모델·키·비용** | 팀 | 주 모델 1 + 대체 모델 1로 한다는 것만 정해졌다. 구체 모델과 키 부담 주체는 팀 결정 |
-| 골든셋 과잉 정답 | B 파트 | 리드타임 30일 초과 고가 부품에 과잉 정답이 걸렸으면 값이 바뀐다 ([decisions.md 1.3](decisions.md)) |
+| SC3 과잉 정답 변경 확인 | 기획안 작성자 | 과잉 기간 규칙 때문에 BLE 칩·홀 센서 800이 빠졌다 ([decisions.md 7.3](decisions.md)) |
+| 기존 발주 당김의 리드타임 기준 | C 파트 | B가 "발주일 + 리드타임"으로 정함. 확인만 필요 ([decisions.md 7.2](decisions.md)) |
 
 ### 12.2 결정된 것
 
@@ -751,4 +752,5 @@ flowchart LR
 | E 기술 선택 | pgvector · JWT · StateGraph A안 · RabbitMQ(후순위) | [contracts.md 5](contracts.md) |
 | DB 스키마·계정 | 스키마 3개 + 계정 3개 | [contracts.md 1.3](contracts.md) |
 | 요청자 역할 전달 | 헤더 4개 (`X-Task-Id`·`X-User-Id`·`X-Role`·`X-Service-Token`) | [contracts.md 1.1](contracts.md) |
-| seed 데이터 | B 파트가 작성, 기준일 2026-11-02 | [contracts.md 1.4](contracts.md) |
+| seed 데이터 | B 파트가 작성(`db/seed.sql`), 기준일 2026-11-02. 기획안과 다른 점·골든셋 정답 | [decisions.md 7](decisions.md) |
+| 골든셋 과잉 정답 | 리드타임 8주 부품 과잉이 빠짐 (SC3 BLE 칩·홀 센서) | [decisions.md 1.3·7.3](decisions.md) |

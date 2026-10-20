@@ -4,7 +4,7 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-20 (오후 — `/internal` 1차 응답 모양·DB 접속 정보 추가)
+> **갱신**: 2026-10-20 (오후 — `/internal` 1차 응답 모양·DB 접속 정보·seed·골든셋, `orderable` 칸 추가)
 
 ## 파트 구분
 
@@ -80,14 +80,16 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   - 계정마다 `search_path`가 자기 스키마라 테이블 이름에 스키마를 안 붙여도 된다.
   - **pgvector 확장은 `rag` 스키마에 있다.** `rag` 계정은 `vector(1536)`처럼 그냥 쓰면 된다. 다른 계정에는 이 타입이 보이지 않는다.
   - DB를 쓰기 시작하는 서비스는 `depends_on: postgres: condition: service_healthy`를 붙인다 (healthcheck 있음).
-  - `init.sql`은 **빈 볼륨일 때만** 돈다. 다시 돌리려면 `docker compose down -v`.
+  - `db/` 안의 `init.sql` → `schema.sql` → `seed.sql`이 이름 순서로 돈다. **빈 볼륨일 때만** 돌므로 다시 돌리려면 `docker compose down -v`.
 
 ### 1.4 seed 데이터
 
-- **B가 만든다.** 기획안의 완제품 4종·구매 부품 28종(공용 17종)·BOM 3단계·협력사 기준.
-- **문제 상황을 일부러 심는다.** SC1~SC4가 데모에서 반드시 걸려야 한다.
-- 시연 기준일은 **2026-11-02**.
-- 골든셋 정답(SC1 −100 2시점, SC2 릴레이 −400·케이스 과잉 300, SC3 구형 케이스 800, SC4 릴레이 −1,000)이 이 데이터에 달려 있다. 값을 바꾸면 정답도 다시 계산해야 한다.
+- ✅ **B가 만들었다** ([`db/seed.sql`](../db/seed.sql)). 기획안의 완제품 4종·구매 부품 28종(공용 17종)·BOM 3단계·협력사 5곳(기획안 3 + 대체 2)·생산계획 7건·진행 중 발주 31건.
+- 기획안과 다른 곳은 [decisions.md 7.1](decisions.md)에 전부 있다.
+- **변경 전에는 문제가 0건이다.** SC1~SC4는 일정·입고일을 바꾸는 순간에만 걸린다.
+- 시연 기준일은 **2026-11-02**. 로그인 계정 `planner` · `buyer` · `approver`, 비밀번호 `1234`.
+- **ID는 영문**이다: 완제품 `FG-PLUG` · `FG-SWITCH` · `FG-DOOR` · `FG-HUB`, 부품 `MCU` · `WIFI-CHIP` · `RELAY` · `CASE-DOOR-V1` 등. 한글 이름은 `name`에 있다. 프롬프트·평가셋에 ID를 적을 때 이걸 쓴다.
+- **골든셋 정답은 [decisions.md 7.3](decisions.md) 표가 기준이다.** 요약: SC1 MCU −100 2시점 / SC2 릴레이 −400 외 결품 5건·MCU 경고·플러그 케이스 과잉 300 / SC3 새 케이스 −800·옛 케이스 과잉 800·코인전지 과잉 800 / SC4 릴레이 −1,000. 기획안의 SC3 BLE 칩·홀 센서 과잉은 과잉 기간 규칙 때문에 빠졌다 (decisions.md 1.3). 값을 바꾸면 정답도 다시 계산해야 한다.
 
 ---
 
@@ -112,34 +114,37 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 
 #### 1차 응답 모양 (2.2·2.3 외 6개)
 
-✅ **backend가 이 모양으로 고정 응답을 내고 있다** (`backend/.../InternalApi.java`). ID·숫자는 SC1 시퀀스에서 가져온 예시이고 seed 단계에서 기획안 값으로 바뀐다. **모양은 그대로다.**
+✅ **backend가 이 모양으로 응답한다** (`backend/.../InternalApi.java`). 조회 4개는 seed DB에서 읽고, 계산 2개는 아직 고정 응답(seed 기준 SC1 정답), 변경 2개는 검사만 하고 저장은 안 한다. 아래 예시는 실제 응답이다.
 키는 snake_case, 수량은 개, 금액은 원, 날짜는 `YYYY-MM-DD`.
 
 ```jsonc
 // get_item  GET /internal/items/MCU
 { "item_id": "MCU", "name": "MCU", "type": "PART", "unit": "EA",
-  "lead_time_days": 14, "moq": 300, "safety_stock": 50, "high_value": true,
-  "unit_price": 3200, "supplier_id": "SUP-01" }      // 완제품은 unit_price·supplier_id가 null
+  "lead_time_days": 56, "moq": 500, "safety_stock": 300, "high_value": true,
+  "unit_price": 3500, "supplier_id": "SUP-SEMION" }
+// type: FG(완제품) | ASSY(반제품 — 재고·발주 없음, BOM 단계로만 있음) | PART(구매 부품)
+// FG·ASSY는 lead_time_days·moq·unit_price·supplier_id가 null
 
 // get_inventory  GET /internal/inventory?type=PART      (type·item_id 둘 다 선택)
 { "as_of": "2026-11-02",
-  "items": [{ "item_id": "MCU", "type": "PART", "on_hand": 400, "safety_stock": 50 }] }
+  "items": [{ "item_id": "MCU", "name": "MCU", "type": "PART", "on_hand": 2700, "safety_stock": 300 }] }
 
-// list_plans  GET /internal/plans?from=2026-11-01&to=2026-11-30   (양끝 포함, 둘 다 선택)
-{ "plans": [{ "plan_id": "PP-05", "product_id": "HUB", "plan_date": "2026-11-28", "qty": 200, "status": "PLANNED" }] }
+// list_plans  GET /internal/plans?from=2026-11-20&to=2026-12-31   (양끝 포함, 둘 다 선택)
+{ "plans": [{ "plan_id": "PP-05", "product_id": "FG-HUB", "plan_date": "2026-12-14", "qty": 400, "status": "PLANNED" }] }
 
-// list_receipts  GET /internal/purchase-orders?status=OPEN&item_id=MCU   (status 기본 OPEN)
-{ "purchase_orders": [{ "po_id": "PO-2609-001", "item_id": "MCU", "supplier_id": "SUP-01", "qty": 500,
-    "due_date": "2026-11-30", "status": "OPEN", "unit_price": 3200, "amount": 1600000, "parent_po_id": null }] }
+// list_receipts  GET /internal/purchase-orders?status=OPEN&item_id=MCU&from=&to=   (status 기본 OPEN, from·to는 입고일)
+{ "purchase_orders": [{ "po_id": "PO-2609-001", "item_id": "MCU", "supplier_id": "SUP-SEMION", "qty": 500,
+    "unit_price": 3500, "amount": 1750000, "order_date": "2026-09-01", "due_date": "2026-12-12",
+    "status": "OPEN", "parent_po_id": null }] }
 
 // request_due_date_change  POST /internal/purchase-orders/PO-2609-001/due-date
 //   body { "new_due_date": "2026-11-25", "approval_id": "..." }
-{ "po_id": "PO-2609-001", "before": { "due_date": "2026-11-30" }, "after": { "due_date": "2026-11-25" }, "status": "OPEN" }
+{ "po_id": "PO-2609-001", "before": { "due_date": "2026-12-12" }, "after": { "due_date": "2026-11-25" }, "status": "OPEN" }
 
 // split_po  POST /internal/purchase-orders/PO-2609-001/split
 //   body { "split_qty": 100, "new_due_date": "2026-11-25", "approval_id": "..." }
-{ "original": { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-11-30", "status": "OPEN" },
-  "new":      { "po_id": "PO-2609-012", "qty": 100, "due_date": "2026-11-25", "status": "OPEN", "parent_po_id": "PO-2609-001" } }
+{ "original": { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-12-12", "status": "OPEN" },
+  "new":      { "po_id": "PO-2609-010", "qty": 100, "due_date": "2026-11-25", "status": "OPEN", "parent_po_id": "PO-2609-001" } }
 ```
 
 - 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "issues": [...] }` (`issues`는 `analyze_impact`의 `shortages` 항목을 그대로 넣는다).
@@ -163,7 +168,11 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   "policy_version": "v0.1",
   "shortages": [                       // INV-001: P(t) < 0
     { "rule_id": "INV-001", "item_id": "MCU", "plan_id": "PP-05",
-      "plan_date": "2026-11-25", "projected_stock": -100, "threshold": 0, "qty": 100 }
+      "plan_date": "2026-11-25", "projected_stock": -100, "threshold": 0, "qty": 100,
+      "orderable": false },            // LT-001: 오늘 새로 발주해서 plan_date까지 받을 수 있나
+    { "rule_id": "INV-001", "item_id": "MCU", "plan_id": "PP-04",
+      "plan_date": "2026-11-30", "projected_stock": -100, "threshold": 0, "qty": 100,
+      "orderable": false }
   ],
   "warnings": [],                      // INV-002: 0 ≤ P(t) < 안전재고
   "excesses": [],                      // INV-003: 고가 부품만, N = max(리드타임, 30일)
@@ -172,6 +181,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 ```
 
 - 경고 한 건마다 `rule_id`·`projected_stock`·`threshold`를 붙인다. 이게 있어야 AI가 "왜 결품인지"를 지어내지 않고 규칙 ID로 설명한다.
+- **`orderable`** (10/20 오후 추가, 결품에만): `true`면 "지금 발주하면 제때 도착"이라 위험이 아니라 **정상 안내**다 (기획안 1.3 "추가 발주 필요"). `false`면 이미 낸 발주를 당기거나 나눠야 한다. 이 칸이 없으면 모델이 리드타임을 보고 직접 날짜 계산을 하게 된다 — 계산은 backend가 한다는 원칙(아키텍처 1.1)에 어긋난다.
 - `policy_version`은 기준을 바꿔도 과거 결과를 해석할 수 있게 한다. Harness 평가셋 전후 비교에 그대로 쓰인다.
 - 판정 수식과 경계 조건은 [아키텍처 1.2](BOM_Agent_아키텍처.md).
 
@@ -183,10 +193,10 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   "options": [{
     "option_id": "OPT-1",
     "type": "SPLIT_PO",               // SPLIT_PO | DUE_DATE_CHANGE | REALLOCATE
-    "summary": "PO-2609-001을 400/100으로 나눠 100개를 11/25에 받는다",
+    "summary": "PO-2609-001(MCU 500개, 12/12)을 400/100으로 나눠 100개를 11/25에 받는다",
     "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
     "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
-    "added_cost": 350000,              // 원. 긴급 비용 + 분할 배송 수수료
+    "added_cost": 390000,              // 원. 긴급 비용(17일 × 20,000) + 분할 배송 수수료 50,000
     "risk": "LOW",                     // LOW | MID | HIGH. 협력사 on_time_rate 기반
     "feasible": true,                  // LT-001 통과 여부
     "side_effects": [],                // 다른 제품에 생기는 영향
@@ -228,7 +238,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 |---|---|---|
 | `NOT_FOUND` | 없는 품목·발주 | 비슷한 ID 목록 |
 | `BELOW_MOQ` | 최소 발주 수량 미만 | 최소 수량 |
-| `LEADTIME_INFEASIBLE` | 리드타임상 불가능한 입고일 | 가장 빠른 가능일 |
+| `LEADTIME_INFEASIBLE` | 리드타임상 불가능한 입고일. 이미 낸 발주는 **발주일 + 리드타임**부터 가능 ([decisions.md 7.2](decisions.md)) | 가장 빠른 가능일 |
 | `PO_NOT_OPEN` | 이미 입고·취소된 발주 | 현재 상태 |
 | `INVALID_SPLIT_QTY` | 분할 수량이 범위 밖 | 가능한 범위 |
 | `SPLIT_NOT_USEFUL` | 분할 후 입고일이 원래와 같음 | 나눌 이유가 없음 |

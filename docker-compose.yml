@@ -21,6 +21,11 @@ services:
     ports: ["8080:8080"]      # 공개. 화면이 /api/**로 부른다
     environment:
       AGENT_URL: http://agent:8000
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bom
+      SPRING_DATASOURCE_USERNAME: app        # public 스키마만 쓸 수 있는 계정 (db/init.sql)
+      SPRING_DATASOURCE_PASSWORD: app
+    depends_on:
+      postgres: { condition: service_healthy }   # DB가 받을 준비가 된 뒤에 뜬다
 
   agent:
     build: ./agent
@@ -52,7 +57,8 @@ services:
       POSTGRES_DB: bom
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}   # 관리자 계정. 서비스는 app/agent/rag 계정을 쓴다
     volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro   # 빈 볼륨일 때만 돈다
+      # init.sql(계정) → schema.sql(테이블) → seed.sql(시연 데이터). 이름 순서로 돌고, 빈 볼륨일 때만 돈다
+      - ./db:/docker-entrypoint-initdb.d:ro
       - pgdata:/var/lib/postgresql/data   # 재시작해도 작업·승인 기록이 남게. 초기화는 down -v
     healthcheck:
       # 다른 서비스가 DB를 쓰기 시작하면 depends_on: condition: service_healthy로 기다린다
