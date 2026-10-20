@@ -9,6 +9,7 @@ import {
 import { useWorkspace } from "../stores/workspace";
 import { environments } from "../mocks/environments";
 import Badge from "../components/Badge.vue";
+import { mode } from "../services/api";
 import { selectable } from "../services/workflow";
 const w = useWorkspace();
 const openPurchaseCount = computed(
@@ -107,7 +108,7 @@ const todos = computed(() =>
 </script>
 <template>
   <div class="overview-meta">
-    <span>{{ env.tag }} · {{ env.label }}</span
+    <span>{{ mode === "api" ? "실제 데이터 · 현재 상태" : `${env.tag} · ${env.label}` }}</span
     ><span>기준일 2026년 11월 2일</span>
   </div>
   <div class="status-strip">
@@ -223,7 +224,7 @@ const todos = computed(() =>
           <ArrowUpRight :size="16" />
         </button>
         <footer class="table-footer">
-          {{ w.data?.policyVersion }} · 데모 분석 결과
+          {{ w.data?.policyVersion }} · {{ mode === "api" ? "현재 상태 계산 결과" : "데모 분석 결과" }}
         </footer>
       </section>
       <section v-else class="card flush">

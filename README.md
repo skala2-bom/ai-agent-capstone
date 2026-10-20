@@ -115,7 +115,7 @@ cd backend && mvn test
 
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
-| `frontend/` | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드) | 프론트 담당 | 해결안·이력·평가지표 화면의 API 연결, 생산관리 `cost_level` 표시 |
+| `frontend/` | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드) | 프론트 담당 | (API 모드 화면 전부 연결됨) 과잉 해결안의 승인 요청은 agent 처리 후 |
 | `backend/` | 작업 접수·이벤트 저장·SSE 중계(`Tasks`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | (1~9단계 완료) 대기열(RabbitMQ, 가산점) |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |

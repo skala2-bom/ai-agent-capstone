@@ -7,7 +7,7 @@ import Badge from "../components/Badge.vue";
 import PlanCalendar from "../components/PlanCalendar.vue";
 import IssueTable from "../components/IssueTable.vue";
 import { scenarios } from "../mocks/fixtures";
-import { mode } from "../services/api";
+import { mode, request, toIssues } from "../services/api";
 const w = useWorkspace();
 const q = ref(""),
   status = ref(""),
@@ -30,13 +30,18 @@ const rows = computed(() =>
       (!to.value || p.date <= to.value),
   ),
 );
-const result = computed(() => scenarios.find((s) => s.id === preview.value));
+// API 모드는 실제 계산 결과, 목데이터 모드는 준비된 시연 결과
+const apiResult = ref<{ issues: ReturnType<typeof toIssues>; policy_version: string }>();
+const result = computed(() =>
+  mode === "api" ? apiResult.value : scenarios.find((s) => s.id === preview.value),
+);
 function open(p: Plan) {
   selected.value = p;
   date.value = p.date;
   qty.value = p.qty;
   preview.value = "";
   previewError.value = "";
+  apiResult.value = undefined;
   w.context = `${p.id} · ${p.product}`;
 }
 function simulate() {
@@ -44,8 +49,20 @@ function simulate() {
   previewError.value = "";
   const p = selected.value!;
   if (mode !== "mock") {
-    previewError.value =
-      "미리보기 API 계약이 필요합니다. 업무 분석에서 질문할 수 있습니다.";
+    // 바꾸려는 값만 가정 변경(whatif)으로 넣어 계산한다. 저장 전이라 DB는 그대로다 (contracts 2.2)
+    apiResult.value = undefined;
+    const whatif = [
+      ...(date.value !== p.date ? [{ op: "reschedule_plan", plan_id: p.id, new_date: date.value }] : []),
+      ...(qty.value !== p.qty ? [{ op: "change_plan_qty", plan_id: p.id, new_qty: qty.value }] : []),
+    ];
+    request<Record<string, unknown>>("/analysis/impact", w.session?.token, "POST", { whatif })
+      .then((r) => {
+        apiResult.value = {
+          issues: toIssues(r, w.data!.items, w.data!.plans),
+          policy_version: String(r.policy_version ?? ""),
+        };
+      })
+      .catch((e) => (previewError.value = (e as Error).message));
     return;
   }
   if (w.data?.analysisStale) {
@@ -210,7 +227,10 @@ async function save() {
           v-model="date"
           required
           type="date"
-          @input="preview = ''" /></label
+          @input="
+            preview = '';
+            apiResult = undefined;
+          " /></label
       ><label
         >변경 수량 (대)<input
           v-model.number="qty"
@@ -218,7 +238,10 @@ async function save() {
           required
           min="1"
           step="1"
-          @input="preview = ''"
+          @input="
+            preview = '';
+            apiResult = undefined;
+          "
       /></label>
       <div class="action-row">
         <button type="button" @click="simulate">영향 미리보기</button

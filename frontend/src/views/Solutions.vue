@@ -48,7 +48,7 @@ async function prioritize() {
 <template>
   <div class="section-head">
     <h2>
-      {{ environments.find((e) => e.id === w.scenario)?.label }} · 해결안
+      {{ mode === "api" ? "현재 상태" : environments.find((e) => e.id === w.scenario)?.label }} · 해결안
       <span class="count">{{ w.data?.options.length }}</span>
     </h2>
     <span class="caption">{{ w.data?.options.length }}개 후보</span>
@@ -92,8 +92,8 @@ async function prioritize() {
               <small>{{ o.risk }}</small>
             </td>
             <td>
-              <Badge :text="o.review" /><small>{{
-                o.reviewRevision ? "검수 v" + o.reviewRevision : "검수 전"
+              <Badge :text="mode === 'api' ? '시스템 계산' : o.review" /><small>{{
+                mode === "api" ? "평가지표 기준" : o.reviewRevision ? "검수 v" + o.reviewRevision : "검수 전"
               }}</small
               ><template v-if="o.role !== 'PLANNER'"
                 ><p class="num">{{ o.addedCost.toLocaleString() }}원</p>
@@ -109,7 +109,7 @@ async function prioritize() {
               <b :class="{ teal: o.priority === 1 }">{{
                 o.priority ? o.priority + "순위" : "미지정"
               }}</b
-              ><small>{{ o.reason || "생산관리 결정 대기" }}</small>
+              ><small>{{ o.reason || (mode === "api" ? "추천 아님" : "생산관리 결정 대기") }}</small>
             </td>
             <td>
               <button @click="open(o)">
@@ -136,7 +136,7 @@ async function prioritize() {
       {{
         mode === "mock"
           ? "현재 환경에는 검토할 해결안이 없습니다."
-          : "해결안 조회 API가 아직 연결되지 않았습니다."
+          : "지금 발주로 풀어야 할 결품·과잉이 없습니다. 생산계획을 바꾸거나 협력사 지연을 입력하면 여기에 해결안이 나옵니다."
       }}
     </div>
   </section>
@@ -156,17 +156,34 @@ async function prioritize() {
       <dl>
         <dt>추가비용 총액</dt>
         <dd>{{ selected.addedCost.toLocaleString() }}원</dd>
-        <template v-if="selected.role === 'APPROVER'"
+        <template v-if="selected.role === 'APPROVER' && mode === 'mock'"
           ><dt>계약 단가</dt>
           <dd>{{ selected.unitPrice.toLocaleString() }}원</dd></template
         >
       </dl>
-      <small
+      <small v-if="mode === 'mock'"
         >시연 견적 · 가상 공급계약 v1 / 5.1: 분할 배송은 별도 견적 확인 및
         승인이 필요합니다.</small
       >
     </div>
-    <form v-if="w.buyer" @submit.prevent="review(true)">
+    <!-- API 모드: 등급·추천은 시스템이 계산한 값이다. 사람의 검수·우선순위 입력은 목데이터 모드에만 있다 (decisions 5절 14번) -->
+    <div v-if="mode === 'api'" class="card">
+      <h3>계산 결과</h3>
+      <dl>
+        <dt>해결 여부</dt>
+        <dd>{{ selected.resolves ? "대상 문제 해소 · 다른 생산 영향 없음" : "해소 못 함" }}</dd>
+        <dt>영향</dt>
+        <dd>{{ selected.impact }}</dd>
+        <dt>비용 등급</dt>
+        <dd>{{ selected.grade }}</dd>
+        <dt>추천</dt>
+        <dd>{{ selected.priority === 1 ? selected.reason : "추천 아님" }}</dd>
+      </dl>
+      <p class="caption">
+        실행은 이 화면에서 하지 않습니다. 구매 담당자가 "승인 요청"을 누르면 AI가 다시 검증한 뒤 팀장 승인함에 카드를 올립니다.
+      </p>
+    </div>
+    <form v-else-if="w.buyer" @submit.prevent="review(true)">
       <label
         >사내 비용등급 · 직접 평가<select v-model="grade">
           <option>A</option>
@@ -194,7 +211,7 @@ async function prioritize() {
         </button>
       </div>
     </form>
-    <form v-else @submit.prevent="prioritize">
+    <form v-else-if="mode === 'mock'" @submit.prevent="prioritize">
       <p>
         확정 비용등급 <span class="grade">{{ selected.grade || "—" }}</span>
       </p>

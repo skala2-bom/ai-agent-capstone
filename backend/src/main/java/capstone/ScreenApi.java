@@ -71,6 +71,26 @@ class ScreenApi {
         return internal.supplierMetrics(itemId);
     }
 
+    /**
+     * POST /api/analysis/impact {@code {whatif}} — 화면의 영향 분석 (업무 현황의 "신규 위험", 생산계획 "영향 미리보기").
+     * AI 도구 analyze_impact와 <b>같은 계산</b>이다. whatif를 비우면 지금 DB 상태 그대로 판정한다.
+     * 가정이라 DB는 바뀌지 않는다. 금액은 로그인한 사람의 역할대로 가려진다.
+     */
+    @PostMapping("/analysis/impact")
+    Map<String, Object> impact(@RequestBody(required = false) Map<String, Object> body) {
+        return internal.analyzeImpact(body);
+    }
+
+    /**
+     * POST /api/analysis/options {@code {whatif, issues}} — 화면의 해결안 비교. AI 도구 compare_options와 같은 계산.
+     * 화면은 지금 DB 상태(whatif 없음)의 결품·과잉에 대한 대안을 보여 준다. 실행은 여기서 하지 않는다 —
+     * 발주 변경은 AI 작업의 승인 요청 → 팀장 승인으로만 간다 (contracts.md 3.3).
+     */
+    @PostMapping("/analysis/options")
+    Map<String, Object> options(@RequestBody(required = false) Map<String, Object> body) {
+        return internal.compareOptions(body);
+    }
+
     // ------------------------------------------------------------------
     // 화면 변경 2개 — 승인 없이 바로 바꾸고 이력만 남긴다
     // 요청 모양은 프론트(frontend/src/services/api.ts)가 먼저 정한 것을 그대로 따랐다

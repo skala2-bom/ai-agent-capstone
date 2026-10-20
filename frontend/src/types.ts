@@ -1,5 +1,6 @@
 export type Role = "PLANNER" | "BUYER" | "APPROVER";
-export type Grade = "A" | "B" | "C" | "D";
+// A~D = 목데이터 모드의 구매 검수 등급, LOW·MID·HIGH = API 모드의 시스템 비용 등급 (cost_level, decisions 6.15)
+export type Grade = "A" | "B" | "C" | "D" | "LOW" | "MID" | "HIGH";
 export interface Plan {
   id: string;
   product: string;
@@ -44,7 +45,7 @@ export interface Scenario {
   issues: Issue[];
 }
 export interface Option {
-  action: "split" | "plan" | "new-po" | "reallocate" | "due-date";
+  action: "split" | "plan" | "new-po" | "reallocate" | "due-date" | "qty" | "cancel";
   id: string;
   revision: number;
   name: string;

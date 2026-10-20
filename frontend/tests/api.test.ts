@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toApprovals, toHistory, toMetrics, toWorkspace } from "../src/services/api";
+import { toApprovals, toHistory, toIssues, toMetrics, toOptions, toWorkspace } from "../src/services/api";
 
 // backend 실제 응답 모양 (contracts.md 2.1·3.3) → 화면 타입. 응답 칸 이름이 바뀌면 여기서 깨진다
 describe("API 모드 응답 변환", () => {
@@ -45,5 +45,35 @@ describe("API 모드 응답 변환", () => {
   it("협력사 평가지표를 화면 표로 바꾸고 저장용 ID를 남긴다", () => {
     expect(toMetrics([{ supplier_id: "SUP-POWER", supplier_name: "파워링크전자", item_id: "RELAY", item_name: "릴레이", on_time_rate: 78.0, quality_score: 88, evaluated_by: "buyer", evaluated_at: "2026-10-15" }])[0])
       .toEqual({ supplierId: "SUP-POWER", itemId: "RELAY", supplier: "파워링크전자", item: "릴레이", onTime: 78, quality: 88, by: "박구매", date: "2026-10-15" });
+  });
+
+  it("영향 분석 결과를 위험 목록으로 — 제때 발주 가능한 결품은 추가발주 안내", () => {
+    const items = [{ id: "MCU", name: "MCU", type: "PART" as const, stock: 0, safety: 0, supplier: "", lead: 0, shared: [] },
+                   { id: "CASE-PLUG", name: "플러그 케이스", type: "PART" as const, stock: 0, safety: 0, supplier: "", lead: 0, shared: [] }];
+    const plans = [{ id: "PP-05", product: "IoT 허브", date: "2026-11-25", qty: 400, status: "PLANNED" }];
+    const issues = toIssues({
+      policy_version: "v0.1",
+      shortages: [{ rule_id: "INV-001", item_id: "MCU", plan_id: "PP-05", plan_date: "2026-11-25", projected_stock: -100, threshold: 0, qty: 100, orderable: false },
+                  { rule_id: "INV-001", item_id: "MCU", plan_id: "PP-05", plan_date: "2026-11-25", projected_stock: -50, threshold: 0, qty: 50, orderable: true }],
+      warnings: [{ rule_id: "INV-002", item_id: "MCU", plan_id: "PP-05", plan_date: "2026-11-25", projected_stock: 0, threshold: 300 }],
+      excesses: [{ rule_id: "INV-003", item_id: "CASE-PLUG", date: "2026-11-27", qty: 300, window_days: 30, amount: null }],
+    }, items, plans);
+    expect(issues.map((i) => `${i.kind} ${i.item} ${i.plan} ${i.qty}`)).toEqual([
+      "결품 MCU PP-05 · IoT 허브 100", "추가발주 MCU PP-05 · IoT 허브 50", "주의 MCU PP-05 · IoT 허브 300", "과잉 플러그 케이스  300"]);
+  });
+
+  it("해결안: 추천안이 1순위, 등급은 cost_level, 부작용이 있으면 해소로 보지 않는다", () => {
+    const res = { options: [
+      { option_id: "OPT-1", type: "SPLIT_PO", target_rule: "INV-001", item_id: "MCU", summary: "100개 먼저", args: { po_id: "PO-2609-001", split_qty: 100, new_due_date: "2026-11-25" },
+        added_cost: null, cost_level: "MID", risk: "MID", resolves: true, side_effects: [], remaining_issues: [], recommended: true },
+      { option_id: "OPT-2", type: "CANCEL_PO", target_rule: "INV-003", item_id: "MCU", summary: "취소", args: { po_id: "PO-X" },
+        added_cost: 0, cost_level: "LOW", risk: "LOW", resolves: true, recommended: false,
+        side_effects: [{ type: "NEW_SHORTAGE", item_id: "MCU", plan_id: "PP-02", increase_qty: 600 }], remaining_issues: [] },
+    ] };
+    const [a, b] = toOptions(res, "PLANNER", [], [{ id: "PO-X", item: "MCU", supplier: "", qty: 800, date: "", received: 0, passed: 0, failed: 0, status: "OPEN" }]);
+    expect(a).toMatchObject({ id: "OPT-1", action: "split", qty: 100, grade: "MID", priority: 1, resolves: true, review: "확정", role: "PLANNER" });
+    expect(a).not.toHaveProperty("addedCost");   // 생산관리는 금액 칸 자체가 없다
+    expect(b).toMatchObject({ action: "cancel", qty: 800, resolves: false, priority: undefined });
+    expect(b.impact).toContain("PP-02 +600개");
   });
 });

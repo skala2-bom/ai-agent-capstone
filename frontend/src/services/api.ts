@@ -1,4 +1,4 @@
-import type { Command, Session, Workspace, Role } from "../types";
+import type { Command, Session, Workspace, Role, Option, Issue, Grade } from "../types";
 import { environmentFixture } from "../mocks/environments";
 import { mutate } from "./workflow";
 export const mode = import.meta.env.VITE_DATA_MODE === "api" ? "api" : "mock";
@@ -203,6 +203,95 @@ export function toMetrics(rows: Row[]): Workspace["metrics"] {
     date: String(m.evaluated_at),
   }));
 }
+/**
+ * 영향 분석 결과(analyze_impact 모양, contracts 2.2) → 화면 위험 목록.
+ * 지금 발주하면 제때 오는 결품(orderable)은 위험이 아니라 "추가발주" 안내로 분류한다 (기획안 1.3).
+ */
+export function toIssues(impact: Row, items: Workspace["items"], plans: Workspace["plans"]): Issue[] {
+  const name = new Map(items.map((i) => [i.id, i.name]));
+  const plan = new Map(plans.map((p) => [p.id, p.product]));
+  const where = (r: Row) => (r.plan_id ? `${r.plan_id} · ${plan.get(String(r.plan_id)) ?? ""}` : "");
+  const list = (k: string) => ((impact[k] as Row[] | undefined) ?? []);
+  return [
+    ...list("shortages").map((r): Issue => ({
+      kind: r.orderable ? "추가발주" : "결품",
+      item: name.get(String(r.item_id)) ?? String(r.item_id),
+      plan: where(r),
+      date: String(r.plan_date),
+      qty: Number(r.qty),
+      detail: r.orderable
+        ? `예상재고 ${r.projected_stock} · 지금 발주하면 제때 도착 (정상 발주 안내)`
+        : `예상재고 ${r.projected_stock} · 새 발주로는 늦음 → 기존 발주 조정 필요 (${r.rule_id})`,
+    })),
+    ...list("warnings").map((r): Issue => ({
+      kind: "주의",
+      item: name.get(String(r.item_id)) ?? String(r.item_id),
+      plan: where(r),
+      date: String(r.plan_date),
+      qty: Number(r.threshold) - Number(r.projected_stock),
+      detail: `예상재고 ${r.projected_stock} < 안전재고 ${r.threshold} (${r.rule_id})`,
+    })),
+    ...list("excesses").map((r): Issue => ({
+      kind: "과잉",
+      item: name.get(String(r.item_id)) ?? String(r.item_id),
+      plan: "",
+      date: String(r.date),
+      qty: Number(r.qty),
+      detail: `앞으로 ${r.window_days}일 소요를 넘는 재고${r.amount != null ? ` · ${Number(r.amount).toLocaleString()}원` : ""} (${r.rule_id})`,
+    })),
+  ];
+}
+const OPTION_ACTION: Record<string, Option["action"]> = {
+  SPLIT_PO: "split",
+  DUE_DATE_CHANGE: "due-date",
+  CHANGE_QTY: "qty",
+  CANCEL_PO: "cancel",
+};
+/**
+ * 해결안 비교 결과(compare_options, contracts 2.3) → 화면 해결안.
+ * API 모드에는 사람의 검수·우선순위 단계가 없다 — 등급(cost_level)과 추천은 시스템이 계산한 값이라 "확정"으로 보여 주고,
+ * 추천안이 1순위다. 금액은 backend가 역할대로 이미 가렸다 (생산관리는 등급만).
+ */
+export function toOptions(res: Row, role: Role, items: Workspace["items"], purchases: Workspace["purchases"]): Workspace["options"] {
+  const name = new Map(items.map((i) => [i.id, i.name]));
+  const poQty = new Map(purchases.map((p) => [p.id, p.qty]));
+  return ((res.options as Row[] | undefined) ?? []).map((o) => {
+    const args = (o.args ?? {}) as Row;
+    const side = (o.side_effects as Row[] | undefined) ?? [];
+    const left = (o.remaining_issues as Row[] | undefined) ?? [];
+    const impact = side.length
+      ? "다른 생산에 결품: " + side.map((x) => `${name.get(String(x.item_id)) ?? x.item_id} ${x.plan_id} +${x.increase_qty}개`).join(", ")
+      : left.length
+        ? "남는 문제: " + left.map((x) => `${name.get(String(x.item_id)) ?? x.item_id} ${x.plan_id ?? x.date} ${x.shortage_qty ?? x.excess_qty}개`).join(", ")
+        : `${o.target_rule === "INV-003" ? "과잉" : "결품"} 해소 · 다른 생산 영향 없음`;
+    const base = {
+      action: OPTION_ACTION[String(o.type)] ?? "reallocate",
+      id: String(o.option_id),
+      revision: 1,
+      name: String(o.summary),
+      item: name.get(String(o.item_id)) ?? String(o.item_id),
+      po: String(args.po_id ?? ""),
+      qty: Number(args.split_qty ?? args.new_qty ?? poQty.get(String(args.po_id)) ?? 0),
+      date: String(args.new_due_date ?? ""),
+      resolves: Boolean(o.resolves) && side.length === 0,
+      verification: "VERIFIED" as const,
+      impact,
+      risk: `납기 위험 ${o.risk}`,
+      confirmed: false,
+      review: "확정" as const,
+      reviewRevision: 1,
+      grade: o.cost_level as Grade,
+      priority: o.recommended ? 1 : undefined,
+      reason: o.recommended ? "시스템 추천 (결품 해소 → 부작용 없음 → 위험 → 비용 순)" : "",
+    };
+    const evidence = o.saved_amount != null
+      ? `덜 사는 금액 ${Number(o.saved_amount).toLocaleString()}원`
+      : "협력사 평가지표의 긴급 비용·분할 수수료로 계산 (POL-COST-EVAL 2.1)";
+    if (role === "PLANNER") return { ...base, role };
+    if (role === "BUYER") return { ...base, role, addedCost: Number(o.added_cost ?? 0), costEvidence: evidence };
+    return { ...base, role, addedCost: Number(o.added_cost ?? 0), costEvidence: evidence, unitPrice: 0 };
+  });
+}
 const api: Gateway = {
   async load(s) {
     const [rp, ri, rpo] = await Promise.all([
@@ -212,10 +301,13 @@ const api: Gateway = {
     ]);
     const { plans, items, purchases } = toWorkspace(rp, ri, rpo);
     // 승인 대기함은 팀장만 볼 수 있다 (contracts 3.1). 다른 역할은 빈 목록
-    const [cards, tasks, metrics] = await Promise.all([
+    const [cards, tasks, metrics, impact, compared] = await Promise.all([
       s.role === "APPROVER" ? request<Row[]>("/approvals", s.token) : Promise.resolve([] as Row[]),
       request<Row[]>("/ai/tasks", s.token),
       request<{ metrics: Row[] }>("/suppliers/metrics", s.token),
+      // 지금 DB 상태의 결품·과잉과 해결안. 일정 변경·지연 입력을 저장하면 다시 불러와 바로 반영된다
+      request<Row>("/analysis/impact", s.token, "POST", { whatif: [] }),
+      request<Row>("/analysis/options", s.token, "POST", { whatif: [] }),
     ]);
     const { approvals, options } = toApprovals(
       cards,
@@ -225,7 +317,10 @@ const api: Gateway = {
       plans,
       items,
       purchases,
-      options,
+      issues: toIssues(impact, items, plans),
+      policyVersion: String(impact.policy_version ?? ""),
+      // 승인 카드에서 만든 대안(승인함용) + 지금 상태의 해결안(해결안 비교용)
+      options: [...toOptions(compared, s.role, items, purchases), ...options],
       approvals,
       history: toHistory(tasks),
       metrics: toMetrics(metrics.metrics),
@@ -249,6 +344,17 @@ const api: Gateway = {
       await request(`/suppliers/${m.supplierId}/items/${m.itemId}/metrics`, s.token, "PUT", {
         on_time_rate: c.onTime,
         quality_score: c.quality,
+      });
+    }
+    else if (c.type === "request") {
+      // 화면에는 승인 카드를 바로 만드는 API가 없다 — 승인 요청은 AI 작업이 검증(verify)을 거쳐 올린다 (contracts 3.3).
+      // 그래서 이 해결안으로 진행해 달라는 AI 작업을 만든다. 승인 카드는 팀장 승인함에 생긴다
+      const o = (await this.load(s)).options.find((x) => x.id === c.id);
+      if (!o) throw new Error("해결안을 찾지 못했습니다. 새로고침 후 다시 시도하세요.");
+      // 질문에 해결안 문장(날짜·수량)을 넣지 않는다 — AI가 그걸 가정 변경으로 읽어 "이미 풀린 상태"로 분석한다.
+      // 지금 DB 상태 그대로 풀게 하면 AI도 같은 계산(compare_options)의 추천안을 골라 승인 요청을 올린다
+      await request("/ai/tasks", s.token, "POST", {
+        question: `지금 생산계획 기준으로 부족한 ${o.item} 해결 방법 만들어 줘`,
       });
     }
     else if (c.type === "approval")
