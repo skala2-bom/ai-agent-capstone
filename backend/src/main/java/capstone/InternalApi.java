@@ -64,16 +64,32 @@ class InternalApi {
                 where i.item_id = ?""", id, "품목", "item", "item_id");
     }
 
-    /** get_inventory — 현재 재고. type(FG|PART)·item_id는 둘 다 선택. 반제품은 재고가 없어 나오지 않는다. */
+    /**
+     * get_inventory — 현재 재고. type(FG|PART)·item_id는 둘 다 선택. 반제품은 재고가 없어 나오지 않는다.
+     *
+     * <p>{@code used_in}: 이 부품이 들어가는 완제품 이름 (BOM을 반제품까지 따라 내려가 찾는다). 2개 이상이면 공용 부품이다.
+     * 화면의 자재 목록이 "공용 N개 제품"을 보여 주려고 더했다 — 칸을 더한 것이라 도구 쪽은 영향이 없다.
+     */
     @GetMapping("/inventory")
     Map<String, Object> getInventory(@RequestParam(required = false) String type,
                                      @RequestParam(name = "item_id", required = false) String itemId) {
         if (itemId != null) getItem(itemId);  // 없는 ID면 빈 목록 대신 NOT_FOUND로 알려 준다
-        return m("as_of", TODAY.toString(), "items", db.queryForList("""
-                select v.item_id, i.name, i.type, v.on_hand, i.safety_stock
-                from inventory v join item i using (item_id)
+        List<Map<String, Object>> rows = db.queryForList("""
+                select v.item_id, i.name, i.type, v.on_hand, i.safety_stock,
+                       i.supplier_id, s.name as supplier_name, i.lead_time_days
+                from inventory v join item i using (item_id) left join supplier s on s.supplier_id = i.supplier_id
                 where (cast(? as text) is null or i.type = ?) and (cast(? as text) is null or v.item_id = ?)
-                order by i.type, v.item_id""", type, type, itemId, itemId));
+                order by i.type, v.item_id""", type, type, itemId, itemId);
+        Map<String, List<String>> usedIn = new HashMap<>();
+        db.query("""
+                with recursive x(fg, child) as (
+                    select b.parent_id, b.child_id from bom b join item f on f.item_id = b.parent_id and f.type = 'FG'
+                    union
+                    select x.fg, b.child_id from x join bom b on b.parent_id = x.child)
+                select distinct x.child, f.name from x join item f on f.item_id = x.fg order by 2""",
+                rs -> { usedIn.computeIfAbsent(rs.getString(1), k -> new ArrayList<>()).add(rs.getString(2)); });
+        rows.forEach(r -> r.put("used_in", usedIn.getOrDefault((String) r.get("item_id"), List.of())));
+        return m("as_of", TODAY.toString(), "items", rows);
     }
 
     /** list_plans — 기간 안의 생산 계획. from·to는 양끝 포함, 둘 다 선택. */
@@ -95,9 +111,9 @@ class InternalApi {
                                      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         if (itemId != null) getItem(itemId);
         return m("purchase_orders", db.queryForList("""
-                select po_id, item_id, supplier_id, qty, unit_price, qty * unit_price as amount,
+                select po_id, item_id, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,
                        order_date::text as order_date, due_date::text as due_date, status, parent_po_id
-                from purchase_order
+                from purchase_order po join supplier s on s.supplier_id = po.supplier_id
                 where status = ? and (cast(? as text) is null or item_id = ?)
                   and (cast(? as date) is null or due_date >= ?) and (cast(? as date) is null or due_date <= ?)
                 order by due_date, po_id""", status, itemId, itemId, from, from, to, to));

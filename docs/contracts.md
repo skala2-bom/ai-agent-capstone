@@ -29,6 +29,10 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 18 | 재고 응답에 `supplier_id`·`supplier_name`·`lead_time_days`·`used_in`(들어가는 완제품 이름), 발주 응답에 `supplier_name` — **칸 추가만** | 2.1 | 자재 화면의 협력사·리드타임·공용 제품 표시에 쓴다 (반영됨) | 없음 |
+
+> ✅ **10/20 밤 통합 확인** — AI 팀원의 `integration-draft`(agent + 프론트 API 연결) 위에 B 변경을 얹어 **질문 → 영향 분석 → 대안 비교 → 검증 → 승인 요청 → 팀장 승인 → agent 재개 → 분할 실행 → 답변**이 실제로 끝까지 도는 것을 확인했다 (가짜 모델 기준).
+> 이 통합으로 **2·3·4·10·13·14·15·16번은 해결됐다.** 남은 것: 1번(Harness 평가가 `eval/golden.json`을 읽는지 — `agent/eval_golden.py`가 읽음, C 확인), 6번(생산관리 화면의 `cost_level` 표시, A).
 
 
 ## 파트 구분
@@ -164,13 +168,15 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 
 // get_inventory  GET /internal/inventory?type=PART      (type·item_id 둘 다 선택)
 { "as_of": "2026-11-02",
-  "items": [{ "item_id": "MCU", "name": "MCU", "type": "PART", "on_hand": 2700, "safety_stock": 300 }] }
+  "items": [{ "item_id": "MCU", "name": "MCU", "type": "PART", "on_hand": 2700, "safety_stock": 300,
+              "supplier_id": "SUP-SEMION", "supplier_name": "세미온반도체", "lead_time_days": 56,
+              "used_in": ["IoT 허브", "도어 센서", "스마트 벽스위치", "스마트 플러그"] }] }   // used_in 2개 이상 = 공용 부품
 
 // list_plans  GET /internal/plans?from=2026-11-20&to=2026-12-31   (양끝 포함, 둘 다 선택)
 { "plans": [{ "plan_id": "PP-05", "product_id": "FG-HUB", "plan_date": "2026-12-14", "qty": 400, "status": "PLANNED" }] }
 
 // list_receipts  GET /internal/purchase-orders?status=OPEN&item_id=MCU&from=&to=   (status 기본 OPEN, from·to는 입고일)
-{ "purchase_orders": [{ "po_id": "PO-2609-001", "item_id": "MCU", "supplier_id": "SUP-SEMION", "qty": 500,
+{ "purchase_orders": [{ "po_id": "PO-2609-001", "item_id": "MCU", "supplier_id": "SUP-SEMION", "supplier_name": "세미온반도체", "qty": 500,
     "unit_price": 3500, "amount": 1750000, "order_date": "2026-09-01", "due_date": "2026-12-12",
     "status": "OPEN", "parent_po_id": null }] }
 

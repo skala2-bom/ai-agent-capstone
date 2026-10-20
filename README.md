@@ -21,7 +21,7 @@ ai-agent-capstone/
 ├─ frontend/                   Vue 3 + Vite + TypeScript (자세한 건 frontend/README.md)
 │  ├─ src/                     화면, services/api.ts(서버 응답 변환), mocks/(목데이터)
 │  ├─ nginx.conf               /api/** → backend 프록시 (SSE 버퍼링 끔)
-│  └─ Dockerfile               기본은 목데이터 모드 (VITE_DATA_MODE)
+│  └─ Dockerfile               compose는 API 모드로 빌드한다 (VITE_DATA_MODE, 기본 api)
 ├─ backend/                    Spring Boot 3 (Java 21, Maven)
 │  ├─ pom.xml
 │  ├─ Dockerfile
@@ -82,7 +82,7 @@ cp .env.example .env   # OPENAI_API_KEY는 비워 두면 가짜 모델
 docker compose up --build
 ```
 
-http://localhost:3000 이 화면이다. **지금은 목데이터 모드로 빌드된다** (프론트 Dockerfile 기본값). 실제 backend와 붙이는 API 모드는 프론트의 응답 변환이 끝난 뒤 켠다 ([contracts 최근 변경](docs/contracts.md) 13~15번).
+http://localhost:3000 이 화면이다. 시연 계정 `planner`·`buyer`·`approver`(비밀번호 `1234`)로 로그인하면 실제 backend 데이터가 보인다. 구매 계정으로 "허브를 12/14에서 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘"라고 물으면 승인 요청까지 가고, 팀장 계정의 승인 대기함에서 승인하면 발주가 실제로 나뉜다. 목데이터 화면만 보려면 `.env`에 `VITE_DATA_MODE=mock`.
 
 backend 흐름은 직접 확인할 수 있다 (시연 계정 `planner`·`buyer`·`approver`, 비밀번호 `1234`):
 
@@ -114,7 +114,7 @@ cd backend && mvn test
 
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
-| `frontend/` | Vue 3 + Vite 업무 화면 (목데이터 모드 기본) | 프론트 담당 | API 모드 연결: `services/api.ts` 응답 변환, 로그인 `user_id` |
+| `frontend/` | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드) | 프론트 담당 | 해결안·이력·평가지표 화면의 API 연결, 생산관리 `cost_level` 표시 |
 | `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | 작업 DB(ai_task·task_event), 2차 도구 5개, 자동 분석, 평가지표 입력, `/internal/**` 서비스 토큰 |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |

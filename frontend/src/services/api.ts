@@ -89,7 +89,7 @@ const mock: Gateway = {
 // 정식 DTO는 A·B 파트 합의 사항 (contracts 3.1). 합의되면 이 변환을 그 형식에 맞춰 바꾼다.
 type Row = Record<string, unknown>;
 const PLAN_STATUS: Record<string, string> = { PLANNED: "확정" };
-function toWorkspace(rp: { plans: Row[] }, ri: { items: Row[] }, rpo: { purchase_orders: Row[] }) {
+export function toWorkspace(rp: { plans: Row[] }, ri: { items: Row[] }, rpo: { purchase_orders: Row[] }) {
   const names = new Map(ri.items.map((i) => [String(i.item_id), String(i.name)]));
   const plans: Workspace["plans"] = rp.plans.map((p) => ({
     id: String(p.plan_id),
@@ -104,14 +104,15 @@ function toWorkspace(rp: { plans: Row[] }, ri: { items: Row[] }, rpo: { purchase
     type: i.type === "FG" ? "FG" : "PART",
     stock: Number(i.on_hand),
     safety: Number(i.safety_stock ?? 0),
-    supplier: "",
-    lead: 0,
-    shared: [],
+    // 협력사·리드타임·사용 제품(used_in)은 backend가 재고 응답에 더해 준다 (10/20 밤). 완제품은 없다
+    supplier: String(i.supplier_name ?? ""),
+    lead: Number(i.lead_time_days ?? 0),
+    shared: (i.used_in as string[] | undefined) ?? [],
   }));
   const purchases: Workspace["purchases"] = rpo.purchase_orders.map((o) => ({
     id: String(o.po_id),
     item: names.get(String(o.item_id)) ?? String(o.item_id),
-    supplier: String(o.supplier_id),
+    supplier: String(o.supplier_name ?? o.supplier_id),
     qty: Number(o.qty),
     date: String(o.due_date),
     received: 0,
@@ -124,7 +125,9 @@ function toWorkspace(rp: { plans: Row[] }, ri: { items: Row[] }, rpo: { purchase
 // [로컬 통합 임시] 승인 카드(contracts 3.3)를 화면의 Approval + Option으로 바꾼다.
 // 화면 승인함은 optionId로 대안을 찾아 그리므로, 카드마다 대안 하나를 만들어 붙인다 (id = approval_id).
 const approvalTasks = new Map<string, string>(); // approval_id → task_id (결정 API 경로에 필요)
-function toApprovals(cards: Row[], names: Map<string, string>) {
+/** 승인 카드의 요청자 ID → 화면 이름 (seed의 시연 계정) */
+const userNames: Record<string, string> = { planner: "김계획", buyer: "박구매", approver: "정팀장" };
+export function toApprovals(cards: Row[], names: Map<string, string>) {
   const approvals: Workspace["approvals"] = [];
   const options: Workspace["options"] = [];
   for (const c of cards) {
@@ -137,7 +140,7 @@ function toApprovals(cards: Row[], names: Map<string, string>) {
       id,
       taskId: String(c.task_id),
       optionId: id,
-      requester: String(c.requested_by),
+      requester: userNames[String(c.requested_by)] ?? String(c.requested_by),
       at: String(c.requested_at),
       status: c.status as Workspace["approvals"][number]["status"],
       reason: (c.reason as string) ?? undefined,

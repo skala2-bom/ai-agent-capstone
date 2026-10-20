@@ -118,9 +118,9 @@ class ScreenApi {
             approvals.history("PURCHASE_ORDER", id, "supplier_delay", before, after, (String) body.get("reason"), user.getSubject(), null);
             // 응답은 바뀐 발주 한 건, 목록 조회(/api/purchase-orders)와 같은 모양
             return db.queryForList("""
-                    select po_id, item_id, supplier_id, qty, unit_price, qty * unit_price as amount,
+                    select po_id, item_id, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,
                            order_date::text as order_date, due_date::text as due_date, status, parent_po_id
-                    from purchase_order where po_id = ?""", id).getFirst();
+                    from purchase_order po join supplier s on s.supplier_id = po.supplier_id where po_id = ?""", id).getFirst();
         });
     }
 

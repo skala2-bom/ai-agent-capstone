@@ -4,11 +4,19 @@ import { useWorkspace } from "../stores/workspace";
 import type { Item } from "../types";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
+import { mode } from "../services/api";
 const w = useWorkspace(),
   q = ref(""),
   type = ref("PART"),
   tab = ref("재고");
 const selected = ref<Item>();
+// API 모드에서는 완제품 이름을 서버 데이터에서 가져온다 (seed 이름: "스마트 벽스위치", "도어 센서").
+// 목데이터 모드는 기존 시연 이름을 그대로 쓴다
+const products = computed(() =>
+  mode === "api"
+    ? w.data!.items.filter((i) => i.type === "FG").map((i) => i.name)
+    : ["IoT 허브", "스마트 플러그", "스마트 스위치", "도어센서"],
+);
 const product = ref("IoT 허브");
 const rows = computed(() =>
   w.data!.items.filter(
@@ -93,14 +101,7 @@ function open(i: Item) {
   <section v-else class="card">
     <div class="toolbar">
       <select v-model="product" aria-label="BOM 제품 선택">
-        <option
-          v-for="p in [
-            'IoT 허브',
-            '스마트 플러그',
-            '스마트 스위치',
-            '도어센서',
-          ]"
-        >
+        <option v-for="p in products">
           {{ p }}
         </option></select
       ><span class="caption">데모 BOM</span>
