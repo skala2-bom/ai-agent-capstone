@@ -24,7 +24,9 @@
   "expected": {                                               // ── B 파트 (계산 결과, 마스킹 전)
     "shortages": [{ "item_id": "MCU", "plan_id": "PP-05", "plan_date": "2026-11-25", "projected_stock": -100, "orderable": false }, ...],
     "warnings": [],
-    "excesses": []
+    "excesses": [],
+    "options": [{ "item_id": "MCU", "type": "SPLIT_PO", "tool": "split_po", "args": {...}, "added_cost": 390000, "risk": "MID", "resolves": true, "recommended": true }, ...],
+    "recommended_option_id": "OPT-1"
   }
 }
 ```
@@ -33,7 +35,7 @@
 |---|---|---|
 | `question` · `role` · `expected_tools` | **C** | 사용자가 할 말, 누가 묻나, 모델이 어떤 도구를 불러야 하나 |
 | `whatif` | **B** | 질문을 계산 입력으로 바꾸면 이렇게 된다. **C에게는 `classify_intent`가 뽑아야 할 정답**이기도 하다 |
-| `expected` | **B** | `analyze_impact`에 `whatif`를 넣었을 때 나와야 하는 결과. 적힌 칸만 비교하고, 순서까지 같아야 한다 |
+| `expected` | **B** | `analyze_impact`에 `whatif`를 넣었을 때 나와야 하는 결과. `options`·`recommended_option_id`는 `compare_options`에 같은 `whatif`를 넣었을 때의 결과 (question 문항만). 적힌 칸만 비교하고, 순서까지 같아야 한다 |
 | `id` · `kind` · `title` | 둘 다 | 새 문항을 넣는 쪽이 채운다 |
 
 - `expected`의 금액(`amount`)은 **마스킹 전** 값이다. PLANNER가 받으면 `null`이 된다 (contracts 1.2).
@@ -51,6 +53,6 @@
 | 누가 | 어떻게 |
 |---|---|
 | backend | [`ImpactAnalysisTest`](../backend/src/test/java/capstone/ImpactAnalysisTest.java)가 문항마다 `whatif` → 계산 → `expected` 비교 |
-| AI 파트 Harness 평가 | `question`을 agent에 넣고 ① 부른 도구가 `expected_tools`인가 ② 뽑은 whatif가 `whatif`와 같은가 ③ 답변에 `expected`의 숫자·품목·날짜가 들어 있고 없는 숫자를 지어내지 않았나 |
+| AI 파트 Harness 평가 | `question`을 agent에 넣고 ① 부른 도구가 `expected_tools`인가 ② 뽑은 whatif가 `whatif`와 같은가 ③ 답변에 `expected`의 숫자·품목·날짜가 들어 있고 없는 숫자를 지어내지 않았나 ④ 해결 방법을 물으면 `recommended=true`인 대안을 골랐나 |
 | 프론트 | 시연 질문 예시 버튼에 `question`을 그대로 쓸 수 있다 |
 | 발표 | "계산 엔진 테스트와 AI 평가가 같은 정답 파일을 쓴다" — 기능 적합성과 Harness 평가의 근거가 하나다 |

@@ -83,7 +83,7 @@ CREATE TABLE purchase_order (
 CREATE INDEX ON purchase_order (item_id, due_date) WHERE status = 'OPEN';
 
 -- 협력사 × 부품 평가지표 (decisions.md 2.2). compare_options가 대안의 비용·위험을 여기서 계산한다.
--- decisions 2.2에서 칸 2개를 더했다:
+-- decisions 2.2에서 칸 2개를 더했고, expedite_cost_per_day의 단위를 개·일로 바꿨다:
 --   lead_time_days — 대체 협력사는 리드타임이 다르다. item.lead_time_days는 주 협력사 값이다
 --   split_fee      — 분할 배송 수수료 (decisions.md 3.4). 계약 조건 문서에 있는 숫자를 계산이 쓰려면 DB에도 있어야 한다
 CREATE TABLE supplier_metric (
@@ -91,7 +91,9 @@ CREATE TABLE supplier_metric (
     item_id               text NOT NULL REFERENCES item,
     unit_price            int  NOT NULL,   -- 원
     lead_time_days        int  NOT NULL,
-    expedite_cost_per_day int  NOT NULL,   -- 원/일. 이미 낸 발주를 하루 당길 때 붙는 비용 (발주 1건 기준)
+    -- 원/(개·일). 이미 낸 발주에서 1개를 1일 당길 때 붙는 비용. 많이·오래 당길수록 비싸다.
+    -- 발주 1건 기준으로 두면 "전체 당기기"가 "급한 만큼만 나눠 당기기"보다 항상 싸져서 분할의 의미가 없어진다 (decisions.md 6.14)
+    expedite_cost_per_day int  NOT NULL,
     split_fee             int  NOT NULL,   -- 원. 발주 1건을 나눠 받을 때 한 번
     delay_penalty         int  NOT NULL,   -- 원. 납기 지연 시 우리가 무는 패널티 (decisions.md 2.2 그대로)
     on_time_rate          numeric(5,2) NOT NULL CHECK (on_time_rate BETWEEN 0 AND 100),  -- %

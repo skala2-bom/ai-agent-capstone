@@ -147,7 +147,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   "new":      { "po_id": "PO-2609-010", "qty": 100, "due_date": "2026-11-25", "status": "OPEN", "parent_po_id": "PO-2609-001" } }
 ```
 
-- 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "issues": [...] }` (`issues`는 `analyze_impact`의 `shortages` 항목을 그대로 넣는다).
+- 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "whatif": [...], "issues": [...] }` (2.3).
 - 변경 2개는 고정 응답이어도 **검사는 진짜로 한다** (승인 ID 유무 → OPEN → 수량 → 리드타임 → 날짜 같음). 오류 경로를 지금 시험할 수 있다. 시험용으로 이미 입고된 `PO-2608-014`가 있다. 저장은 아직 안 한다.
 - 금액 필드(`unit_price`·`amount`·`added_cost`)는 지금 가리지 않는다. 마스킹(1.2)이 붙으면 **키는 남기고 값을 `null`로** 바꾼다 — 키가 사라지면 모양이 역할마다 달라져서 도구 결과를 읽는 쪽이 분기해야 한다.
 
@@ -214,33 +214,50 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - `policy_version`은 기준을 바꿔도 과거 결과를 해석할 수 있게 한다. Harness 평가셋 전후 비교에 그대로 쓰인다.
 - 판정 수식과 경계 조건은 [아키텍처 1.2](BOM_Agent_아키텍처.md).
 
-### 2.3 `compare_options` 응답
+### 2.3 `compare_options` 요청과 응답
+
+✅ **실제 계산으로 동작한다** (`OptionAnalysis.java`, 평가셋 SC1~SC4 대안 정답 테스트 통과). 아래는 SC1의 실제 응답 중 첫 대안이다.
+
+**요청** — `{ "whatif": [...], "issues": [...] }` (10/20 오후 변경: 전에는 `issues`만 있었다)
+- `whatif`: `analyze_impact`에 넣었던 것과 **같은 가정**. 결품은 가정 위에서만 생기므로 대안도 그 위에서 만들고 검증해야 한다. 변경이 이미 DB에 반영됐으면 비운다.
+- `issues`: 풀고 싶은 결품. `analyze_impact`의 `shortages` 항목을 그대로 넣어도 된다 (`item_id`만 본다). 비우면 전부.
+
+**응답**
 
 ```jsonc
 {
   "policy_version": "v0.1",
   "options": [{
     "option_id": "OPT-1",
-    "type": "SPLIT_PO",               // SPLIT_PO | DUE_DATE_CHANGE | REALLOCATE
-    "summary": "PO-2609-001(MCU 500개, 12/12)을 400/100으로 나눠 100개를 11/25에 받는다",
+    "type": "SPLIT_PO",                // SPLIT_PO | DUE_DATE_CHANGE (REALLOCATE는 아직 만들지 않는다)
+    "item_id": "MCU",                  // 이 대안이 푸는 부품
+    "summary": "PO-2609-001(MCU 500개, 12/12 입고)에서 100개만 떼어 11/25에 먼저 받는다",
     "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
     "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
-    "added_cost": 390000,              // 원. 긴급 비용(17일 × 20,000) + 분할 배송 수수료 50,000
-    "risk": "LOW",                     // LOW | MID | HIGH. 협력사 on_time_rate 기반
-    "feasible": true,                  // LT-001 통과 여부
-    "side_effects": [],                // 다른 제품에 생기는 영향
-    "evidence": ["doc://SUPPLY-2026-003/5.1"]
+    "added_cost": 390000,              // 원. 당김 100개 × 17일 × 200원 + 분할 수수료 50,000 (마스킹 대상)
+    "risk": "MID",                     // LOW | MID | HIGH. 납기 준수율 + 당기는 일수
+    "feasible": true,                  // LT-001 통과. 통과 못 한 대안은 아예 안 나오므로 항상 true
+    "resolves": true,                  // 이 대안 하나로 그 부품의 결품(orderable=false)이 다 풀리나 — backend가 다시 계산해서 채움
+    "side_effects": [],                // 다른 곳에 새로 생기는 결품 [{item_id, plan_id, plan_date, projected_stock}]
+    "recommended": true,               // 부품마다 하나만 true
+    "evidence": []                     // backend는 비워 둔다. agent가 search_docs 결과로 채운다
   }],
-  "recommended_option_id": "OPT-1"
+  "recommended_option_id": "OPT-1"     // 첫 번째 추천안. 결품 부품이 여럿이면 options의 recommended=true를 모두 본다
 }
 ```
 
 - `tool`·`args`를 그대로 담는 이유: 모델이 고른 대안을 **그대로 승인 카드로 올리고 그대로 실행**할 수 있다. 모델이 인자를 다시 만들지 않으니 숫자가 틀어질 여지가 없다.
-- `added_cost`·`risk`는 B의 계산 서비스가 `supplier_metric`을 읽어 채운다 ([decisions.md 2절](decisions.md)).
+- 대안은 **`orderable=false` 결품만** 대상으로 만든다. `orderable=true`는 "지금 발주하면 제때 온다"는 정상 안내라서 기존 발주를 건드릴 이유가 없다. 그래서 SC3(새 케이스 −800, 발주 가능)은 대안이 0개다.
+- **추천 순서**: 결품을 푸는 것 → 부작용 없는 것 → 위험 낮은 것 → 싼 것. 결품을 다 풀면서 부작용이 없는 대안이 없으면 `recommended_option_id`는 `null`이다. 근거는 [decisions.md 6.14](decisions.md).
+- **결품 부품이 여럿이면 추천안도 여럿이다** (SC2: 릴레이·전원 모듈 각 1개). 둘 다 승인해야 결품이 다 풀린다. 승인 요청은 대안마다 따로 올린다 (승인 카드 1장 = 도구 호출 1번).
+- `added_cost`·`risk`는 `supplier_metric`에서 나온다 ([decisions.md 2절](decisions.md)).
 
 ### 2.4 `verify` 통과 기준 (C가 구현)
 
-고른 대안을 적용해 `analyze_impact`를 **다시** 부른 뒤:
+고른 대안을 적용해 `analyze_impact`를 **다시** 부른 뒤 (whatif = 원래 가정 + `{"op": tool, **args}`):
+
+> `compare_options`가 이미 같은 계산으로 `resolves`·`side_effects`를 채워 준다. verify는 그 값을 믿어도 되고, Harness 증빙을 위해 다시 불러 확인해도 된다. 결과는 같다.
+
 
 | 조건 | 판정 |
 |---|---|
@@ -311,7 +328,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | 칸 | 주인 |
 |---|---|
 | `question` · `role` · `expected_tools` | C |
-| `whatif` · `expected` | B (`expected`는 계산으로만 채운다. 손계산 금지) |
+| `whatif` · `expected` | B (`expected`는 계산으로만 채운다. 손계산 금지). `expected.options`·`recommended_option_id`는 `compare_options` 정답 |
 
 - 형식·문항 추가 절차는 [`eval/README.md`](../eval/README.md).
 - `whatif`는 C의 `classify_intent`가 질문에서 뽑아야 할 정답이기도 하다.

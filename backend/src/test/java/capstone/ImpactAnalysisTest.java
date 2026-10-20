@@ -38,6 +38,7 @@ class ImpactAnalysisTest {
     static final ObjectMapper MAPPER = new ObjectMapper();
     static PostgreSQLContainer<?> pg;
     static ImpactAnalysis analysis;
+    static OptionAnalysis options;
 
     @BeforeAll
     static void startDb() {
@@ -46,7 +47,9 @@ class ImpactAnalysisTest {
                 .withCopyFileToContainer(MountableFile.forHostPath("../db"), "/docker-entrypoint-initdb.d");
         pg.start();
         // 슈퍼유저가 아니라 backend와 같은 app 계정으로 읽는다. 권한 문제도 같이 잡힌다
-        analysis = new ImpactAnalysis(new JdbcTemplate(new DriverManagerDataSource(pg.getJdbcUrl(), "app", "app")));
+        JdbcTemplate db = new JdbcTemplate(new DriverManagerDataSource(pg.getJdbcUrl(), "app", "app"));
+        analysis = new ImpactAnalysis(db);
+        options = new OptionAnalysis(db, analysis);
     }
 
     // ------------------------------------------------------------------
@@ -72,6 +75,17 @@ class ImpactAnalysisTest {
                     assertThat(pick(list(actual, key), expected))
                             .as("%s의 %s", c.get("id").asText(), key)
                             .isEqualTo(expected);
+                }
+                // compare_options 정답이 적힌 문항만 (verify 문항은 대안을 고른 뒤라 없다)
+                if (c.get("expected").has("options")) {
+                    Map<String, Object> actualOptions = options.compare(whatif, Set.of());
+                    List<Map<String, Object>> expected = MAPPER.convertValue(c.get("expected").get("options"), new TypeReference<>() {});
+                    assertThat(pick(list(actualOptions, "options"), expected))
+                            .as("%s의 options", c.get("id").asText())
+                            .isEqualTo(expected);
+                    assertThat(actualOptions.get("recommended_option_id"))
+                            .as("%s의 recommended_option_id", c.get("id").asText())
+                            .isEqualTo(MAPPER.convertValue(c.get("expected").get("recommended_option_id"), Object.class));
                 }
             }));
         }
@@ -120,16 +134,20 @@ class ImpactAnalysisTest {
         return (List<Map<String, Object>>) r.get(key);
     }
 
-    /** 실제 결과에서 expected가 가진 칸만 남긴다. 숫자는 JSON과 비교하려고 같은 방식으로 한 번 변환한다. */
+    /** 실제 결과에서 expected가 가진 칸만 남긴다. 숫자 타입을 JSON 쪽과 맞춘다. */
     private static List<Map<String, Object>> pick(List<Map<String, Object>> actual, List<Map<String, Object>> expected) {
         Set<String> keys = new HashSet<>();
         expected.forEach(e -> keys.addAll(e.keySet()));
-        if (keys.isEmpty()) keys.addAll(List.of("item_id", "plan_id", "plan_date", "date", "projected_stock", "qty"));
+        if (keys.isEmpty()) keys.addAll(List.of("item_id", "plan_id", "plan_date", "date", "projected_stock", "qty", "type", "args"));
         List<Map<String, Object>> picked = actual.stream().map(e -> {
             Map<String, Object> row = new LinkedHashMap<>();
             e.forEach((k, v) -> { if (keys.contains(k)) row.put(k, v); });
             return row;
         }).toList();
-        return MAPPER.convertValue(picked, new TypeReference<>() {});
+        try {   // JSON으로 한 번 왕복시켜 Long/Integer 차이를 없앤다 (golden.json에서 읽은 쪽과 같은 타입이 되게)
+            return MAPPER.readValue(MAPPER.writeValueAsString(picked), new TypeReference<>() {});
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

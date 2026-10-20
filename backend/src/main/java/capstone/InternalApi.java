@@ -15,7 +15,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  * <p>지금 상태
  * <ul>
  *   <li>조회 4개 — seed DB(db/seed.sql)에서 읽는다</li>
- *   <li>계산 2개 — analyze_impact는 실제 계산({@link ImpactAnalysis}), compare_options는 아직 고정 응답</li>
+ *   <li>계산 2개 — 실제 계산 ({@link ImpactAnalysis}, {@link OptionAnalysis})</li>
  *   <li>변경 2개 — DB에서 발주를 읽어 검사는 진짜로 하고, 저장은 아직 안 한다 (→ 승인 API와 함께)</li>
  * </ul>
  * 모양은 계약대로 고정이다. 안쪽이 바뀌어도 AI·MCP 파트는 고칠 것이 없다.
@@ -38,10 +38,12 @@ class InternalApi {
 
     private final JdbcTemplate db;
     private final ImpactAnalysis impact;
+    private final OptionAnalysis options;
 
-    InternalApi(JdbcTemplate db, ImpactAnalysis impact) {
+    InternalApi(JdbcTemplate db, ImpactAnalysis impact, OptionAnalysis options) {
         this.db = db;
         this.impact = impact;
+        this.options = options;
     }
 
     // ------------------------------------------------------------------
@@ -99,7 +101,7 @@ class InternalApi {
     }
 
     // ------------------------------------------------------------------
-    // 계산 2개 — 아직 고정 응답
+    // 계산 2개
     // ------------------------------------------------------------------
 
     /**
@@ -111,6 +113,11 @@ class InternalApi {
      */
     @PostMapping("/analysis/impact")
     Map<String, Object> analyzeImpact(@RequestBody(required = false) Map<String, Object> body) {
+        return impact.analyze(whatif(body));
+    }
+
+    /** body의 whatif를 꺼낸다. 없으면 빈 목록 (= 지금 상태). */
+    private static List<Map<String, Object>> whatif(Map<String, Object> body) {
         Object whatif = body == null ? null : body.get("whatif");
         if (whatif != null && !(whatif instanceof List<?>))
             throw ApiError.invalid("whatif는 목록이어야 합니다.", "예: {\"whatif\": [{\"op\": \"reschedule_plan\", \"plan_id\": \"PP-05\", \"new_date\": \"2026-11-25\"}]}");
@@ -120,40 +127,26 @@ class InternalApi {
             @SuppressWarnings("unchecked") Map<String, Object> cast = (Map<String, Object>) op;
             ops.add(cast);
         }
-        return impact.analyze(ops);
+        return ops;
     }
 
     /**
-     * compare_options — 결품 해결 대안 비교 (contracts.md 2.3).
+     * compare_options — 결품 해결 대안 비교 (contracts.md 2.3). 계산은 {@link OptionAnalysis}.
      *
-     * <p>대안마다 {@code tool}·{@code args}를 그대로 담는다. 모델이 고른 대안을 그대로 승인 카드에
-     * 올리고 그대로 실행하므로, 모델이 인자를 다시 만들면서 숫자가 틀어질 여지가 없다.
-     *
-     * <p>지금 값은 SC1의 두 대안을 seed의 supplier_metric(세미온 MCU: 당김 20,000원/일, 분할 50,000원,
-     * 준수율 92%)으로 손계산한 것이다. 둘 다 결품 2건을 모두 푼다 (decisions.md 7.4).
-     * 추천 규칙(비용 vs 위험)은 실제 계산을 넣을 때 정한다.
+     * <p>body: {@code {"whatif": [...], "issues": [{"item_id": "MCU"}, ...]}}
+     * <ul>
+     *   <li>whatif — analyze_impact에 넣었던 것과 같은 가정. 대안은 이 가정 위에서 만들고 검증한다</li>
+     *   <li>issues — 풀고 싶은 결품. analyze_impact의 shortages 항목을 그대로 넣어도 된다 (item_id만 본다).
+     *       비우면 모든 결품</li>
+     * </ul>
      */
     @PostMapping("/analysis/options")
     Map<String, Object> compareOptions(@RequestBody(required = false) Map<String, Object> body) {
-        return m("policy_version", "v0.1",
-                "options", List.of(
-                        m("option_id", "OPT-1", "type", "SPLIT_PO",
-                                "summary", "PO-2609-001(MCU 500개, 12/12)을 400/100으로 나눠 100개를 11/25에 받는다",
-                                "tool", "split_po",
-                                "args", m("po_id", "PO-2609-001", "split_qty", 100, "new_due_date", "2026-11-25"),
-                                "added_cost", 390_000,    // 17일 × 20,000 + 분할 50,000
-                                "risk", "LOW",            // 100개만 당겨 협력사 부담이 작다
-                                "feasible", true, "side_effects", List.of(),
-                                "evidence", List.of("doc://SUPPLY-2026-003/5.1")),
-                        m("option_id", "OPT-2", "type", "DUE_DATE_CHANGE",
-                                "summary", "PO-2609-001(MCU 500개) 전체를 12/12에서 11/25로 당긴다",
-                                "tool", "request_due_date_change",
-                                "args", m("po_id", "PO-2609-001", "new_due_date", "2026-11-25"),
-                                "added_cost", 340_000,    // 17일 × 20,000
-                                "risk", "MID",            // 500개 전량을 17일 당긴다
-                                "feasible", true, "side_effects", List.of(),
-                                "evidence", List.of("doc://SUPPLY-2026-003/4.2"))),
-                "recommended_option_id", "OPT-1");
+        Set<String> items = new HashSet<>();
+        if (body != null && body.get("issues") instanceof List<?> issues)
+            for (Object i : issues)
+                if (i instanceof Map<?, ?> issue && issue.get("item_id") != null) items.add(String.valueOf(issue.get("item_id")));
+        return options.compare(whatif(body), items);
     }
 
     // ------------------------------------------------------------------
@@ -232,8 +225,8 @@ class InternalApi {
      * <p>retry_hint에 가장 빠른 가능일을 넣어 모델이 그 날짜로 다시 부르게 한다.
      */
     private static LocalDate checkLeadTime(Map<String, Object> po, Object newDueDate) {
-        LocalDate ready = LocalDate.parse((String) po.get("order_date")).plusDays((int) po.get("lead_time_days"));
-        LocalDate earliest = ready.isAfter(TODAY) ? ready : TODAY.plusDays(1);  // 오늘·과거 입고는 불가
+        LocalDate earliest = ImpactAnalysis.earliestReceipt(
+                LocalDate.parse((String) po.get("order_date")), (int) po.get("lead_time_days"));
         LocalDate newDue;
         try {
             newDue = LocalDate.parse(String.valueOf(newDueDate));
