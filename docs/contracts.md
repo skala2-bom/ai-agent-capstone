@@ -1,0 +1,306 @@
+# 파트 간 계약
+
+> **이 문서의 역할**: 파트 경계를 넘는 약속만 모았다. 여기 적힌 것은 **바꾸려면 상대 파트와 합의**해야 하고, 여기 없는 것은 각 파트가 알아서 정하면 된다.
+>
+> **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
+>
+> **갱신**: 2026-10-20
+
+## 파트 구분
+
+| 파트 | 범위 | 폴더 |
+|---|---|---|
+| **A. Frontend** | 화면 | `frontend/` |
+| **B. Backend · DB** | 업무 API, 작업 API, SSE 중계, `/internal/**`, 인증, 계산, DB, seed | `backend/` |
+| **C. AI · MCP · RAG** | Agent, Harness, business-mcp, rag-mcp, 색인 | `agent/`, `business-mcp/`, `rag-mcp/` |
+
+---
+
+## 0. 이미 굳은 것 — 다시 논의하지 않는다
+
+뼈대가 코드로 고정했고 `docker compose up`으로 동작을 확인한 것들이다.
+
+| 항목 | 값 |
+|---|---|
+| 작업 접수 | `POST /api/ai/tasks` → `202 {taskId}` |
+| 진행 구독 | `GET /api/ai/tasks/{id}/stream` (SSE) |
+| 이벤트 공통 필드 | `type`, `taskId`, `seq`, `ts` — backend가 붙인다 |
+| 백엔드 → agent | `POST /agent/tasks` → `202` |
+| agent → 백엔드 | `POST /internal/tasks/{id}/events` |
+| MCP 연결 | Streamable HTTP, `business-mcp:9101/mcp` · `rag-mcp:9102/mcp` |
+| 공개 포트 | frontend·backend만 |
+| 호출 방향 | business-mcp는 DB를 직접 보지 않고 `/internal/**`만 부른다 |
+
+---
+
+## 1. 전 파트 공통
+
+### 1.1 요청자 정보 헤더 — A·B·C 전부 지켜야 동작한다
+
+금액 마스킹(SEC-001)을 하려면 backend가 **요청자의 역할**을 알아야 한다. 경로는 이렇다.
+
+```
+agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──▶ backend /internal/**
+```
+
+| 헤더 | 값 | 넣는 쪽 |
+|---|---|---|
+| `X-Task-Id` | 작업 ID | agent |
+| `X-User-Id` | 요청자 ID | agent (backend가 `/agent/tasks`로 넘겨 준 값) |
+| `X-Role` | `PLANNER` \| `BUYER` \| `APPROVER` | agent |
+| `X-Service-Token` | 서비스별 토큰 | 부르는 쪽마다 다른 값 |
+
+- **역할을 도구 인자에 넣지 않는다.** 도구 인자는 모델이 채우는 값이라 조작될 수 있다.
+- business-mcp는 받은 헤더를 **해석하지 않고 그대로** 전달한다.
+- 나중에 붙이면 agent와 business-mcp를 동시에 고쳐야 하므로 **처음부터 넣는다.**
+
+### 1.2 역할별 금액 공개 범위 (규칙 SEC-001)
+
+| 역할 | 볼 수 있는 것 |
+|---|---|
+| `PLANNER` 생산관리 | 금액 비공개 |
+| `BUYER` 구매 | 총액까지 |
+| `APPROVER` 구매팀장 | 계약 단가까지 |
+
+- 1차 차단은 **backend masking**이 `/internal/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다.
+- 2차는 agent Harness가 도구 결과에 단가 필드가 남아 있으면 모델에 넘기기 전에 지운다.
+
+### 1.3 DB 스키마와 계정
+
+| 스키마 | 테이블 | 쓰는 파트 | 계정 |
+|---|---|---|---|
+| `public` | 업무·작업·승인 | B | `app` |
+| `agent` | LangGraph checkpointer | C | `agent` |
+| `rag` | `doc_chunk` | C | `rag` |
+
+- **B가 `init.sql`로 스키마 3개와 계정 3개를 만든다.** 각 계정은 자기 스키마에만 권한을 갖는다.
+- `agent` 계정에는 `CREATE` 권한을 준다. checkpointer 테이블은 LangGraph가 직접 만든다.
+- 계정을 나누는 이유: 아키텍처 11장 보안성 증빙에 "DB 계정 분리"가 들어 있다. init SQL 몇 줄이면 된다.
+
+### 1.4 seed 데이터
+
+- **B가 만든다.** 기획안의 완제품 4종·구매 부품 28종(공용 17종)·BOM 3단계·협력사 기준.
+- **문제 상황을 일부러 심는다.** SC1~SC4가 데모에서 반드시 걸려야 한다.
+- 시연 기준일은 **2026-11-02**.
+- 골든셋 정답(SC1 −100 2시점, SC2 릴레이 −400·케이스 과잉 300, SC3 구형 케이스 800, SC4 릴레이 −1,000)이 이 데이터에 달려 있다. 값을 바꾸면 정답도 다시 계산해야 한다.
+
+---
+
+## 2. B ↔ C 계약 (backend ↔ AI·MCP)
+
+### 2.1 `/internal/**` 엔드포인트 — 도구 하나당 API 하나
+
+**business-mcp 도구 목록이 곧 B가 만들 API 목록이다.** C가 도구를 늘리면 B의 일이 늘어난다.
+
+#### 1차 (데모 SC1~SC4를 도는 데 필요한 것) — 8개
+
+| 도구 | Method · Path | 승인 |
+|---|---|:-:|
+| `get_item` | GET `/internal/items/{id}` | |
+| `get_inventory` | GET `/internal/inventory?type=FG\|PART&item_id=` | |
+| `list_plans` | GET `/internal/plans?from=&to=` | |
+| `list_receipts` | GET `/internal/purchase-orders?status=OPEN&item_id=&from=&to=` | |
+| `analyze_impact` | POST `/internal/analysis/impact` | |
+| `compare_options` | POST `/internal/analysis/options` | |
+| `request_due_date_change` | POST `/internal/purchase-orders/{id}/due-date` | ✅ |
+| `split_po` | POST `/internal/purchase-orders/{id}/split` | ✅ |
+
+#### 2차 (조회 폭을 넓히는 것) — 5개
+
+| 도구 | Method · Path | 승인 |
+|---|---|:-:|
+| `explode_bom` | GET `/internal/bom/{product_id}/explode?on_date=` | |
+| `where_used` | GET `/internal/bom/where-used/{item_id}` | |
+| `get_supplier_metrics` | GET `/internal/suppliers/metrics?item_id=` | |
+| `change_po_qty` | POST `/internal/purchase-orders/{id}/qty` | ✅ |
+| `cancel_po` | POST `/internal/purchase-orders/{id}/cancel` | ✅ |
+
+### 2.2 `analyze_impact` 응답
+
+```jsonc
+{
+  "policy_version": "v0.1",
+  "shortages": [                       // INV-001: P(t) < 0
+    { "rule_id": "INV-001", "item_id": "MCU", "plan_id": "PP-05",
+      "plan_date": "2026-11-25", "projected_stock": -100, "threshold": 0, "qty": 100 }
+  ],
+  "warnings": [],                      // INV-002: 0 ≤ P(t) < 안전재고
+  "excesses": [],                      // INV-003: 고가 부품만, N = max(리드타임, 30일)
+  "evidence_uri": "doc://ECN-2026-014/3.2"
+}
+```
+
+- 경고 한 건마다 `rule_id`·`projected_stock`·`threshold`를 붙인다. 이게 있어야 AI가 "왜 결품인지"를 지어내지 않고 규칙 ID로 설명한다.
+- `policy_version`은 기준을 바꿔도 과거 결과를 해석할 수 있게 한다. Harness 평가셋 전후 비교에 그대로 쓰인다.
+- 판정 수식과 경계 조건은 [아키텍처 1.2](BOM_Agent_아키텍처.md).
+
+### 2.3 `compare_options` 응답
+
+```jsonc
+{
+  "policy_version": "v0.1",
+  "options": [{
+    "option_id": "OPT-1",
+    "type": "SPLIT_PO",               // SPLIT_PO | DUE_DATE_CHANGE | REALLOCATE
+    "summary": "PO-2609-001을 400/100으로 나눠 100개를 11/25에 받는다",
+    "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
+    "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
+    "added_cost": 350000,              // 원. 긴급 비용 + 분할 배송 수수료
+    "risk": "LOW",                     // LOW | MID | HIGH. 협력사 on_time_rate 기반
+    "feasible": true,                  // LT-001 통과 여부
+    "side_effects": [],                // 다른 제품에 생기는 영향
+    "evidence": ["doc://SUPPLY-2026-003/5.1"]
+  }],
+  "recommended_option_id": "OPT-1"
+}
+```
+
+- `tool`·`args`를 그대로 담는 이유: 모델이 고른 대안을 **그대로 승인 카드로 올리고 그대로 실행**할 수 있다. 모델이 인자를 다시 만들지 않으니 숫자가 틀어질 여지가 없다.
+- `added_cost`·`risk`는 B의 계산 서비스가 `supplier_metric`을 읽어 채운다 ([decisions.md 2절](decisions.md)).
+
+### 2.4 `verify` 통과 기준 (C가 구현)
+
+고른 대안을 적용해 `analyze_impact`를 **다시** 부른 뒤:
+
+| 조건 | 판정 |
+|---|---|
+| 대상 결품이 해소됐다 **그리고** 다른 제품에 새 결품이 없다 | 통과 → 승인 요청 |
+| 둘 중 하나라도 아니다 | 실패 → 다른 대안으로 **최대 2회** 재시도 |
+| 2회 모두 실패 | 남은 대안과 사유를 정리해 `DONE` |
+
+### 2.5 오류 응답 형식
+
+backend는 업무 오류를 **4xx + 아래 형식**으로 준다. business-mcp는 셋을 한 문장으로 합쳐 `ToolError`로 던진다.
+
+```json
+{ "error": "BELOW_MOQ", "message": "최소 발주 수량 미만입니다.",
+  "retry_hint": "최소 수량은 300개입니다. 300개 이상으로 다시 요청하세요." }
+```
+
+→ `ToolError("[BELOW_MOQ] 최소 발주 수량 미만입니다. 최소 수량은 300개입니다. ...")`
+
+**`retry_hint`는 비워 두지 않는다.** 모델이 이걸 읽고 인자를 고쳐 스스로 다시 부른다. 여기가 평가표 MCP 20점의 "오류·예외 처리"다.
+
+| 코드 | 경우 | retry_hint |
+|---|---|---|
+| `NOT_FOUND` | 없는 품목·발주 | 비슷한 ID 목록 |
+| `BELOW_MOQ` | 최소 발주 수량 미만 | 최소 수량 |
+| `LEADTIME_INFEASIBLE` | 리드타임상 불가능한 입고일 | 가장 빠른 가능일 |
+| `PO_NOT_OPEN` | 이미 입고·취소된 발주 | 현재 상태 |
+| `INVALID_SPLIT_QTY` | 분할 수량이 범위 밖 | 가능한 범위 |
+| `SPLIT_NOT_USEFUL` | 분할 후 입고일이 원래와 같음 | 나눌 이유가 없음 |
+| `BOM_CYCLE` | 순환 BOM | 순환 경로 |
+| `APPROVAL_REQUIRED` | 승인 없이 변경 시도 | 승인 절차 안내 |
+| `UPSTREAM_TIMEOUT` | 백엔드 응답 지연 | 잠시 후 재시도 |
+
+> **판정과 오류를 섞지 않는다.** 결품·경고·과잉은 정상 응답의 **결과**다. 오류는 **호출 자체가 성립하지 않을 때**만 쓴다.
+
+### 2.6 작업 실행 요청
+
+```jsonc
+// POST /agent/tasks
+{ "taskId": "...", "threadId": "...", "userId": "u-01", "role": "BUYER",
+  "question": "허브를 11/25로 당기면?",
+  "whatif": null }
+```
+
+**`whatif`를 누가 채우나** — 문서가 두 가지로 읽혀서 여기서 못 박는다.
+
+| 경우 | `whatif` | 이유 |
+|---|---|---|
+| 사람이 질문했다 | `null`. **agent의 `classify_intent`가 질문에서 뽑는다** | 자연어 파싱은 LLM의 일이다. backend는 LLM을 부르지 않는다 (교재 금지 사항) |
+| 시스템이 자동 생성했다 (SC4 입고 지연) | **backend가 채운다** | 무엇이 바뀌었는지 backend가 이미 알고 있다. 모델이 추측할 이유가 없다 |
+
+### 2.7 승인 재개
+
+```jsonc
+// POST /agent/tasks/{id}/resume
+{ "threadId": "...", "approvalId": "...", "decision": "APPROVED", "reason": null }
+```
+
+- agent는 같은 `threadId`로 checkpointer에서 상태를 꺼내 이어간다.
+- 변경 도구를 부를 때 `approval_id`를 인자에 넣는다. backend는 그 승인이 `APPROVED`이고 **도구·인자가 승인 카드와 같을 때만** 실행한다.
+
+---
+
+## 3. A ↔ B 계약 (frontend ↔ backend)
+
+### 3.1 화면 API
+
+| Method | Path | 응답 | 권한 |
+|---|---|---|---|
+| POST | `/api/auth/login` | JWT `{sub, role, exp}` | 모두 |
+| POST | `/api/ai/tasks` | `202 {taskId}` | 로그인 |
+| GET | `/api/ai/tasks/{id}` | `{status, answer, result, sources}` | 요청자 |
+| GET | `/api/ai/tasks/{id}/stream` | `text/event-stream` | 요청자 |
+| POST | `/api/ai/tasks/{id}/approval` | `202` | APPROVER |
+| GET | `/api/ai/tasks?mine=true` | 목록 | 로그인 |
+| GET | `/api/approvals?status=PENDING` | 승인 대기함 | APPROVER |
+| GET | `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
+| PUT | `/api/plans/{id}` | 생산 일정 변경 | PLANNER |
+| PUT | `/api/purchase-orders/{id}/due-date` | 협력사 지연 입력 | BUYER |
+
+### 3.2 SSE 이벤트 6종
+
+공통 필드: `type`, `taskId`, `seq`, `ts`
+
+| type | 추가 필드 | 화면 |
+|---|---|---|
+| `TOKEN` | `text` | 답변 영역에 이어 붙임 |
+| `TOOL_START` | `tool`, `label` | 진행 상태 |
+| `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
+| `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence` | 승인 카드 |
+| `DONE` | `status`, `answer`, `result`, `sources` | 스트림 닫고 목록 갱신 |
+| `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
+
+- 화면이 늦게 구독하거나 다시 연결하면 backend가 **처음부터 다시 보낸다.** A는 `seq`로 중복만 거르면 된다.
+- `amount`는 받는 사람의 역할에 맞춰 backend가 가린 뒤 보낸다.
+
+### 3.3 승인 흐름의 payload
+
+```
+agent ──▶ backend   { tool, args, summary, amount, evidence }
+backend ──▶ 화면     위 + approvalId          (amount는 역할에 맞춰 마스킹)
+화면 ──▶ backend     { approvalId, decision, reason }
+backend ──▶ agent    { threadId, approvalId, decision, reason }
+```
+
+- `approvalId`는 **backend가 만든다.** agent는 이벤트를 보낼 때 그 값을 알 수 없다.
+- 거절은 `reason` 필수.
+- 승인 카드에는 **변경 전후를 함께** 보여 준다. 도구 이름과 인자만으로는 사람이 판단할 수 없다.
+
+### 3.4 승인 정책
+
+- **변경 도구는 금액과 무관하게 전부 승인을 받는다.** 임계값을 두지 않는다.
+- 팀장은 자기가 요청한 건을 자기가 승인할 수 있다 (요청자 ≠ 승인자 규칙 없음).
+- 승인 대기는 **만료되지 않는다.**
+- 거절되면 agent가 사유를 반영해 다른 대안을 낸다. **2회**까지.
+
+---
+
+## 4. 파트 내부 — 혼자 정하면 되는 것
+
+| 파트 | 알아서 정할 것 |
+|---|---|
+| A | 컴포넌트 구조, 상태 관리, 스타일, Vite 전환 시점 |
+| B | 테이블 내부 구조, 인덱스, 모듈 분리, 계산 알고리즘, 트랜잭션 경계 |
+| C | Graph 노드 구성, 프롬프트 내용, 청킹 크기, 임베딩 모델, MCP Client 재사용 방식 |
+
+---
+
+## 5. 확정된 기술 선택
+
+| 항목 | 결정 | 한 줄 이유 |
+|---|---|---|
+| Vector DB | **pgvector** | PostgreSQL 하나로 끝난다. 컨테이너와 장애 지점이 줄어든다 |
+| 인증 | **Spring Security + JWT** | 역할을 agent까지 넘기기 쉽다 |
+| Agent 구현 | **A안 (직접 StateGraph)** | 설계도의 노드 이름과 코드가 1:1로 맞아 평가 증빙이 쉽다 |
+| LLM | **주 모델 1 + 대체 모델 1** | Harness Recovery 증빙에 둘이 필요하다. 제공자를 다르게 두면 더 강한 증빙이 된다 |
+| 대기열 | **RabbitMQ** (가산점, 후순위) | 큐·재시도·DLQ 설정이 단순하다. Kafka는 이 규모에 과하다 |
+| Harness 한도 | **교재 권장값 그대로** — 8턴 · 120초 · 같은 도구 3회 · 429·503 2회 재시도 | 바꾸면 명세에 이유를 남겨야 한다. 바꿀 이유가 아직 없다 |
+| 통합 발주 (A4) | **MVP 제외** | 도구·계산·승인이 한 벌 더 필요한데 평가표에 해당 항목이 없다. 장표에 향후 과제로 |
+| 자동 분석 (B1) | **넣는다** | 작업 생성 한 번이면 되고, SC4 시연이 완성되며 대기열 가산점과 이어진다 |
+| 근거 문서 (C3) | **3종** — 구매 규정 / 협력사 계약 조건 / ECN 3~5건 | 통합 발주를 뺐으므로 통합 발주 기준 문서도 뺀다 |
+| 문서 주소 | `doc://{doc_id}/{clause_no}` · 조항 단위 청킹 | 뼈대에 이미 들어 있다 |
+
+근거는 [decisions.md 6절](decisions.md)에 적었다.

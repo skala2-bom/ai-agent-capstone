@@ -723,31 +723,32 @@ flowchart LR
 
 ## 12. 미결 사항
 
-> **갱신**: 2026-10-20 (오전 스크럼 + [판단 기준 설계안](bom_agent_policy_v0.1.html) 병합 반영)
-> ✅ 확정 · 🟡 일부 정해짐 · ⬜ 손대지 않음
+> **갱신**: 2026-10-20 (기술 안건은 교재·평가표 기준으로 결정 완료)
+> 지켜야 할 계약은 [contracts.md](contracts.md), 결정 근거는 [decisions.md](decisions.md).
 
-| 안건 | 상태 | 남은 것 |
-|---|:-:|---|
-| **1.1 계산 위치** | 🟡 | 코드와 문서 전체가 이미 **B안(계산은 백엔드)** 전제로 돌아간다. `/internal/analysis/impact`가 그 자리다. **팀이 도장만 찍으면 된다** |
-| **B2 해결 방법 비교 기준** | 🟡 | 비교에 **넣을 값**은 정해졌다 (협력사 평가지표: 긴급 비용·지연 패널티·납기 준수율, [decisions.md 2절](decisions.md)). `compare_options`의 **반환 항목**과 `verify` 통과 기준은 미정 |
-| **B5 승인 정책** | 🟡 | 승인 대상(변경 도구 4개, 규칙 WF-001)과 **만료 없음**은 확정. **금액 기준**과 거절 반복 2회는 미정 |
-| **C1 도구 계약** | 🟡 | `split_po`([decisions.md 3절](decisions.md))와 `get_supplier_metrics`는 확정. **나머지 도구의 인자·반환 형식은 미정** — 지금 가장 크게 막혀 있는 곳 (배점 20점) |
-| **C2 오류 코드** | 🟡 | 9개 확정 (분할 2개 추가). 판단 기준 설계안의 DATA-001(입력 검증)·ECN-001(Revision 차단)을 도구 오류로 올릴지 미정 |
-| **C3 문서 체계** | 🟡 | 주소 형식 `doc://{doc_id}/{clause_no}` 확정. **색인할 문서 목록과 조항 번호 체계는 미정** |
-| A4 통합 발주 범위 | ⬜ | 8.1에 통합 발주 도구를 넣을지 |
-| B1 자동 분석 | ⬜ | 4.6 3단계, `trigger = SYSTEM`을 만들지 |
-| D1 비기능 수치 | ⬜ | 4.2 시간 제한, 11장 목표치 |
-| D3 Harness 값 | ⬜ | 6장 한도. 교재 권장값(8턴·120초·같은 도구 3회)으로 시작해도 된다 |
-| E 기술 선택 | ⬜ | pgvector vs Chroma, RabbitMQ, LLM 모델·키·비용 |
-| **(신규) 골든셋 과잉 정답** | ⬜ | 리드타임이 30일을 넘는 고가 부품 중 과잉 정답이 걸린 게 있으면 값이 바뀐다 ([decisions.md 1.3](decisions.md)). analysis 담당이 확인 |
+### 12.1 남은 것
 
-### 12.1 지금 병렬 개발을 막고 있는 것 두 개
+| 안건 | 누가 | 내용 |
+|---|---|---|
+| **역할 분담** | 팀 | 조원 6명을 세 파트(Frontend / Backend·DB / AI·MCP·RAG)에 배정. **기술 안건이 아니라 사람 문제라 팀만 정할 수 있다** |
+| **LLM 모델·키·비용** | 팀 | 주 모델 1 + 대체 모델 1로 한다는 것만 정해졌다. 구체 모델과 키 부담 주체는 팀 결정 |
+| 골든셋 과잉 정답 | B 파트 | 리드타임 30일 초과 고가 부품에 과잉 정답이 걸렸으면 값이 바뀐다 ([decisions.md 1.3](decisions.md)) |
 
-나머지는 담당자가 자기 파트에서 정하면 되지만, 아래 둘은 **정해지기 전까지 여러 사람이 동시에 일할 수 없다.**
+### 12.2 결정된 것
 
-| # | 막는 것 | 왜 막나 |
-|:-:|---|---|
-| 1 | **역할 분담** (노션 7번) | 조원 6명, 파트 7개인데 누가 어느 폴더를 맡을지 비어 있다. 아무도 시작을 못 한다 |
-| 2 | **C1 도구 계약** (노션 3번, 20점) | 도구 인자·반환이 고정돼야 Agent 담당과 MCP 담당이 서로를 기다리지 않는다 |
-
-이 둘만 정해지면 나머지 미결은 각자 자기 파트에서 풀 수 있다.
+| 안건 | 결정 | 근거 |
+|---|---|---|
+| 1.1 계산 위치 | **B안 — 계산은 백엔드** | 코드·문서 전체가 이미 이 전제. `/internal/analysis/**`가 그 자리 |
+| A4 통합 발주 | **MVP 제외** | [decisions.md 6.5](decisions.md) |
+| B1 자동 분석 | **넣는다** (`trigger = SYSTEM`) | [decisions.md 6.6](decisions.md) |
+| B2 비교 기준·verify | `compare_options`가 `tool`·`args`까지 반환 / 통과 기준 "대상 결품 해소 + 새 결품 없음" | [contracts.md 2.3·2.4](contracts.md) |
+| B5 승인 정책 | **변경 도구 전건 승인**, 금액 임계값 없음, 거절 2회, 만료 없음 | [decisions.md 6.1](decisions.md) |
+| C1 도구 계약 | 1차 8개 / 2차 5개, 엔드포인트까지 확정 | [contracts.md 2.1](contracts.md) |
+| C2 오류 코드 | 9개 + `{error, message, retry_hint}` 형식 | [contracts.md 2.5](contracts.md) |
+| C3 문서 체계 | 3종, `doc://{doc_id}/{clause_no}`, 조항 단위 청킹 | [decisions.md 6.9](decisions.md) |
+| D1 비기능 수치 | **4.2 표 그대로** | 바꿀 이유가 없다. 시연 동시 사용자 3명 기준 |
+| D3 Harness 값 | **교재 권장값 그대로** (8턴·120초·같은 도구 3회·2회 재시도) | [decisions.md 6.7](decisions.md) |
+| E 기술 선택 | pgvector · JWT · StateGraph A안 · RabbitMQ(후순위) | [contracts.md 5](contracts.md) |
+| DB 스키마·계정 | 스키마 3개 + 계정 3개 | [contracts.md 1.3](contracts.md) |
+| 요청자 역할 전달 | 헤더 4개 (`X-Task-Id`·`X-User-Id`·`X-Role`·`X-Service-Token`) | [contracts.md 1.1](contracts.md) |
+| seed 데이터 | B 파트가 작성, 기준일 2026-11-02 | [contracts.md 1.4](contracts.md) |

@@ -2,7 +2,8 @@
 
 > 📌 **먼저 읽을 것**
 > - [docs/walking-skeleton.md](docs/walking-skeleton.md) — 이 뼈대를 무엇을 기반으로, 왜 이렇게 만들었는지
-> - [docs/decisions.md](docs/decisions.md) — 무엇이 정해졌고, **Claude가 판단한 부분은 어디이며 근거가 무엇인지**
+> - [docs/contracts.md](docs/contracts.md) — **파트 경계를 넘는 약속.** 내 파트 것만 보면 된다
+> - [docs/decisions.md](docs/decisions.md) — 무엇이 정해졌고, 왜 그렇게 정했는지
 
 ```
 ai-agent-capstone/
@@ -11,7 +12,8 @@ ai-agent-capstone/
 ├─ .gitignore
 ├─ README.md
 ├─ docs/
-│  ├─ decisions.md             결정 기록 (스크럼 확정 + 판단 근거)
+│  ├─ contracts.md             파트 간 계약 (바꾸려면 상대 파트와 합의)
+│  ├─ decisions.md             결정 기록 (무엇을, 왜)
 │  ├─ bom_agent_policy_v0.1.html  판단 기준 설계안 (규칙 ID·수식, 브라우저로 열기)
 │  ├─ walking-skeleton.md      이 뼈대의 근거·의도·기준과 다른 점
 │  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
