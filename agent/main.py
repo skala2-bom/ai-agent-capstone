@@ -110,7 +110,17 @@ async def run(task_id: str, thread_id: str, graph_input, role: str | None, trace
     snapshot = await app_graph.aget_state(config)
     pending = [i for t in snapshot.tasks for i in (t.interrupts or ())]
     if pending:
-        await G.emit(task_id, {"type": "APPROVAL_REQUIRED", **pending[0].value}, important=True)
+        r = await G.emit(task_id, {"type": "APPROVAL_REQUIRED", **pending[0].value}, important=True)
+        if r is not None and r.status_code == 403:
+            # backend가 승인 카드를 거부했다 (요청자가 BUYER·APPROVER가 아님, contracts 2.5 ROLE_NOT_ALLOWED).
+            # 카드가 없으니 재개도 오지 않는다. 대안 안내까지만 하고 끝낸다
+            opt = pending[0].value
+            await G.emit(task_id, {"type": "DONE", "status": "DONE",
+                                   "answer": f"해결 대안: {opt.get('summary')}\n"
+                                             "발주 조정은 구매 담당자가 요청할 수 있습니다. 구매 담당자에게 요청해 주세요.",
+                                   "result": G.mask(snapshot.values.get("result"), role), "sources": [],
+                                   "next_actions": [{"type": "REQUEST_ADJUST", "label": "구매팀에 해결 요청"}]},
+                         important=True)
         return
     v = snapshot.values
     await G.emit(task_id, {"type": "DONE", "status": "DONE", "answer": v.get("answer"),

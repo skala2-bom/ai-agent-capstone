@@ -2,10 +2,9 @@
 
 ## 고르는 기준 (위에서부터)
 1. feasible이 true인 것만 고른다.
-2. side_effects(다른 제품에 생기는 문제)가 없는 것을 먼저 고른다.
-3. risk가 낮은 것 (LOW < MID < HIGH).
-4. added_cost(원)가 적은 것.
-5. 계산 서비스의 recommended_option_id는 참고만 한다.
+2. resolves가 true인 것(그 대안 하나로 결품이 풀리는 것)만 고른다.
+3. 기본은 **recommended가 true인 후보**(recommended_option_id)다. 계산 서비스가 위 기준으로 이미 고른 것이다.
+4. 추천안이 검증에 실패했거나 거절됐을 때만 나머지에서 고른다: side_effects 없는 것 → risk 낮은 것(LOW < MID < HIGH) → added_cost 적은 것.
 
 ## 반드시 지킬 것
 - option_id만 고른다. 발주 번호·수량·날짜를 새로 만들거나 고치지 않는다. 실행 인자는 시스템이 후보에서 그대로 가져간다.

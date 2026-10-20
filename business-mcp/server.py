@@ -136,16 +136,17 @@ def analyze_impact(whatif: list[dict]) -> dict:
 
 
 @mcp.tool(annotations=READ)
-def compare_options(issues: list[dict]) -> dict:
+def compare_options(issues: list[dict], whatif: list[dict] | None = None) -> dict:
     """결품(issues)을 푸는 해결 대안을 비교해 돌려준다 (contracts 2.3).
 
-    issues: analyze_impact의 shortages 항목을 그대로 넣는다.
-    돌려주는 값: options[{option_id, type(SPLIT_PO|DUE_DATE_CHANGE|REALLOCATE), summary,
-    tool, args(그대로 실행에 쓰는 인자), added_cost(원), risk(LOW|MID|HIGH), feasible,
-    side_effects, evidence}], recommended_option_id.
+    whatif: analyze_impact에 넣었던 것과 같은 가정 변경. 결품은 가정 위에서만 생기므로 대안도 그 위에서 만든다.
+    issues: analyze_impact의 shortages 항목을 그대로 넣는다 (item_id만 본다). 비우면 전부.
+    돌려주는 값: options[{option_id, type(SPLIT_PO|DUE_DATE_CHANGE), item_id, summary,
+    tool, args(그대로 실행에 쓰는 인자), added_cost(원), cost_level, risk(LOW|MID|HIGH), feasible,
+    resolves(이 대안 하나로 그 부품 결품이 풀리나), side_effects, recommended}], recommended_option_id.
     tool·args는 고치지 말고 그대로 쓴다. 모델이 인자를 다시 만들면 숫자가 틀어질 수 있다.
     """
-    return _call("POST", "/analysis/options", json={"issues": issues})
+    return _call("POST", "/analysis/options", json={"whatif": whatif or [], "issues": issues})
 
 
 # ---------------------------------------------------------------------------

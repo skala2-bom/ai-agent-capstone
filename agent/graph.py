@@ -146,12 +146,13 @@ class AgentState(TypedDict, total=False):
 # 이벤트 · 숨김 · MCP 호출
 # ---------------------------------------------------------------------------
 
-async def emit(task_id: str, event: dict, *, important: bool = False) -> None:
+async def emit(task_id: str, event: dict, *, important: bool = False) -> httpx.Response | None:
     """backend로 진행 이벤트를 보낸다 (아키텍처 9.2·9.3).
 
     진행 이벤트(TOOL_START 등)는 한 번만 보내고 실패해도 작업을 계속한다.
     작업의 끝을 알리는 이벤트(DONE·FAILED·APPROVAL_REQUIRED, important=True)는 3번까지 보낸다 —
     이게 유실되면 backend는 작업이 끝났는지 모르고 화면은 계속 기다린다.
+    backend 응답을 돌려준다 (APPROVAL_REQUIRED는 {approvalId} 또는 403 ROLE_NOT_ALLOWED, contracts 3.3).
     """
     tries = 3 if important else 1
     for i in range(tries):
@@ -159,11 +160,12 @@ async def emit(task_id: str, event: dict, *, important: bool = False) -> None:
             async with httpx.AsyncClient(timeout=2) as c:
                 r = await c.post(f"{BACKEND_URL}/internal/tasks/{task_id}/events", json=event)
             if r.status_code < 500:
-                return
+                return r
         except httpx.HTTPError:
             pass
         if i < tries - 1:
             await asyncio.sleep(0.5 * (i + 1))
+    return None
 
 
 def mask(value: Any, role: str | None) -> Any:
@@ -460,7 +462,9 @@ def after_prepare(state: AgentState) -> str:
 
 
 async def compare(state: AgentState) -> dict:
-    ok, res = await call_tool(state, "compare_options", {"issues": state["targets"]})
+    # 계약 2.3 (10/20 변경): 결품은 가정 위에서만 생기므로 대안도 같은 whatif 위에서 만든다
+    ok, res = await call_tool(state, "compare_options",
+                              {"whatif": state.get("whatif_ops") or [], "issues": state["targets"]})
     if not ok:
         return {"failure": res}
     return {"options": res.get("options", []), "recommended": res.get("recommended_option_id")}
