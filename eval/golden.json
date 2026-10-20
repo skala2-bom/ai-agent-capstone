@@ -1,0 +1,163 @@
+{
+  "policy_version": "v0.1",
+  "as_of": "2026-11-02",
+  "cases": [
+    {
+      "id": "BASE",
+      "kind": "question",
+      "title": "변경 전에는 문제가 없다",
+      "question": "지금 생산 계획대로 가면 부품 문제 있어?",
+      "role": "PLANNER",
+      "expected_tools": ["analyze_impact"],
+      "whatif": [],
+      "expected": { "shortages": [], "warnings": [], "excesses": [] }
+    },
+    {
+      "id": "SC1",
+      "kind": "question",
+      "title": "허브만 당겼는데 플러그가 멈춘다 (일정 당김 · 연쇄 결품)",
+      "question": "허브를 11/25로 당기면 문제 있어?",
+      "role": "PLANNER",
+      "expected_tools": ["analyze_impact"],
+      "whatif": [
+        { "op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25" }
+      ],
+      "expected": {
+        "shortages": [
+          { "item_id": "MCU", "plan_id": "PP-05", "plan_date": "2026-11-25", "projected_stock": -100, "orderable": false },
+          { "item_id": "MCU", "plan_id": "PP-04", "plan_date": "2026-11-30", "projected_stock": -100, "orderable": false }
+        ],
+        "warnings": [],
+        "excesses": []
+      }
+    },
+    {
+      "id": "SC2",
+      "kind": "question",
+      "title": "총량은 같은데 모자라고 남는다 (수량 증가 · 수량 감소)",
+      "question": "11/23 스위치 생산을 900대로 늘리고 11/30 플러그 생산은 500대로 줄이면 어떻게 돼?",
+      "role": "PLANNER",
+      "expected_tools": ["analyze_impact"],
+      "whatif": [
+        { "op": "change_plan_qty", "plan_id": "PP-03", "new_qty": 900 },
+        { "op": "change_plan_qty", "plan_id": "PP-04", "new_qty": 500 }
+      ],
+      "expected": {
+        "shortages": [
+          { "item_id": "CASE-SWITCH", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": -200, "orderable": true },
+          { "item_id": "POWER-MODULE", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": -200, "orderable": false },
+          { "item_id": "RELAY", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": -400, "orderable": false },
+          { "item_id": "RELAY", "plan_id": "PP-04", "plan_date": "2026-11-30", "projected_stock": -100, "orderable": true },
+          { "item_id": "CASE-SWITCH", "plan_id": "PP-06", "plan_date": "2027-01-11", "projected_stock": -200, "orderable": true },
+          { "item_id": "RELAY", "plan_id": "PP-06", "plan_date": "2027-01-11", "projected_stock": -100, "orderable": true }
+        ],
+        "warnings": [
+          { "item_id": "MCU", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": 0, "threshold": 300 }
+        ],
+        "excesses": [
+          { "item_id": "CASE-PLUG", "date": "2026-11-27", "qty": 300, "amount": 480000 }
+        ]
+      }
+    },
+    {
+      "id": "SC3",
+      "kind": "question",
+      "title": "미뤘을 뿐인데 케이스를 버려야 한다 (조기 입고 · 설계변경 진부화)",
+      "question": "도어센서 11/18 생산을 1/4로 미루면 문제 있어?",
+      "role": "PLANNER",
+      "expected_tools": ["analyze_impact"],
+      "whatif": [
+        { "op": "reschedule_plan", "plan_id": "PP-02", "new_date": "2027-01-04" }
+      ],
+      "expected": {
+        "shortages": [
+          { "item_id": "CASE-DOOR-V2", "plan_id": "PP-02", "plan_date": "2027-01-04", "projected_stock": -800, "orderable": true },
+          { "item_id": "CASE-DOOR-V2", "plan_id": "PP-07", "plan_date": "2027-01-25", "projected_stock": -800, "orderable": true }
+        ],
+        "warnings": [],
+        "excesses": [
+          { "item_id": "CASE-DOOR-V1", "date": "2026-11-15", "qty": 800, "amount": 640000 },
+          { "item_id": "COIN-CELL", "date": "2026-11-15", "qty": 800, "amount": 200000 }
+        ]
+      }
+    },
+    {
+      "id": "SC4",
+      "kind": "question",
+      "title": "릴레이가 1주 늦으면 스위치가 멈춘다 (협력사 입고 지연)",
+      "question": "파워링크전자가 PO-2610-106 릴레이 입고를 11/20에서 11/27로 미룬대. 영향 있어?",
+      "role": "BUYER",
+      "expected_tools": ["analyze_impact"],
+      "whatif": [
+        { "op": "request_due_date_change", "po_id": "PO-2610-106", "new_due_date": "2026-11-27" }
+      ],
+      "expected": {
+        "shortages": [
+          { "item_id": "RELAY", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": -1000, "orderable": false }
+        ],
+        "warnings": [],
+        "excesses": []
+      }
+    },
+    {
+      "id": "SC1-FIX-OK",
+      "kind": "verify",
+      "title": "SC1 해결안: 12/12분 MCU에서 100개를 떼어 11/25로 당기면 결품이 모두 풀린다",
+      "question": null,
+      "role": "BUYER",
+      "expected_tools": [],
+      "whatif": [
+        { "op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25" },
+        { "op": "split_po", "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" }
+      ],
+      "expected": {
+        "shortages": [],
+        "warnings": [
+          { "item_id": "MCU", "plan_id": "PP-05", "plan_date": "2026-11-25", "projected_stock": 0, "threshold": 300 },
+          { "item_id": "MCU", "plan_id": "PP-04", "plan_date": "2026-11-30", "projected_stock": 0, "threshold": 300 }
+        ],
+        "excesses": []
+      }
+    },
+    {
+      "id": "SC1-FIX-FAIL",
+      "kind": "verify",
+      "title": "SC1 해결안(오답): 11/27분에서 당기면 11/30 플러그 결품이 남는다 → verify가 걸러야 한다",
+      "question": null,
+      "role": "BUYER",
+      "expected_tools": [],
+      "whatif": [
+        { "op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25" },
+        { "op": "split_po", "po_id": "PO-2609-008", "split_qty": 100, "new_due_date": "2026-11-25" }
+      ],
+      "expected": {
+        "shortages": [
+          { "item_id": "MCU", "plan_id": "PP-04", "plan_date": "2026-11-30", "projected_stock": -100, "orderable": false }
+        ],
+        "warnings": [
+          { "item_id": "MCU", "plan_id": "PP-05", "plan_date": "2026-11-25", "projected_stock": 0, "threshold": 300 }
+        ],
+        "excesses": []
+      }
+    },
+    {
+      "id": "SC4-FIX-OK",
+      "kind": "verify",
+      "title": "SC4 해결안: 늦어진 1,200개 중 1,000개를 11/22에 먼저 받으면 풀린다",
+      "question": null,
+      "role": "BUYER",
+      "expected_tools": [],
+      "whatif": [
+        { "op": "request_due_date_change", "po_id": "PO-2610-106", "new_due_date": "2026-11-27" },
+        { "op": "split_po", "po_id": "PO-2610-106", "split_qty": 1000, "new_due_date": "2026-11-22" }
+      ],
+      "expected": {
+        "shortages": [],
+        "warnings": [
+          { "item_id": "RELAY", "plan_id": "PP-03", "plan_date": "2026-11-23", "projected_stock": 0, "threshold": 200 }
+        ],
+        "excesses": []
+      }
+    }
+  ]
+}

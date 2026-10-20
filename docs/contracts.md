@@ -89,7 +89,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - **변경 전에는 문제가 0건이다.** SC1~SC4는 일정·입고일을 바꾸는 순간에만 걸린다.
 - 시연 기준일은 **2026-11-02**. 로그인 계정 `planner` · `buyer` · `approver`, 비밀번호 `1234`.
 - **ID는 영문**이다: 완제품 `FG-PLUG` · `FG-SWITCH` · `FG-DOOR` · `FG-HUB`, 부품 `MCU` · `WIFI-CHIP` · `RELAY` · `CASE-DOOR-V1` 등. 한글 이름은 `name`에 있다. 프롬프트·평가셋에 ID를 적을 때 이걸 쓴다.
-- **골든셋 정답은 [decisions.md 7.3](decisions.md) 표가 기준이다.** 요약: SC1 MCU −100 2시점 / SC2 릴레이 −400 외 결품 5건·MCU 경고·플러그 케이스 과잉 300 / SC3 새 케이스 −800·옛 케이스 과잉 800·코인전지 과잉 800 / SC4 릴레이 −1,000. 기획안의 SC3 BLE 칩·홀 센서 과잉은 과잉 기간 규칙 때문에 빠졌다 (decisions.md 1.3). 값을 바꾸면 정답도 다시 계산해야 한다.
+- **골든셋 정답의 기준은 [`eval/golden.json`](../eval/golden.json)이다** (2.8). [decisions.md 7.3](decisions.md) 표는 설명용이다. 요약: SC1 MCU −100 2시점 / SC2 릴레이 −400 외 결품 5건·MCU 경고·플러그 케이스 과잉 300 / SC3 새 케이스 −800·옛 케이스 과잉 800·코인전지 과잉 800 / SC4 릴레이 −1,000. 기획안의 SC3 BLE 칩·홀 센서 과잉은 과잉 기간 규칙 때문에 빠졌다 (decisions.md 1.3). 값을 바꾸면 정답도 다시 계산해야 한다.
 
 ---
 
@@ -303,6 +303,19 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 
 - agent는 같은 `threadId`로 checkpointer에서 상태를 꺼내 이어간다.
 - 변경 도구를 부를 때 `approval_id`를 인자에 넣는다. backend는 그 승인이 `APPROVED`이고 **도구·인자가 승인 카드와 같을 때만** 실행한다.
+
+### 2.8 평가셋 파일 `eval/golden.json` (10/20 오후 추가)
+
+**SC1~SC4 정답은 이 파일 하나에만 둔다.** backend 골든셋 테스트와 C 파트 Harness 평가가 같은 파일을 읽는다. 기획안 PDF의 숫자를 정답으로 쓰지 않는다.
+
+| 칸 | 주인 |
+|---|---|
+| `question` · `role` · `expected_tools` | C |
+| `whatif` · `expected` | B (`expected`는 계산으로만 채운다. 손계산 금지) |
+
+- 형식·문항 추가 절차는 [`eval/README.md`](../eval/README.md).
+- `whatif`는 C의 `classify_intent`가 질문에서 뽑아야 할 정답이기도 하다.
+- 칸 이름을 바꾸거나 지우려면 상대 파트와 합의한다. 칸을 **더하는 것**은 각자 해도 된다 (상대 쪽 코드는 모르는 칸을 무시한다).
 
 ---
 
