@@ -2,11 +2,17 @@
 import { computed } from "vue";
 import Badge from "./Badge.vue";
 const props = defineProps<{ result: unknown }>();
-const data = computed(() =>
-  props.result && typeof props.result === "object"
-    ? (props.result as Record<string, unknown>)
-    : {},
-);
+// agent의 DONE.result는 {intent, whatif, impact}이고 결품·주의·과잉은 impact 안에 있다 (contracts.md 3.2).
+// impact가 없으면 result 자체를 본다 — 영향 분석 결과를 바로 넣어 주는 경우도 그대로 그려지게
+const data = computed(() => {
+  const r =
+    props.result && typeof props.result === "object"
+      ? (props.result as Record<string, unknown>)
+      : {};
+  return r.impact && typeof r.impact === "object"
+    ? (r.impact as Record<string, unknown>)
+    : r;
+});
 const groups = [
   ["shortages", "결품"],
   ["warnings", "주의"],
@@ -29,8 +35,9 @@ function records(key: string) {
         :key="key + n"
         class="server-impact"
       >
-        <Badge :text="label" /><b>{{ r.item_id }} · {{ r.qty }}개</b
-        ><small>{{ r.plan_id }} · {{ r.plan_date }}</small>
+        <Badge :text="label" /><b
+          >{{ r.item_id }}<template v-if="r.qty != null"> · {{ r.qty }}개</template></b
+        ><small>{{ r.plan_id ?? "" }} · {{ r.plan_date ?? r.date }}</small>
         <p>예상재고 {{ r.projected_stock }} / 기준 {{ r.threshold }}</p>
         <small>{{ r.rule_id }}</small>
       </article></template

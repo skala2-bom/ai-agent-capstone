@@ -29,6 +29,7 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 20 | **`DONE.result`는 `{intent, whatif, impact}`** — 결품은 `result.impact` 안 | 3.2 | 화면이 `result.impact`를 읽게 고침 (반영됨) | 지금 모양 그대로 (바꾸면 알려 주기) |
 | 19 | **작업·이벤트가 DB에 남는다** (재시작해도 승인 대기 작업이 이어짐). `GET /api/ai/tasks/{id}`, `GET /api/ai/tasks?mine=true` 생김 | 3.1 | 작업 이력 화면을 실제 목록으로 (반영됨) | 없음 |
 | 18 | 재고 응답에 `supplier_id`·`supplier_name`·`lead_time_days`·`used_in`(들어가는 완제품 이름), 발주 응답에 `supplier_name` — **칸 추가만** | 2.1 | 자재 화면의 협력사·리드타임·공용 제품 표시에 쓴다 (반영됨) | 없음 |
 
@@ -432,11 +433,23 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `TOOL_START` | `tool`, `label` | 진행 상태 |
 | `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
 | `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence`, ✅ `before`, `after` | 승인 카드 |
-| `DONE` | `status`, `answer`, `result`, `sources` | 스트림 닫고 목록 갱신 |
+| `DONE` | `status`, `answer`, `result`, `sources` — `result` 모양은 아래 | 스트림 닫고 목록 갱신 |
 | `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
 
 - 화면이 늦게 구독하거나 다시 연결하면 backend가 **처음부터 다시 보낸다.** A는 `seq`로 중복만 거르면 된다.
 - `amount`는 받는 사람의 역할에 맞춰 backend가 가린 뒤 보낸다.
+
+**`DONE.result` 모양** (10/20 밤 확정 — 그동안 칸만 있고 안의 모양을 정하지 않아 화면이 결품을 못 찾았다)
+
+```jsonc
+{ "intent": "IMPACT",          // agent가 분류한 의도 (IMPACT · ADJUST · QA …)
+  "whatif": [ … ],             // 질문에서 뽑은 가정 변경 (contracts 2.2 연산)
+  "impact": {                  // analyze_impact 결과 그대로 (2.2). 영향 분석을 안 한 질문이면 null
+    "policy_version": "v0.1", "shortages": [ … ], "warnings": [ … ], "excesses": [ … ] } }
+```
+
+- 화면은 `result.impact`에서 결품·주의·과잉을 그린다. `impact`가 없으면 `result` 자체를 본다 (`ServerResult.vue`).
+- 금액은 agent가 질문자 역할대로 한 번, `GET /api/ai/tasks/{id}`로 다시 볼 때 backend가 보는 사람 역할대로 한 번 더 가린다.
 
 ### 3.3 승인 흐름의 payload
 
