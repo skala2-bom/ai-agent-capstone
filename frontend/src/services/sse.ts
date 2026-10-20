@@ -116,7 +116,9 @@ export function connect(
               onEvent(e);
               if (e.type === "DONE" || e.type === "FAILED") {
                 ended = true;
-                await reader.cancel();
+                // 화면이 onEvent 안에서 stop()으로 이미 끊었으면 cancel이 AbortError를 낸다.
+                // 정상 종료이므로 무시한다 (안 그러면 아래 catch가 "잘못된 이벤트"로 표시)
+                await reader.cancel().catch(() => {});
                 return;
               }
             }
