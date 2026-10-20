@@ -5,9 +5,10 @@
     START → classify_intent ─┬─ IMPACT → agent_impact ⇄ tools ───────────────┐
                              ├─ QA     → agent_qa ⇄ tools_rag ───────────────┤
                              ├─ ADJUST → adjust_prepare → compare             │
-                             │            → agent_adjust → verify ──(통과)──→ approval_gate
-                             │                 ↑   (실패·최대 2회) │            │ 승인 → execute_change ─┤
-                             │                 └──────────────────┴── 거절(사유 반영·최대 2회)          │
+                             │            → agent_adjust → verify → collect_evidence → approval_gate
+                             │                 ↑ 실패/거절          │ 승인 → execute_change
+                             │                 └────────────────────┘          → refresh_impact → compare
+                             │            다음 대상이 없거나 모두 보류되면 → respond
                              └─ CLARIFY ─────────────────────────────────────────────────→ respond → END
 
 모델(LLM)이 판단하는 노드: classify_intent, agent_impact, agent_qa, agent_adjust
@@ -49,10 +50,7 @@ MAX_SAME_TOOL = 3           # 같은 도구를 부르는 횟수 (모델이 고�
 TOOL_TIMEOUT_S = 10         # 도구 1회 (아키텍처 4.2)
 MAX_VERIFY_RETRIES = 2      # verify 실패 후 다른 대안으로 다시 (contracts 2.4)
 MAX_REJECTS = 2             # 팀장 거절 후 다시 제안 (contracts 3.4)
-
-# rag-mcp에 search_docs가 생기기 전까지 모델이 읽을 수 있는 조항 목록.
-# 이 목록 밖의 주소를 지어내 부르지 않게 지시문에 그대로 넣는다.
-KNOWN_CLAUSES = ["doc://ECN-2026-014/3.2"]
+MAX_ACTIONS = 10            # 한 작업에서 실제 실행할 수 있는 변경 수
 
 PROMPTS = Path(__file__).parent / "prompts"
 
@@ -121,10 +119,16 @@ class AgentState(TypedDict, total=False):
     notice: str | None                        # 답변 앞에 붙일 안내 (예: 권한 때문에 IMPACT로 답함)
     failure: str | None                       # 도구 오류로 끝낼 때
     impact: dict | None                       # analyze_impact 결과 (변경 적용 후, 해결안 적용 전)
-    targets: list[dict]                       # 해결할 결품 (orderable=false)
+    current_impact: dict | None               # 가장 최근 DB + 아직 적용되지 않은 사용자 가정
+    current_ops: list[dict]
+    scope: list[str]                          # 최초 질문의 대상(품목|규칙); 임의로 범위를 넓히지 않음
+    active_target: str | None
+    blocked: dict[str, str]
+    executions: list[dict]
+    targets: list[dict]                       # 긴급 결품 + 과잉
     options: list[dict]                       # compare_options 후보
     recommended: str | None
-    tried: list[str]                          # 검증 실패·거절된 option_id
+    tried: list[str]                          # 검증 실패·거절된 tool+args 정규화 값 (ID 재사용 방지)
     selected_option: dict | None              # 고른 후보 (compare_options에서 그대로 복사)
     pick_reason: str | None
     verify: dict | None                       # 마지막 verify 판정
@@ -135,6 +139,9 @@ class AgentState(TypedDict, total=False):
     decision: dict | None                     # 팀장 결정 (approval_gate에서 받음)
     executed: dict | None                     # 변경 도구 실행 결과
     evidence: list[dict]                      # 읽은 근거 조항 (성공한 것만)
+    search_hits: list[dict]
+    evidence_error: str | None
+    qa_searched: bool
     turn_count: int
     tool_counts: dict
     answer: str | None
@@ -181,7 +188,7 @@ def mask(value: Any, role: str | None) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if (k == "unit_price" and hide_unit) or (k in ("amount", "added_cost") and hide_amount):
+            if (k == "unit_price" and hide_unit) or (k in ("amount", "added_cost", "saved_amount") and hide_amount):
                 out[k] = None
             else:
                 out[k] = mask(v, role)
@@ -194,6 +201,7 @@ def mask(value: Any, role: str | None) -> Any:
 LABELS = {
     "analyze_impact": "영향 분석 중", "compare_options": "해결 방법 비교 중", "list_plans": "생산 계획 조회 중",
     "get_item": "품목 조회 중", "read_doc": "근거 문서 읽는 중",
+    "search_docs": "근거 문서 검색 중",
     "split_po": "발주 분할 실행 중", "request_due_date_change": "입고일 변경 실행 중",
     "change_po_qty": "발주 수량 변경 실행 중", "cancel_po": "발주 취소 실행 중",
     "explode_bom": "BOM 펼치는 중", "where_used": "사용 제품 찾는 중", "get_supplier_metrics": "협력사 지표 조회 중",
@@ -221,7 +229,7 @@ async def call_tool(state: dict, name: str, args: dict, *, label: str | None = N
         await emit(task_id, {"type": "TOOL_START", "tool": name, "label": label or LABELS.get(name, name)})
     started, ok = time.monotonic(), True
     try:
-        url = RAG_MCP_URL if name == "read_doc" else BUSINESS_MCP_URL
+        url = RAG_MCP_URL if name in ("read_doc", "search_docs") else BUSINESS_MCP_URL
         async with Client(StreamableHttpTransport(url, headers=_headers(state))) as c:
             if name == "read_doc":
                 # rag-mcp의 Resource를 읽는다. 모델은 Tool만 부를 수 있어 read_doc이라는 이름으로 감싼다 (교재 3장)
@@ -236,6 +244,40 @@ async def call_tool(state: dict, name: str, args: dict, *, label: str | None = N
         await emit(task_id, {"type": "TOOL_END", "tool": name, "ok": ok,
                              "ms": int((time.monotonic() - started) * 1000)})
     return ok, result
+
+
+def merge_sources(*groups: list[dict]) -> list[dict]:
+    return list({(s["uri"], s["version"]): s for group in groups for s in group}.values())
+
+
+async def read_hit(state: dict, hit: dict) -> tuple[dict | None, str | None]:
+    """검색 결과가 허용한 URI만 원문으로 읽고, 검색 후 문서가 바뀌면 인용하지 않는다."""
+    required = ("doc_id", "title", "clause_no", "version", "uri", "content")
+    if not all(isinstance(hit.get(k), str) for k in required):
+        return None, "검색 결과의 출처 형식이 올바르지 않습니다."
+    if hit["uri"] != f"doc://{hit['doc_id']}/{hit['clause_no']}":
+        return None, "검색 결과의 URI가 문서·조항과 다릅니다."
+    ok, text = await call_tool(state, "read_doc", {"uri": hit["uri"]})
+    if not ok:
+        return None, str(text)
+    if text != hit["content"]:
+        return None, "검색 후 문서 원문이 변경되었습니다. 다시 검색해야 합니다."
+    return {**{k: hit[k] for k in required if k != "content"},
+            "effective_date": hit.get("effective_date"), "excerpt": text}, None
+
+
+async def retrieve_sources(state: dict, query: str, doc_type: str | None = None) -> tuple[list[dict], str | None]:
+    ok, hits = await call_tool(state, "search_docs", {"query": query[:4000], "top_k": 3, "doc_type": doc_type})
+    if not ok or not isinstance(hits, list):
+        return [], str(hits) if not ok else "검색 결과 형식이 올바르지 않습니다."
+    sources, errors = [], []
+    for hit in hits:
+        source, error = await read_hit(state, hit)
+        if source:
+            sources.append(source)
+        if error:
+            errors.append(error)
+    return sources, "; ".join(errors) or (None if sources else "관련 문서 검색 결과가 없습니다.")
 
 
 _destructive: set[str] | None = None
@@ -305,16 +347,31 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0) ->
     """
     def check(c: W.Classification) -> list[str]:
         ops = [W.normalize(o) for o in c.whatif]
-        return W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
+        errors = W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
+        if not errors and ops and c.unclear:
+            errors.append("유효한 whatif와 unclear가 함께 있습니다. 원래 생산일·제품으로 계획이 특정되는지 다시 확인하세요. "
+                          "unclear에는 의도 선택 이유를 적지 않습니다. 정말 정보가 모자라면 해당 부분만 적으세요.")
+        return errors
 
     if llm is None:
-        c = W.rule_classify(question, plans)
+        try:
+            c = W.rule_classify(question, plans)
+        except ValueError:
+            c = W.Classification(intent="IMPACT", unclear="날짜를 읽지 못했습니다. 실제 월/일을 확인해 주세요.")
         return c, check(c), turns
     msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans))),
             HumanMessage(question)]
+    if W.explicit_adjust_request(question):
+        msgs.append(SystemMessage("이 질문에는 명시적인 해결 요청이 있으므로 intent는 ADJUST입니다. "
+                                  "'문제 있어?'와 함께 있어도 모순이 아닙니다. whatif를 추출하세요. "
+                                  "unclear는 생산 계획·날짜·수량이 실제로 모호할 때만 씁니다."))
     for attempt in range(2):
         turns += 1
         c = await llm.with_structured_output(W.Classification, method=STRUCTURED).ainvoke(msgs)
+        if c.intent == "IMPACT" and W.explicit_adjust_request(question):
+            # 실제 SC2에서 긴 가정 뒤 "해결 방법 만들어 줘"를 놓쳤다. 명시적 요청의 분기만 보완한다.
+            # 모델의 whatif는 그대로 검사하며, 역할 제한과 개별 승인은 이후 단계에서 적용한다.
+            c = c.model_copy(update={"intent": "ADJUST"})
         errors = check(c)
         if not errors:
             return c, [], turns
@@ -369,8 +426,14 @@ def analyze_impact_tool() -> str:
 
 @tool("read_doc")
 def read_doc_tool(uri: str) -> str:
-    """근거 문서 조항 원문을 읽는다. uri 예: doc://ECN-2026-014/3.2"""
+    """search_docs가 반환한 URI의 근거 문서 조항 원문을 읽는다."""
     return ""  # 실제 실행은 tools_rag 노드
+
+
+@tool("search_docs")
+def search_docs_tool(query: str, top_k: int = 5, doc_type: str | None = None) -> str:
+    """규정·계약·ECN 조항을 검색한다. 반환된 URI로 read_doc을 호출한 뒤 인용한다."""
+    return ""
 
 
 async def agent_impact(state: AgentState) -> dict:
@@ -381,7 +444,8 @@ async def agent_impact(state: AgentState) -> dict:
         else:
             msg = AIMessage("[가짜 모델] 영향 분석 결과입니다.\n" + describe_impact(state["impact"], state["plans"]))
         return {"messages": [msg], "turn_count": turns}
-    system = SystemMessage(prompt("impact", PLANS=plans_table(state["plans"])))
+    system = SystemMessage(prompt("impact", PLANS=plans_table(state["plans"]),
+                                  SOURCES=json.dumps(state.get("evidence") or [], ensure_ascii=False)))
     msg = await llm.bind_tools([analyze_impact_tool]).ainvoke([system, *state["messages"]])
     return {"messages": [msg], "turn_count": turns}
 
@@ -398,6 +462,10 @@ async def tools(state: AgentState) -> dict:
             ok, res = await call_tool(state, "analyze_impact", {"whatif": state.get("whatif_ops") or []})
             if ok:
                 updates["impact"] = res
+                if not state.get("impact"):
+                    evidence, error = await retrieve_sources(state, state["question"])
+                    updates["evidence"] = evidence
+                    updates["evidence_error"] = error
             content = json.dumps(mask(res, state.get("role")), ensure_ascii=False) if ok else res
         else:
             content = f"이 경로에서 쓸 수 없는 도구입니다: {call['name']}"
@@ -419,34 +487,56 @@ def after_agent(state: AgentState) -> str:
 async def agent_qa(state: AgentState) -> dict:
     turns = next_turn(state)
     if llm is None:
-        if not state.get("evidence"):
-            msg = AIMessage("", tool_calls=[{"id": f"call_{turns}", "name": "read_doc", "args": {"uri": KNOWN_CLAUSES[0]}}])
+        if not state.get("qa_searched"):
+            msg = AIMessage("", tool_calls=[{"id": f"call_{turns}", "name": "search_docs",
+                                            "args": {"query": state["question"], "top_k": 3}}])
+        elif not state.get("evidence") and state.get("search_hits") and not state.get("evidence_error"):
+            msg = AIMessage("", tool_calls=[{"id": f"call_{turns}", "name": "read_doc",
+                                            "args": {"uri": state["search_hits"][0]["uri"]}}])
+        elif not state.get("evidence"):
+            msg = AIMessage("관련 규정을 확인하지 못했습니다. 문서 색인·검색 상태를 확인해 주세요.")
         else:
             e = state["evidence"][0]
             msg = AIMessage(f"[가짜 모델] 근거 조항 원문입니다.\n{e['excerpt']}\n(근거: {e['uri']})")
         return {"messages": [msg], "turn_count": turns}
-    system = SystemMessage(prompt("qa", CLAUSES="\n".join(f"- {u}" for u in KNOWN_CLAUSES)))
-    msg = await llm.bind_tools([read_doc_tool]).ainvoke([system, *state["messages"]])
+    system = SystemMessage(prompt("qa"))
+    msg = await llm.bind_tools([search_docs_tool, read_doc_tool]).ainvoke([system, *state["messages"]])
     return {"messages": [msg], "turn_count": turns}
 
 
 async def tools_rag(state: AgentState) -> dict:
     counts = dict(state.get("tool_counts") or {})
     evidence = list(state.get("evidence") or [])
+    hits = list(state.get("search_hits") or [])
+    searched = state.get("qa_searched", False)
+    error = state.get("evidence_error")
     out_msgs = []
     for call in state["messages"][-1].tool_calls:
         counts[call["name"]] = counts.get(call["name"], 0) + 1
         if counts[call["name"]] > MAX_SAME_TOOL:
             content = f"같은 도구를 {MAX_SAME_TOOL}번 넘게 불렀습니다. 지금까지의 결과로 답하세요."
+        elif call["name"] == "search_docs":
+            searched = True
+            ok, res = await call_tool(state, "search_docs", call["args"])
+            if ok and isinstance(res, list):
+                hits = list({h["uri"]: h for h in [*hits, *res] if isinstance(h, dict) and "uri" in h}.values())
+            else:
+                error = str(res)
+            content = json.dumps(res, ensure_ascii=False) if ok else str(res)
         elif call["name"] == "read_doc":
-            ok, res = await call_tool(state, "read_doc", {"uri": call["args"].get("uri", "")})
-            if ok:  # 실패한 읽기는 근거가 아니다. 오류 문장이 근거 패널에 뜨지 않게 성공한 것만 남긴다
-                evidence.append({"uri": call["args"]["uri"], "excerpt": res})
-            content = res
+            hit = next((h for h in hits if h["uri"] == call["args"].get("uri")), None)
+            if hit is None:
+                content = "먼저 search_docs로 찾은 URI만 읽을 수 있습니다."
+            else:
+                source, error = await read_hit(state, hit)
+                if source:
+                    evidence = merge_sources(evidence, [source])
+                content = json.dumps(source, ensure_ascii=False) if source else error
         else:
             content = f"이 경로에서 쓸 수 없는 도구입니다: {call['name']}"
         out_msgs.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
-    return {"messages": out_msgs, "tool_counts": counts, "evidence": evidence}
+    return {"messages": out_msgs, "tool_counts": counts, "evidence": evidence,
+            "search_hits": hits, "qa_searched": searched, "evidence_error": error}
 
 
 # ---------------------------------------------------------------------------
@@ -454,11 +544,13 @@ async def tools_rag(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 async def adjust_prepare(state: AgentState) -> dict:
-    """변경을 적용한 영향을 계산하고, 해결할 결품(orderable=false)을 고른다."""
+    """최초 분석은 보존하고, 결품·과잉의 최초 대상 범위를 고정한다."""
     ok, impact = await call_tool(state, "analyze_impact", {"whatif": state.get("whatif_ops") or []})
     if not ok:
         return {"failure": impact}
-    return {"impact": impact, "targets": W.actionable(impact)}
+    targets = W.actionable(impact)
+    return {"impact": impact, "current_impact": impact, "current_ops": state.get("whatif_ops") or [],
+            "targets": targets, "scope": list(dict.fromkeys(W.target_key(t) for t in targets))}
 
 
 def after_prepare(state: AgentState) -> str:
@@ -466,16 +558,27 @@ def after_prepare(state: AgentState) -> str:
 
 
 async def compare(state: AgentState) -> dict:
-    # 계약 2.3 (10/20 변경): 결품은 가정 위에서만 생기므로 대안도 같은 whatif 위에서 만든다
+    """한 품목·규칙씩 처리한다. 다른 품목의 기존 문제는 다음 승인에서 처리한다."""
+    pending = [t for t in W.actionable(state["current_impact"])
+               if W.target_key(t) in state["scope"] and W.target_key(t) not in (state.get("blocked") or {})]
+    if not pending:
+        return {"active_target": None, "targets": [], "selected_option": None}
+    if len(state.get("executions") or []) >= MAX_ACTIONS:
+        return {"failure": f"변경 {MAX_ACTIONS}건 한도에 도달했습니다. 남은 문제는 새 작업으로 확인하세요."}
+    key = W.target_key(pending[0])
+    targets = [t for t in pending if W.target_key(t) == key]
     ok, res = await call_tool(state, "compare_options",
-                              {"whatif": state.get("whatif_ops") or [], "issues": state["targets"]})
+                              {"whatif": state["current_ops"], "issues": targets})
     if not ok:
         return {"failure": res}
-    return {"options": res.get("options", []), "recommended": res.get("recommended_option_id")}
+    options = [o for o in res.get("options", []) if W.target_key(o) == key]
+    return {"active_target": key, "targets": targets, "options": options,
+            "recommended": next((o["option_id"] for o in options if o.get("recommended")), None),
+            "selected_option": None, "decision": None, "verify": None, "verify_count": 0, "reject_count": 0}
 
 
 def after_compare(state: AgentState) -> str:
-    return "respond" if state.get("failure") else "agent_adjust"
+    return "respond" if state.get("failure") or not state.get("active_target") else "agent_adjust"
 
 
 class Pick(BaseModel):
@@ -485,7 +588,8 @@ class Pick(BaseModel):
 
 def candidates(state: AgentState) -> list[dict]:
     tried = set(state.get("tried") or [])
-    return [o for o in state.get("options") or [] if o.get("feasible") and o["option_id"] not in tried]
+    return [o for o in state.get("options") or [] if o.get("feasible") and o.get("resolves")
+            and not o.get("side_effects") and W.option_key(o) not in tried]
 
 
 async def agent_adjust(state: AgentState) -> dict:
@@ -516,27 +620,67 @@ async def agent_adjust(state: AgentState) -> dict:
 
 
 def after_adjust(state: AgentState) -> str:
-    return "verify" if state.get("selected_option") else "respond"
+    return "verify" if state.get("selected_option") else "skip_target"
 
 
 async def verify(state: AgentState) -> dict:
     """고른 대안의 tool·args를 **그대로** whatif에 더해 다시 계산하고 판정한다 (contracts 2.4)."""
     opt = state["selected_option"]
-    ops = list(state.get("whatif_ops") or []) + [W.option_op(opt)]
+    ops = list(state["current_ops"]) + [W.option_op(opt)]
     ok, after = await call_tool(state, "analyze_impact", {"whatif": ops}, label="해결안 검증 중")
-    verdict = W.judge(state["impact"], after, state["targets"]) if ok else {"passed": False, "error": after}
+    verdict = W.judge(state["current_impact"], after, state["targets"]) if ok else {"passed": False, "error": after}
     verdict["option_id"] = opt["option_id"]
+    verdict["target"] = state["active_target"]
+    verdict["remaining_issues"] = opt.get("remaining_issues") or []
+    verdict["side_effects"] = opt.get("side_effects") or []
     log = list(state.get("verify_log") or []) + [verdict]
     if verdict["passed"]:
         return {"verify": verdict, "verify_log": log}
     return {"verify": verdict, "verify_log": log, "verify_count": state.get("verify_count", 0) + 1,
-            "tried": list(state.get("tried") or []) + [opt["option_id"]]}
+            "tried": list(state.get("tried") or []) + [W.option_key(opt)]}
 
 
 def after_verify(state: AgentState) -> str:
     if state["verify"]["passed"]:
-        return "approval_gate"
-    return "respond" if state.get("verify_count", 0) > MAX_VERIFY_RETRIES else "agent_adjust"
+        return "collect_evidence"
+    return "skip_target" if state.get("verify_count", 0) > MAX_VERIFY_RETRIES else "agent_adjust"
+
+
+async def collect_evidence(state: AgentState) -> dict:
+    opt = state["selected_option"]
+    sources, error = await retrieve_sources(
+        state, f"{opt['item_id']} {opt['tool']} {opt.get('summary', '')} 공급계약 승인 조건", "CONTRACT")
+    # SC3의 설계변경은 계약뿐 아니라 시행일이 있는 ECN 원문을 확인한다.
+    if opt["item_id"].startswith("CASE-DOOR"):
+        ecn, ecn_error = await retrieve_sources(state, f"{opt['item_id']} 설계변경 사용 제한 취소", "ECN")
+        sources = merge_sources(sources, ecn)
+        error = error or ecn_error
+    if error or not sources:
+        return {"evidence_error": error or "승인 근거를 확보하지 못했습니다."}
+    return {"selected_option": {**opt, "evidence": sources},
+            "evidence": merge_sources(state.get("evidence") or [], sources), "evidence_error": None}
+
+
+def after_evidence(state: AgentState) -> str:
+    return "skip_target" if state.get("evidence_error") else "approval_gate"
+
+
+def skip_target(state: AgentState) -> dict:
+    blocked = dict(state.get("blocked") or {})
+    reason = state.get("evidence_error") or (
+        "거절 재제안 한도를 넘었습니다." if state.get("reject_count", 0) > MAX_REJECTS
+        else "검증을 통과하고 부작용이 없는 미시도 후보가 없습니다.")
+    if state.get("verify") and not state["verify"].get("passed"):
+        reason += " 남은 문제: " + json.dumps(state["verify"].get("remaining_issues") or
+                                           state["verify"].get("unresolved") or [], ensure_ascii=False)
+    elif not state.get("evidence_error") and not state.get("rejections"):
+        problems = [o for o in state.get("options") or [] if o.get("remaining_issues") or o.get("side_effects")]
+        for opt in problems[:3]:
+            reason += f" {opt['option_id']}: " + json.dumps(
+                {"remaining_issues": opt.get("remaining_issues", []),
+                 "side_effects": opt.get("side_effects", [])}, ensure_ascii=False)
+    blocked[state["active_target"]] = reason
+    return {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None}
 
 
 def approval_gate(state: AgentState) -> dict:
@@ -548,7 +692,8 @@ def approval_gate(state: AgentState) -> dict:
     """
     opt = state["selected_option"]
     decision = interrupt({
-        "tool": opt["tool"], "args": opt["args"], "summary": opt.get("summary"),
+        "tool": opt["tool"], "args": opt["args"],
+        "summary": f"{opt.get('summary', '')} (실제 발주 변경입니다. 협력사 협의·확약 여부를 확인한 뒤 승인하세요.)",
         "amount": opt.get("added_cost"), "evidence": opt.get("evidence") or [],
         "option_id": opt["option_id"],
         "verify": {"passed": True, "warnings_after": state["verify"].get("warnings_after", [])},
@@ -556,7 +701,7 @@ def approval_gate(state: AgentState) -> dict:
     if decision.get("decision") == "APPROVED":
         return {"decision": decision}
     return {"decision": decision, "reject_count": state.get("reject_count", 0) + 1,
-            "tried": list(state.get("tried") or []) + [opt["option_id"]],
+            "tried": list(state.get("tried") or []) + [W.option_key(opt)],
             "rejections": list(state.get("rejections") or [])
             + [{"option_id": opt["option_id"], "reason": decision.get("reason")}]}
 
@@ -564,16 +709,52 @@ def approval_gate(state: AgentState) -> dict:
 def after_gate(state: AgentState) -> str:
     if state["decision"].get("decision") == "APPROVED":
         return "execute_change"
-    return "respond" if state.get("reject_count", 0) > MAX_REJECTS else "agent_adjust"
+    return "skip_target" if state.get("reject_count", 0) > MAX_REJECTS else "agent_adjust"
 
 
 async def execute_change(state: AgentState) -> dict:
-    """승인된 tool·args에 approval_id만 더해 실행한다. backend가 승인과 같은지 다시 확인한다 (contracts 2.7)."""
+    """승인 후 최신 후보·영향을 다시 검사한다. 인자·비용이 바뀌면 기존 승인으로 실행하지 않는다."""
     opt, decision = state["selected_option"], state["decision"]
+    ok_before, before = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]})
+    ok_options, latest = await call_tool(state, "compare_options",
+                                        {"whatif": state["current_ops"], "issues": state["targets"]})
+    current = next((o for o in latest.get("options", []) if W.option_key(o) == W.option_key(opt)
+                    and W.target_key(o) == state["active_target"]), None) if ok_options else None
+    if (not ok_before or current is None or not current.get("feasible") or not current.get("resolves") or current.get("side_effects")
+            or any(current.get(k) != opt.get(k) for k in ("added_cost", "saved_amount", "risk"))):
+        return {"executed": {"ok": False, "error": "승인 대기 중 데이터/대안 조건이 달라졌거나 확인에 실패했습니다. 새로 분석·승인해 주세요."}}
+    ok_after, after = await call_tool(state, "analyze_impact",
+                                      {"whatif": [*state["current_ops"], W.option_op(opt)]})
+    if not ok_after or not W.judge(before, after, state["targets"])["passed"]:
+        return {"executed": {"ok": False, "error": "승인 후 재검증에 실패하여 실행을 보류했습니다."}}
     if opt["tool"] not in await destructive_tools(state):
         return {"executed": {"ok": False, "error": f"{opt['tool']}는 승인 대상 변경 도구가 아닙니다."}}
     ok, res = await call_tool(state, opt["tool"], {**opt["args"], "approval_id": decision.get("approvalId")})
-    return {"executed": {"ok": ok, "result": res if ok else None, "error": None if ok else res}}
+    record = {"ok": ok, "result": res if ok else None, "error": None if ok else res}
+    if not ok:
+        return {"executed": record}
+    return {"executed": record,
+            "executions": [*(state.get("executions") or []), {"tool": opt["tool"], "args": opt["args"],
+                           "target_rule": opt["target_rule"], "item_id": opt["item_id"],
+                           "approval_id": decision["approvalId"], "result": res}],
+            "current_ops": W.remaining_ops(state["current_ops"], opt)}
+
+
+def after_execution(state: AgentState) -> str:
+    return "refresh_impact" if state["executed"]["ok"] else "respond"
+
+
+async def refresh_impact(state: AgentState) -> dict:
+    # DB는 이미 변경됐다. 실행한 op를 다시 넣으면 분할·감량이 중복 반영된다.
+    ok, impact = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]},
+                                label="실행 후 남은 문제 확인 중")
+    if not ok:
+        return {"failure": "변경은 실행됐지만 실행 후 분석을 확인하지 못했습니다: " + str(impact)}
+    return {"current_impact": impact}
+
+
+def after_refresh(state: AgentState) -> str:
+    return "respond" if state.get("failure") else "compare"
 
 
 # ---------------------------------------------------------------------------
@@ -587,43 +768,40 @@ def describe_execution(res: dict) -> str:
         return (f"실행 결과: {o['po_id']}는 {o['qty']:,}개 · {o['due_date']} 입고로 줄었고, "
                 f"새 발주 {n['po_id']}가 {n['qty']:,}개 · {n['due_date']} 입고로 생겼습니다.")
     if "before" in res and "after" in res:   # request_due_date_change
+        if "qty" in res["after"]:
+            return f"실행 결과: {res.get('po_id')} 수량이 {res['before'].get('qty')} → {res['after']['qty']}개로 바뀌었습니다."
+        if "status" in res["after"]:
+            return f"실행 결과: {res.get('po_id')} 상태가 {res['before'].get('status')} → {res['after']['status']}로 바뀌었습니다."
         return (f"실행 결과: {res.get('po_id')} 입고 예정일이 "
                 f"{res['before'].get('due_date')} → {res['after'].get('due_date')}로 바뀌었습니다.")
     return f"실행 결과: {json.dumps(res, ensure_ascii=False)}"
 
 
 def _adjust_answer(state: AgentState) -> str:
-    plans, impact = state.get("plans") or [], state.get("impact") or {}
-    if not state.get("targets"):
-        lines = ["조치가 필요한 결품이 없습니다 (새 발주로 늦는 결품 없음)."]
-        normal = [s for s in impact.get("shortages", []) if s.get("orderable")]
-        if normal:
-            lines.append("지금 발주하면 제때 들어오는 부족분:")
-            lines += [f"- {describe_shortage(s, plans)}" for s in normal]
-        return "\n".join(lines)
-    head = "해결할 결품:\n" + "\n".join(f"- {describe_shortage(t, plans)}" for t in state["targets"])
-    opt, executed, decision = state.get("selected_option"), state.get("executed"), state.get("decision")
-    if executed:
-        if executed["ok"]:
-            return f"{head}\n\n승인된 해결안을 실행했습니다: {opt.get('summary')}\n{describe_execution(executed['result'])}"
-        return f"{head}\n\n승인은 받았지만 실행에 실패했습니다: {executed['error']}"
-    if decision and decision.get("decision") == "REJECTED":
-        reasons = "; ".join(f"{r['option_id']}: {r['reason']}" for r in state.get("rejections") or [])
-        return f"{head}\n\n거절이 {MAX_REJECTS}회를 넘어 더 제안하지 않습니다. 거절 사유: {reasons}"
-    fails = [v for v in state.get("verify_log") or [] if not v.get("passed")]
-    lines = [head, "", "검증을 통과한 해결안이 없습니다."]
-    for v in fails:
-        why = v.get("error") or "; ".join(
-            [f"{describe_shortage(s, plans)} 남음" for s in v.get("unresolved", [])]
-            + [f"{describe_shortage(s, plans)} 새로 생김" for s in v.get("new_shortages", [])])
-        lines.append(f"- {v['option_id']}: {why}")
+    plans, impact = state.get("plans") or [], state.get("current_impact") or state.get("impact") or {}
+    executions = state.get("executions") or []
+    lines = [f"승인된 변경 {len(executions)}건을 실행했습니다." if executions else "현재 분석 결과입니다."]
+    lines += [describe_execution(e["result"]) for e in executions]
+    if state.get("executed") and not state["executed"]["ok"]:
+        lines.append("실행 보류/실패: " + str(state["executed"]["error"]))
+    for key, reason in (state.get("blocked") or {}).items():
+        lines.append(f"- {key}: {reason}")
+    for rejection in state.get("rejections") or []:
+        lines.append(f"- 거절 사유: {rejection.get('reason')}")
+    if state.get("whatif_ops"):
+        lines.append("생산계획 등 사용자 가정은 자동 저장하지 않았습니다. 아래는 현재 DB와 남은 가정을 함께 분석한 결과입니다.")
+    lines.append(describe_impact(impact, plans))
+    if any(s.get("orderable") for s in impact.get("shortages", [])):
+        lines.append("새 발주 가능 부족분은 안내만 했으며, 신규 발주는 생성하지 않았습니다.")
     return "\n".join(lines)
 
 
 def respond(state: AgentState) -> dict:
     intent, plans = state.get("intent"), state.get("plans") or []
     if state.get("failure"):
-        answer = f"분석 중 도구 오류가 났습니다: {state['failure']}"
+        answer = f"처리를 마치지 못했습니다: {state['failure']}"
+        if state.get("executions"):
+            answer = _adjust_answer(state) + "\n" + answer
     elif intent == "CLARIFY":
         answer = ("질문에서 바꿀 계획이나 날짜를 하나로 정하지 못했습니다: " + (state.get("clarify") or "")
                   + "\n예: \"허브를 11/25로 당기면 문제 있어?\"")
@@ -634,6 +812,13 @@ def respond(state: AgentState) -> dict:
         answer = last.content if last else ""
     if state.get("notice"):
         answer = f"({state['notice']})\n{answer}"
+    if state.get("evidence"):
+        answer += "\n\n확인한 근거:\n" + "\n".join(
+            f"- {s['title']} {s['version']} 제{s['clause_no']}조 ({s['uri']})" for s in state["evidence"])
+    elif intent == "QA":
+        answer = "관련 원문을 확인하지 못해 규정 답변을 확정할 수 없습니다. 문서 색인·검색 상태를 확인해 주세요."
+    if state.get("evidence_error"):
+        answer += "\n근거 확인 미완료: " + state["evidence_error"]
 
     next_actions = []
     impact = state.get("impact") or {}
@@ -647,6 +832,10 @@ def respond(state: AgentState) -> dict:
     if intent == "ADJUST":
         result.update({k: state.get(k) for k in
                        ("targets", "selected_option", "pick_reason", "verify_log", "decision", "executed")})
+        result.update({"executions": state.get("executions") or [],
+                       "post_execution_impact": state.get("current_impact"),
+                       "remaining_whatif": state.get("current_ops") or [],
+                       "blocked_targets": state.get("blocked") or {}})
     return {"answer": answer, "next_actions": next_actions, "result": result}
 
 
@@ -658,7 +847,9 @@ builder = StateGraph(AgentState)
 for name, fn in [("classify_intent", classify_intent), ("agent_impact", agent_impact), ("tools", tools),
                  ("agent_qa", agent_qa), ("tools_rag", tools_rag), ("adjust_prepare", adjust_prepare),
                  ("compare", compare), ("agent_adjust", agent_adjust), ("verify", verify),
-                 ("approval_gate", approval_gate), ("execute_change", execute_change), ("respond", respond)]:
+                 ("collect_evidence", collect_evidence), ("skip_target", skip_target),
+                 ("approval_gate", approval_gate), ("execute_change", execute_change),
+                 ("refresh_impact", refresh_impact), ("respond", respond)]:
     builder.add_node(name, fn)
 builder.add_edge(START, "classify_intent")
 builder.add_conditional_edges("classify_intent", route_intent,
@@ -669,8 +860,11 @@ builder.add_conditional_edges("agent_qa", after_agent, ["tools_rag", "respond"])
 builder.add_edge("tools_rag", "agent_qa")
 builder.add_conditional_edges("adjust_prepare", after_prepare, ["compare", "respond"])
 builder.add_conditional_edges("compare", after_compare, ["agent_adjust", "respond"])
-builder.add_conditional_edges("agent_adjust", after_adjust, ["verify", "respond"])
-builder.add_conditional_edges("verify", after_verify, ["approval_gate", "agent_adjust", "respond"])
-builder.add_conditional_edges("approval_gate", after_gate, ["execute_change", "agent_adjust", "respond"])
-builder.add_edge("execute_change", "respond")
+builder.add_conditional_edges("agent_adjust", after_adjust, ["verify", "skip_target"])
+builder.add_conditional_edges("verify", after_verify, ["collect_evidence", "agent_adjust", "skip_target"])
+builder.add_conditional_edges("collect_evidence", after_evidence, ["approval_gate", "skip_target"])
+builder.add_edge("skip_target", "compare")
+builder.add_conditional_edges("approval_gate", after_gate, ["execute_change", "agent_adjust", "skip_target"])
+builder.add_conditional_edges("execute_change", after_execution, ["refresh_impact", "respond"])
+builder.add_conditional_edges("refresh_impact", after_refresh, ["compare", "respond"])
 builder.add_edge("respond", END)

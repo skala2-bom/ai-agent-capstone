@@ -1,0 +1,69 @@
+# 개발 환경과 볼륨·네트워크·이미지를 공유하지 않는다. 공개 포트도 없다.
+# docker compose -p capstone-ai-test -f tests/compose.yml up -d --build
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment: {POSTGRES_DB: capstone_ai_test, POSTGRES_PASSWORD: test-only}
+    volumes:
+      - ../db:/docker-entrypoint-initdb.d:ro
+      - testdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d capstone_ai_test"]
+      interval: 2s
+      retries: 30
+  backend:
+    build: ../backend
+    image: capstone-ai-test-backend
+    environment:
+      AGENT_URL: http://agent:8000
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/capstone_ai_test
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      JWT_SECRET: test-only-secret-at-least-thirty-two-bytes
+      AGENT_SERVICE_TOKEN: test-agent-token
+      BUSINESS_MCP_SERVICE_TOKEN: test-business-token
+    depends_on:
+      postgres: {condition: service_healthy}
+  business-mcp:
+    build: ../business-mcp
+    image: capstone-ai-test-business
+    environment: {BACKEND_URL: "http://backend:8080", SERVICE_TOKEN: test-business-token}
+  rag-mcp:
+    build: ../rag-mcp
+    image: capstone-ai-test-rag
+    environment: {RAG_DB_URL: "postgresql://rag:rag@postgres:5432/capstone_ai_test"}
+    volumes: ["..:/repo:ro"]
+    command: ["python", "/repo/tests/serve_rag_fixture.py"]
+    depends_on:
+      postgres: {condition: service_healthy}
+  agent:
+    build: ../agent
+    image: capstone-ai-test-agent
+    environment:
+      BACKEND_URL: http://backend:8080
+      BUSINESS_MCP_URL: http://business-mcp:9101/mcp
+      RAG_MCP_URL: http://rag-mcp:9102/mcp
+      SERVICE_TOKEN: test-agent-token
+      OPENAI_API_KEY: ""
+      AGENT_DB_URL: postgresql://agent:agent@postgres:5432/capstone_ai_test
+    depends_on:
+      postgres: {condition: service_healthy}
+      business-mcp: {condition: service_started}
+      rag-mcp: {condition: service_started}
+  tests:
+    image: capstone-ai-test-agent
+    profiles: [tools]
+    volumes: ["..:/repo:ro"]
+    working_dir: /repo/tests
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      OPENAI_API_KEY: ""
+      BACKEND_URL: http://backend:8080
+      BUSINESS_MCP_URL: http://business-mcp:9101/mcp
+      RAG_MCP_URL: http://rag-mcp:9102/mcp
+      SERVICE_TOKEN: test-agent-token
+      RAG_TEST_DB_URL: postgresql://rag:rag@postgres:5432/capstone_ai_test
+      TEST_DB_URL: postgresql://postgres:test-only@postgres:5432/capstone_ai_test
+    command: ["python", "-u", "integration_scenarios.py"]
+volumes:
+  testdata:

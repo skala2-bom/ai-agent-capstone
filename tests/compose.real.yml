@@ -1,0 +1,24 @@
+# tests/compose.yml 위에 적용. 실제 OpenAI 호출 비용 발생.
+# .env에서만 키를 읽도록 env -u OPENAI_API_KEY -u OPENAI_MODEL docker compose --env-file .env ... 로 실행.
+services:
+  agent:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?실제 모델 검증에는 .env의 키가 필요합니다}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  rag-mcp:
+    command: ["python", "server.py"]
+    environment: &real-rag
+      RAG_DB_URL: postgresql://rag:rag@postgres:5432/capstone_ai_test
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?실제 임베딩 검증에는 .env의 키가 필요합니다}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-1536}
+  rag-index:
+    image: capstone-ai-test-rag
+    profiles: [tools]
+    environment: *real-rag
+    volumes: ["../data:/app/data:ro"]
+    command: ["python", "indexer.py"]
+  tests:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?실제 모델 검증에는 .env의 키가 필요합니다}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}

@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 29 | AI 결품·과잉 순차 승인 및 실제 RAG 연결. `DONE.result` 기본 3칸 유지, ADJUST 실행 내역·실행 후 분석 필드 추가 | 3.2, [변경 기록](ai-rag-integration-changes.md) | 감량·취소 승인 카드의 `tool`별 표시, 순차 승인 대기함 갱신 확인 필요 | 구현·회귀 검사. 변경 내역은 A·B 공유 필요 |
 | 1 | **평가셋 정답은 `eval/golden.json`** (기획안 PDF 아님) | 2.8 | 시연 질문 예시에 `question` 사용 가능 | 🔴 **Harness 평가가 이 파일을 읽게** |
 | 2 | `analyze_impact` whatif 연산 6개 | 2.2 | – | 🔴 **business-mcp 도구 설명에 6개 모두 적기**, `classify_intent` 출력 형식 |
 | 3 | `compare_options` 요청에 `whatif` 추가, 응답에 `item_id`·`resolves`·`recommended`·`cost_level` | 2.3 | – | verify가 `{"op": tool, **args}`로 다시 계산 |
@@ -30,11 +31,11 @@
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
 | 28 | 화면용 분석 API `POST /api/analysis/impact`·`POST /api/analysis/options` `{whatif}` — AI 도구와 같은 계산, 로그인 역할대로 금액 가림 | 3.1 | ✅ 반영함: 업무 현황 위험, 해결안 비교, 생산계획 영향 미리보기 | 없음 |
-| 27 | **RAG 근거 문서 6개** (`data/docs/`, `data/documents.json`) — 시스템 ID·결정에 맞춘 v1.2. 조항 단위 `doc://{doc_id}/{clause_no}` | 2.2 근거 | – | 🔴 **색인(indexer)·`search_docs`·pgvector 테이블을 만들어 이 문서를 읽게.** rag-mcp 하드코딩 조항은 지운다 (`data/README.md`) |
+| 27 | **RAG 근거 문서 6개** (`data/docs/`, `data/documents.json`) — 시스템 ID·결정에 맞춘 v1.2. 조항 단위 `doc://{doc_id}/{clause_no}` | 2.2 근거 | – | ✅ indexer·`search_docs`·pgvector·실제 원문 조회 구현, 하드코딩 삭제. 환경마다 최초 색인 필요 (`data/README.md`) |
 | 26 | `compare_options` 대안에 **`side_effects` 명세 형식**(NEW·WORSENED, 전후 결품량, `product_id`)과 **`remaining_issues`** 추가 | 2.3 | – | verify가 `remaining_issues`로 "왜 안 풀렸는지"를 설명할 수 있다. 기존 `resolves`는 그대로 |
 | 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
 | 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |
-| 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | – | 🔴 SC2·SC3 과잉 해결을 시연하려면 그래프가 `target_rule = INV-003` 대안도 승인 흐름에 태워야 한다 |
+| 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | 감량·취소 승인 카드 표시 확인 (29번) | ✅ `INV-003`도 개별 검증→승인→실행 흐름 연결 |
 | 24 | **협력사 지연 입력 → 자동 분석 작업** (`trigger = SYSTEM`, `whatif`를 backend가 채움, PLANNER 역할로 돌아 금액 없음). 응답에 `analysis_task_id` | 2.6·3.1 | 지연 입력 뒤 `analysis_task_id`로 결과 보여 주기, 생산관리 작업 목록에도 나옴 | 없음 (그대로 동작 확인) |
 | 25 | 화면 API: `GET /api/items/{id}/bom`, `GET /api/suppliers/metrics`, `PUT /api/suppliers/{s}/items/{i}/metrics` (평가지표 입력, BUYER) | 3.1 | 평가지표 표·입력 연결됨 (반영됨) | 없음 |
 | 20 | **`DONE.result`는 `{intent, whatif, impact}`** — 결품은 `result.impact` 안 | 3.2 | 화면이 `result.impact`를 읽게 고침 (반영됨) | 지금 모양 그대로 (바꾸면 알려 주기) |
@@ -511,6 +512,23 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 
 - 화면은 `result.impact`에서 결품·주의·과잉을 그린다. `impact`가 없으면 `result` 자체를 본다 (`ServerResult.vue`).
 - 금액은 agent가 질문자 역할대로 한 번, `GET /api/ai/tasks/{id}`로 다시 볼 때 backend가 보는 사람 역할대로 한 번 더 가린다.
+
+AI 변경(계약 표 29번): 위 `{intent, whatif, impact}`의 이름과 모양은 그대로 유지한다.
+ADJUST의 `impact`는 **해결안 실행 전 최초 영향 분석**이고 `whatif`는 **사용자의 원래 가정**이다.
+기존 ADJUST 상세 필드(`targets`, `selected_option`, `pick_reason`, `verify_log`, `decision`, `executed`) 외에
+아래 필드를 추가했다. 화면이 실행 후 상태를 그리려면 `post_execution_impact`를 명시적으로 읽어야 한다.
+
+| 추가 필드 | 의미 |
+|---|---|
+| `executions` | 성공한 실행 전부: `{tool, args, target_rule, item_id, approval_id, result}` 목록 |
+| `post_execution_impact` | 마지막 DB 상태 + 남은 가정으로 계산한 영향. 실행 후 재분석에 실패하면 마지막으로 확인한 상태이므로 답변의 실패 안내도 확인 |
+| `remaining_whatif` | 실행으로 덮어쓴 발주 가정을 제거한 목록. 실행한 split을 다시 가정으로 더하지 않음 |
+| `blocked_targets` | `"INV-001|MCU"` / `"INV-003|CASE-PLUG"`별 보류 이유 |
+
+한 작업에 승인 카드가 여러 번 생길 수 있다. **카드 하나의 승인은 그 카드의 tool·args 한 건에만 적용**한다.
+현재 대상이 끝나면 같은 작업에서 다음 대상의 새 승인을 요청한다. 자동 신규 발주는 만들지 않는다.
+`sources`와 승인 카드 `evidence`에는 검색 결과의 원문을 실제로 읽은
+`{doc_id, title, clause_no, version, effective_date, uri, excerpt}`만 넣는다.
 
 ### 3.3 승인 흐름의 payload
 
