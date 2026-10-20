@@ -103,11 +103,40 @@ CREATE TABLE supplier_metric (
     PRIMARY KEY (supplier_id, item_id)
 );
 
+-- AI 작업 (task 모듈). 질문 하나 = 작업 하나. 재시작해도 남아야 승인 후 재개와 작업 이력이 된다
+CREATE TABLE ai_task (
+    task_id     text PRIMARY KEY,
+    thread_id   text NOT NULL,                  -- agent checkpointer의 대화 열쇠. 지금은 task_id와 같다
+    user_id     text NOT NULL REFERENCES app_user,
+    role        text NOT NULL,                  -- 접수 당시 역할. agent에 넘긴 값 그대로 (금액 가리기 기준)
+    question    text NOT NULL,
+    trigger     text NOT NULL DEFAULT 'USER' CHECK (trigger IN ('USER', 'SYSTEM')),   -- SYSTEM = 입고 지연 자동 분석 (9단계)
+    status      text NOT NULL DEFAULT 'QUEUED'
+                CHECK (status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'DONE', 'FAILED')),
+    answer      text,                           -- DONE 이벤트의 answer
+    result      jsonb,                          -- DONE 이벤트의 result
+    sources     jsonb,                          -- DONE 이벤트의 sources (근거 문서)
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    finished_at timestamptz
+);
+CREATE INDEX ON ai_task (user_id, created_at DESC);
+
+-- 진행 이벤트. SSE로 보낸 것과 똑같은 내용(taskId·seq·ts 포함)을 그대로 둔다.
+-- 화면이 늦게 구독하거나 다시 연결하면 여기서 처음부터 다시 보낸다 (아키텍처 9.3)
+CREATE TABLE task_event (
+    task_id    text NOT NULL REFERENCES ai_task,
+    seq        int  NOT NULL,                   -- backend가 매긴다. 작업 안에서 1부터
+    type       text NOT NULL,
+    payload    jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (task_id, seq)
+);
+
 -- 승인 카드 (approval 모듈). 변경 도구는 금액과 무관하게 전부 여기를 거친다 (decisions.md 6.1).
 -- 상태: PENDING → APPROVED | REJECTED, APPROVED → EXECUTED. 만료 없음 (decisions.md 1.7)
 CREATE TABLE approval (
     approval_id    text PRIMARY KEY,           -- backend가 만든다. agent는 이벤트를 보낼 때 이 값을 모른다 (contracts.md 3.3)
-    task_id        text NOT NULL,              -- 작업은 아직 메모리에 있어 FK를 걸지 않는다 (8단계에서 ai_task로)
+    task_id        text NOT NULL REFERENCES ai_task,
     tool           text NOT NULL,              -- 변경 도구 이름. 실행할 때 이것과
     args           jsonb NOT NULL,             -- 이 인자가 그대로 와야만 실행한다 (contracts.md 2.7)
     summary        text,

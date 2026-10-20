@@ -171,6 +171,25 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
   }
   return { approvals, options };
 }
+/** 작업 상태 → 작업 이력 화면의 상태 글자 (History.vue의 필터와 같은 글자) */
+const TASK_STATUS: Record<string, string> = {
+  QUEUED: "진행 중",
+  RUNNING: "진행 중",
+  WAITING_APPROVAL: "승인 대기",
+  DONE: "완료",
+  FAILED: "실패",
+};
+/** AI 작업 목록(GET /api/ai/tasks) → 작업 이력. 생산관리는 backend가 자기 작업만 준다 */
+export function toHistory(tasks: Row[]): Workspace["history"] {
+  return tasks.map((t) => ({
+    id: String(t.taskId),
+    at: String(t.createdAt),
+    title: String(t.question ?? ""),
+    target: t.trigger === "SYSTEM" ? "자동 분석" : `AI 질문 · ${userNames[String(t.userId)] ?? t.userId}`,
+    status: TASK_STATUS[String(t.status)] ?? String(t.status),
+    detail: String(t.answer ?? ""),
+  }));
+}
 const api: Gateway = {
   async load(s) {
     const [rp, ri, rpo] = await Promise.all([
@@ -180,8 +199,10 @@ const api: Gateway = {
     ]);
     const { plans, items, purchases } = toWorkspace(rp, ri, rpo);
     // 승인 대기함은 팀장만 볼 수 있다 (contracts 3.1). 다른 역할은 빈 목록
-    const cards =
-      s.role === "APPROVER" ? await request<Row[]>("/approvals", s.token) : [];
+    const [cards, tasks] = await Promise.all([
+      s.role === "APPROVER" ? request<Row[]>("/approvals", s.token) : Promise.resolve([] as Row[]),
+      request<Row[]>("/ai/tasks", s.token),
+    ]);
     const { approvals, options } = toApprovals(
       cards,
       new Map(ri.items.map((i) => [String(i.item_id), String(i.name)])),
@@ -192,7 +213,7 @@ const api: Gateway = {
       purchases,
       options,
       approvals,
-      history: [],
+      history: toHistory(tasks),
       metrics: [],
     };
   },

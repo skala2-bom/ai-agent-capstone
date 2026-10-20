@@ -29,6 +29,7 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 19 | **작업·이벤트가 DB에 남는다** (재시작해도 승인 대기 작업이 이어짐). `GET /api/ai/tasks/{id}`, `GET /api/ai/tasks?mine=true` 생김 | 3.1 | 작업 이력 화면을 실제 목록으로 (반영됨) | 없음 |
 | 18 | 재고 응답에 `supplier_id`·`supplier_name`·`lead_time_days`·`used_in`(들어가는 완제품 이름), 발주 응답에 `supplier_name` — **칸 추가만** | 2.1 | 자재 화면의 협력사·리드타임·공용 제품 표시에 쓴다 (반영됨) | 없음 |
 
 > ✅ **10/20 밤 통합 확인** — AI 팀원의 `integration-draft`(agent + 프론트 API 연결) 위에 B 변경을 얹어 **질문 → 영향 분석 → 대안 비교 → 검증 → 승인 요청 → 팀장 승인 → agent 재개 → 분할 실행 → 답변**이 실제로 끝까지 도는 것을 확인했다 (가짜 모델 기준).
@@ -391,16 +392,26 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 |---|---|---|---|
 | POST | `/api/auth/login` | ✅ `{token, user_id, name, role, expires_at}` | 모두 |
 | POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
-| GET | `/api/ai/tasks/{id}` | `{status, answer, result, sources}` | 요청자 |
+| GET | `/api/ai/tasks/{id}` | ✅ 작업 한 건 (아래) | 요청자, 구매·팀장 (생산관리는 자기 것만) |
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
 | POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
-| GET | `/api/ai/tasks?mine=true` | 목록 | 로그인 |
+| GET | `/api/ai/tasks?mine=true` | ✅ 작업 목록, 최근 50개. 생산관리는 항상 자기 것만, 구매·팀장은 `mine`을 빼면 전체 | 로그인 |
 | GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3) | APPROVER |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` (응답 모양은 2.1 `/internal`과 같다) · ⬜ `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
 | PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
 | PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양). 사유 필수 | BUYER·APPROVER |
 
-✅ = 구현됨 (10/20). 나머지(`GET /api/ai/tasks/{id}`, 작업 목록, BOM 조회)는 8·9단계. 화면 변경 2개의 요청 모양은 프론트 브랜치가 먼저 정한 것을 따랐다.
+✅ = 구현됨 (10/20). 남은 것은 BOM 조회(9단계, `explode_bom`과 같이).
+
+**작업 한 건** (`GET /api/ai/tasks/{id}`, 목록의 한 줄) — 작업 API는 처음부터 camelCase(`taskId`)라 그대로 맞췄다:
+
+```jsonc
+{ "taskId": "…", "userId": "buyer", "role": "BUYER", "question": "…", "trigger": "USER",   // SYSTEM = 자동 분석
+  "status": "DONE",        // QUEUED → RUNNING → WAITING_APPROVAL → RUNNING → DONE | FAILED
+  "answer": "…", "result": { … }, "sources": [ … ],   // DONE 이벤트 내용. result의 금액은 보는 사람 역할대로 가린다
+  "createdAt": "…", "finishedAt": "…" }
+```
+ 화면 변경 2개의 요청 모양은 프론트 브랜치가 먼저 정한 것을 따랐다.
 
 **로그인과 토큰** (10/20 저녁 구현)
 - 요청 `POST /api/auth/login {"user_id": "buyer", "password": "1234"}` → `{"token": "eyJ…", "user_id": "buyer", "name": "박구매", "role": "BUYER", "expires_at": "…"}`

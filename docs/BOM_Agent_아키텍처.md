@@ -758,3 +758,4 @@ flowchart LR
 | 새 발주 도구 | 열지 않는다 (B 제안, 이견 시 뒤집기) | [decisions.md 6.16](decisions.md) |
 | 인증·마스킹 | JWT(HS256, 8시간), SSE만 `?access_token=`, `X-Role` 없으면 전부 가림 | [decisions.md 6.17](decisions.md) |
 | 승인·변경 | 승인과 도구·인자가 같을 때만 실행, 변경·이력·승인 상태 한 트랜잭션, 화면 변경은 승인 없이 이력만 | [decisions.md 6.18](decisions.md) |
+| 작업 저장 | `ai_task`·`task_event`, 재시작해도 승인 대기 작업이 이어짐 | [decisions.md 6.20](decisions.md) |

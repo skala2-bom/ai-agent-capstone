@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toApprovals, toWorkspace } from "../src/services/api";
+import { toApprovals, toHistory, toWorkspace } from "../src/services/api";
 
 // backend 실제 응답 모양 (contracts.md 2.1·3.3) → 화면 타입. 응답 칸 이름이 바뀌면 여기서 깨진다
 describe("API 모드 응답 변환", () => {
@@ -31,5 +31,14 @@ describe("API 모드 응답 변환", () => {
     const { approvals, options } = toApprovals([card], new Map([["MCU", "MCU"]]));
     expect(approvals[0]).toMatchObject({ id: "APR-1", taskId: "T-1", optionId: "APR-1", requester: "박구매", status: "PENDING", beforeQty: 500, beforeDate: "2026-12-12" });
     expect(options[0]).toMatchObject({ id: "APR-1", action: "split", po: "PO-2609-001", qty: 100, date: "2026-11-25", item: "MCU", addedCost: 390000 });
+  });
+
+  it("AI 작업 목록을 작업 이력으로 바꾼다", () => {
+    const h = toHistory([
+      { taskId: "T-1", userId: "buyer", question: "MCU 해결 방법", trigger: "USER", status: "WAITING_APPROVAL", answer: null, createdAt: "2026-11-02 10:00" },
+      { taskId: "T-2", userId: "buyer", question: "릴레이 지연 영향", trigger: "SYSTEM", status: "DONE", answer: "릴레이 1,000개 부족", createdAt: "2026-11-02 11:00" },
+    ]);
+    expect(h[0]).toEqual({ id: "T-1", at: "2026-11-02 10:00", title: "MCU 해결 방법", target: "AI 질문 · 박구매", status: "승인 대기", detail: "" });
+    expect(h[1]).toMatchObject({ target: "자동 분석", status: "완료", detail: "릴레이 1,000개 부족" });
   });
 });

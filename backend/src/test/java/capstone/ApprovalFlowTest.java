@@ -48,6 +48,8 @@ class ApprovalFlowTest {
         impact = new ImpactAnalysis(db);
         internal = new InternalApi(db, impact, new OptionAnalysis(db, impact), approvals, tx);
         screen = new ScreenApi(internal, db, approvals, tx);
+        // 승인 카드는 작업(ai_task)을 참조한다. agent 없이 카드를 만들려고 작업 행만 넣어 둔다
+        db.update("insert into ai_task (task_id, thread_id, user_id, role, question) values ('T-1', 'T-1', 'buyer', 'BUYER', 'q'), ('T-2', 'T-2', 'planner', 'PLANNER', 'q')");
     }
 
     static final Map<String, Object> SPLIT = m("po_id", "PO-2609-001", "split_qty", 100, "new_due_date", "2026-11-25");
