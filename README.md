@@ -1,5 +1,7 @@
 # AI Agent Capstone
 
+> 📌 **이 뼈대를 무엇을 기반으로, 왜 이렇게 만들었는지**는 [docs/walking-skeleton.md](docs/walking-skeleton.md)에 정리돼 있다. 작업 시작 전에 먼저 읽기.
+
 ```
 ai-agent-capstone/
 ├─ docker-compose.yml          서비스 5개 정의 (공개 포트: frontend 3000, backend 8080)
@@ -7,6 +9,7 @@ ai-agent-capstone/
 ├─ .gitignore
 ├─ README.md
 ├─ docs/
+│  ├─ walking-skeleton.md      이 뼈대의 근거·의도·기준과 다른 점
 │  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
 │  └─ AI_Agent_Capstone_MCP_정리.md   교재 정리 노트
 ├─ frontend/                   Vue 3 (CDN) + nginx
