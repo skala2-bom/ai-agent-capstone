@@ -1,9 +1,61 @@
 # AI Agent Capstone
 
-SKALA 2기 AI Agent Capstone 팀 저장소.
+SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](docs/BOM_Agent_아키텍처.md))
 
-## 주제
-(미정)
+> ⚠️ **여기 구조는 임시이며 토의로 바뀔 수 있음.**
+> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 인증, DB, 실제 계산, 승인 흐름은 없다.
 
-## 실행 방법
-(작성 예정)
+## 요청 흐름
+
+```
+브라우저 (localhost:3000)
+  │ ① POST /api/ai/tasks → 202 {taskId}
+  │ ⑦ GET  /api/ai/tasks/{id}/stream (SSE)
+  ▼
+frontend (nginx, /api/** 를 backend로 넘김)
+  ▼
+backend :8080 ── ② POST /agent/tasks ──▶ agent :8000 (FastAPI + LangGraph)
+  ▲  ▲                                     │ ④ MCP Streamable HTTP /mcp
+  │  │                                     ├─▶ business-mcp :9101  tool analyze_impact
+  │  └── ⑤ POST /internal/analysis/impact ─┘     (고정 JSON 응답)
+  │                                        └─▶ rag-mcp :9102  resource doc://{doc_id}/{clause_no}
+  └── ⑦ POST /internal/tasks/{id}/events (TOOL_START, TOOL_END, DONE) → SSE로 중계
+```
+
+1. 화면이 질문을 보내면 backend가 작업을 만들고 바로 `202 {taskId}`를 돌려준다.
+2. backend가 agent에 작업 실행을 요청한다.
+3. agent 그래프(`agent ↔ tools` 반복)가 `analyze_impact` 도구를 부르고, 결과의 `evidence_uri`로 rag-mcp Resource를 한 번 읽는다.
+4. 도구 실행 전후와 끝날 때 agent가 backend로 이벤트를 보내고, backend가 SSE로 화면에 넘긴다. 구독 전에 쌓인 이벤트는 구독할 때 다시 보낸다.
+
+`OPENAI_API_KEY`가 없으면 agent는 **가짜 모델**로 동작한다: `analyze_impact` → `read_doc` → 답변 순서로 고정.
+
+## 실행
+
+```bash
+cp .env.example .env   # OPENAI_API_KEY는 비워 두면 가짜 모델
+```
+
+```bash
+docker compose up --build
+```
+
+http://localhost:3000 에서 "질문"을 누르면 `TOOL_START → TOOL_END → TOOL_START → TOOL_END → DONE`이 차례로 보인다.
+
+공개 포트는 frontend(3000)와 backend(8080)뿐이다. agent·MCP 서버는 compose 내부망에서 서비스 이름으로만 부른다.
+
+## 폴더와 담당
+
+| 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
+|---|---|---|---|
+| `frontend/` | CDN Vue 한 장 + nginx | 프론트 담당 | Vite 전환, 진행 상태·결과·승인 카드·근거 패널, 로그인 |
+| `backend/` | 컨트롤러 하나 (작업 접수, SSE 중계, 고정 영향 분석) | 백엔드 담당 | 인증·권한, DB(ai_task·task_event 등), 계산 서비스, 승인, `/internal/**` 서비스 토큰 |
+| `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
+| `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
+| `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
+| `docs/` | 아키텍처, 교재 정리 | 모두 | |
+
+## 일부러 뺀 것
+
+- 인증, DB, 실제 계산, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck
+- `/internal/**`가 지금은 backend 공개 포트로도 열려 있다. 서비스 토큰 검사는 백엔드 담당이 추가한다.
+- 작업과 이벤트는 backend 메모리에만 있어서 재시작하면 사라진다.

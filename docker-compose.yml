@@ -1,0 +1,30 @@
+# 공개 포트는 frontend · backend만. 나머지는 compose 내부망에서 서비스 이름으로 부른다.
+services:
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on: [backend]
+
+  backend:
+    build: ./backend
+    ports: ["8080:8080"]
+    environment:
+      AGENT_URL: http://agent:8000
+
+  agent:
+    build: ./agent
+    environment:
+      BACKEND_URL: http://backend:8080
+      BUSINESS_MCP_URL: http://business-mcp:9101/mcp
+      RAG_MCP_URL: http://rag-mcp:9102/mcp
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    depends_on: [business-mcp, rag-mcp]
+
+  business-mcp:
+    build: ./business-mcp
+    environment:
+      BACKEND_URL: http://backend:8080
+
+  rag-mcp:
+    build: ./rag-mcp

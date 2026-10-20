@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>BOM Agent</title>
+  <!-- ponytail: Vite 없이 CDN Vue. 화면이 커지면 프론트 담당이 Vite 프로젝트로 전환 -->
+  <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+</head>
+<body>
+<div id="app">
+  <h1>BOM Agent</h1>
+  <form @submit.prevent="ask">
+    <input v-model="question" size="50">
+    <button :disabled="running">질문</button>
+  </form>
+  <p v-if="taskId">taskId: {{ taskId }}</p>
+  <ul>
+    <li v-for="e in events" :key="e.seq">
+      <b>{{ e.type }}</b> {{ e.tool || '' }}
+      <span v-if="e.type === 'TOOL_END'">({{ e.ok ? 'ok' : '실패' }}, {{ e.ms }}ms)</span>
+      <pre v-if="e.answer">{{ e.answer }}</pre>
+      <pre v-if="e.sources">근거: {{ e.sources }}</pre>
+      <pre v-if="e.message">{{ e.message }}</pre>
+    </li>
+  </ul>
+</div>
+<script>
+Vue.createApp({
+  data: () => ({ question: '허브를 11/25로 당기면?', taskId: null, events: [], running: false }),
+  methods: {
+    async ask() {
+      this.events = []
+      this.running = true
+      const res = await fetch('/api/ai/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: this.question }),
+      })
+      this.taskId = (await res.json()).taskId
+      const es = new EventSource(`/api/ai/tasks/${this.taskId}/stream`)
+      es.onmessage = (m) => {
+        const e = JSON.parse(m.data)
+        this.events.push(e)
+        if (e.type === 'DONE' || e.type === 'FAILED') { es.close(); this.running = false }
+      }
+    },
+  },
+}).mount('#app')
+</script>
+</body>
+</html>
