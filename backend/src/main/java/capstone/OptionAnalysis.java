@@ -138,12 +138,20 @@ class OptionAnalysis {
         return m("option_id", null, "type", type, "item_id", item, "summary", summary,
                 "tool", tool, "args", args,
                 "added_cost", cost,
+                "cost_level", costLevel(cost),   // 생산관리 담당자는 금액 대신 이것만 본다 (기획안 2.4)
                 "risk", risk(((Number) metric.get("on_time_rate")).doubleValue(), days),
                 "feasible", true,          // LT-001을 통과한 것만 남기므로 항상 true
                 "resolves", resolves,      // 이 대안만으로 대상 부품의 발주로 못 푸는 결품이 모두 풀리나
                 "side_effects", sideEffects,
                 "recommended", false,      // 아래 compare에서 부품마다 하나만 true로 바꾼다
                 "evidence", List.of());    // backend는 근거 문서를 모른다. agent가 search_docs 결과로 채운다
+    }
+
+    /** 30만 원 미만 LOW · 100만 원 미만 MID · 그 이상 HIGH. 기준은 decisions.md 6.15 */
+    static final long COST_LOW_UNDER = 300_000, COST_MID_UNDER = 1_000_000;
+
+    static String costLevel(long cost) {
+        return cost < COST_LOW_UNDER ? "LOW" : cost < COST_MID_UNDER ? "MID" : "HIGH";
     }
 
     /**

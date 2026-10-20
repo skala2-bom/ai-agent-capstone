@@ -25,7 +25,15 @@
 <body>
 <div id="app">
   <h1>BOM Agent</h1>
-  <form @submit.prevent="ask">
+  <!-- 로그인: backend 6단계(JWT)가 붙으면서 /api/**가 로그인 필수가 돼, 흐름이 끊기지 않게
+       Backend 파트가 최소한으로 넣었다. 실제 로그인 화면은 프론트 담당이 만든다 (contracts.md 3.1).
+       시연 계정 3개를 버튼으로 둔다. 비밀번호는 seed의 시연값 1234 -->
+  <p>
+    <button v-for="u in ['planner', 'buyer', 'approver']" :key="u" @click="login(u)"
+            :style="{ fontWeight: user && user.user_id === u ? 'bold' : 'normal' }">{{ u }}</button>
+    <span v-if="user">{{ user.name }} ({{ user.role }})로 로그인</span>
+  </p>
+  <form v-if="user" @submit.prevent="ask">
     <input v-model="question" size="50">
     <button :disabled="running">질문</button>
   </form>
@@ -46,8 +54,17 @@
 </div>
 <script>
 Vue.createApp({
-  data: () => ({ question: '허브를 11/25로 당기면?', taskId: null, events: [], running: false }),
+  data: () => ({ question: '허브를 11/25로 당기면?', taskId: null, events: [], running: false, user: null }),
   methods: {
+    async login(userId) {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, password: '1234' }),
+      })
+      // 응답: { token, user_id, name, role, expires_at }. role은 버튼 표시에만 쓴다. 권한 판단은 backend가 한다
+      this.user = await res.json()
+    },
     async ask() {
       this.events = []
       this.running = true
@@ -55,7 +72,7 @@ Vue.createApp({
       // ① 질문을 작업으로 접수한다. 답변을 기다리지 않고 taskId만 바로 받는다.
       const res = await fetch('/api/ai/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.user.token}` },
         body: JSON.stringify({ question: this.question }),
       })
       this.taskId = (await res.json()).taskId
@@ -63,7 +80,8 @@ Vue.createApp({
       // ⑦ 받은 taskId로 진행 이벤트를 구독한다.
       //    구독하기까지 몇 ms 사이에 이미 나온 이벤트는 backend가 처음부터
       //    다시 보내 주므로 놓치지 않는다 (BackendApplication.stream 참고).
-      const es = new EventSource(`/api/ai/tasks/${this.taskId}/stream`)
+      //    EventSource는 헤더를 못 붙여서 토큰을 주소에 싣는다. backend가 이 경로에서만 받아 준다
+      const es = new EventSource(`/api/ai/tasks/${this.taskId}/stream?access_token=${this.user.token}`)
       es.onmessage = (m) => {
         const e = JSON.parse(m.data)
         this.events.push(e)

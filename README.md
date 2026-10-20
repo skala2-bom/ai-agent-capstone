@@ -41,7 +41,7 @@ ai-agent-capstone/
 SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](docs/BOM_Agent_아키텍처.md))
 
 > ⚠️ **여기 구조는 임시이며 토의로 바뀔 수 있음.**
-> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 인증, 승인 흐름은 없다. postgres에 시연 데이터(seed)가 들어가고, backend `/internal`이 그걸 읽어 영향 분석(결품·경고·과잉)과 해결 대안 비교를 실제로 계산한다.
+> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 승인 흐름은 아직 없다. 로그인(JWT)과 역할별 금액 가리기는 있다. postgres에 시연 데이터(seed)가 들어가고, backend `/internal`이 그걸 읽어 영향 분석(결품·경고·과잉)과 해결 대안 비교를 실제로 계산한다.
 
 ## 요청 흐름
 
@@ -77,7 +77,7 @@ cp .env.example .env   # OPENAI_API_KEY는 비워 두면 가짜 모델
 docker compose up --build
 ```
 
-http://localhost:3000 에서 "질문"을 누르면 `TOOL_START → TOOL_END → TOOL_START → TOOL_END → DONE`이 차례로 보인다.
+http://localhost:3000 에서 계정 버튼(`planner` 등)을 눌러 로그인한 뒤 "질문"을 누르면 `TOOL_START → TOOL_END → TOOL_START → TOOL_END → DONE`이 차례로 보인다.
 
 `db/*.sql`을 고쳤으면 DB를 지우고 다시 띄워야 반영된다 (seed는 빈 DB에서만 들어간다).
 
@@ -98,7 +98,7 @@ cd backend && mvn test
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
 | `frontend/` | CDN Vue 한 장 + nginx | 프론트 담당 | Vite 전환, 진행 상태·결과·승인 카드·근거 패널, 로그인 |
-| `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`) + 골든셋 테스트 | 백엔드 담당 | 인증·권한, DB(ai_task·task_event 등), 계산 서비스, 승인, `/internal/**` 서비스 토큰 |
+| `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | 승인 API·변경 저장, 작업 DB(ai_task·task_event), 2차 도구 5개, 자동 분석, `/internal/**` 서비스 토큰 |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
@@ -108,6 +108,6 @@ cd backend && mvn test
 
 ## 일부러 뺀 것
 
-- 인증, 작업·승인 테이블, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck(postgres만 있음)
+- 작업·승인 테이블, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck(postgres만 있음)
 - `/internal/**`가 지금은 backend 공개 포트로도 열려 있다. 서비스 토큰 검사는 백엔드 담당이 추가한다.
 - 작업과 이벤트는 backend 메모리에만 있어서 재시작하면 사라진다.

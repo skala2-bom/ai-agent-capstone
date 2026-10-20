@@ -4,7 +4,24 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-20 (오후 — `/internal` 1차 응답 모양·DB 접속 정보·seed·골든셋, `orderable` 칸 추가)
+> **갱신**: 2026-10-20 저녁 — 아래 "최근 변경" 표 참고
+
+## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~저녁, B 파트)
+
+> 맨 위에 두는 이유: 계약이 바뀐 줄이 문서 곳곳에 흩어져 있어서, 무엇이 바뀌었고 **누가 무엇을 해야 하는지**를 한 번에 보게 하려는 것이다. 다음 변경이 생기면 이 표를 새로 쓴다.
+
+| # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
+|:-:|---|---|---|---|
+| 1 | **평가셋 정답은 `eval/golden.json`** (기획안 PDF 아님) | 2.8 | 시연 질문 예시에 `question` 사용 가능 | 🔴 **Harness 평가가 이 파일을 읽게** |
+| 2 | `analyze_impact` whatif 연산 6개 | 2.2 | – | 🔴 **business-mcp 도구 설명에 6개 모두 적기**, `classify_intent` 출력 형식 |
+| 3 | `compare_options` 요청에 `whatif` 추가, 응답에 `item_id`·`resolves`·`recommended`·`cost_level` | 2.3 | – | verify가 `{"op": tool, **args}`로 다시 계산 |
+| 4 | **`X-Role`이 없으면 금액이 전부 가려진다** (생산관리 기준) | 1.1 | – | 🔴 **agent → business-mcp → backend로 `X-Role`·`X-User-Id` 헤더 전달**. backend가 `/agent/tasks`에 `userId`·`role`을 넣어 준다 |
+| 5 | 로그인 생김. `/api/**`는 JWT 필수, SSE는 `?access_token=` | 3.1 | 🔴 **로그인 화면, 모든 요청에 `Authorization` 헤더** (지금 화면에 임시 버튼을 넣어 뒀다) | – |
+| 6 | 생산관리 담당자에게 추가 비용은 금액 대신 등급(`cost_level`) | 1.2 | 생산관리 화면에서 `cost_level` 표시 | – |
+| 7 | 오류 코드 `INVALID_ARGUMENT` 추가 | 2.5 | – | 없음 (그대로 전달) |
+| 8 | `analyze_impact` 응답에서 `evidence_uri` 제거, `compare_options`의 `evidence`는 빈 목록 | 2.2·2.3 | – | 근거는 `search_docs`로 |
+| 9 | 새 발주(추가 발주·대체 협력사 구매)는 **도구로 열지 않는다** (B 제안, 이견 있으면 뒤집기) | decisions 6.16 | – | – |
+
 
 ## 파트 구분
 
@@ -53,16 +70,28 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - **역할을 도구 인자에 넣지 않는다.** 도구 인자는 모델이 채우는 값이라 조작될 수 있다.
 - business-mcp는 받은 헤더를 **해석하지 않고 그대로** 전달한다.
 - 나중에 붙이면 agent와 business-mcp를 동시에 고쳐야 하므로 **처음부터 넣는다.**
+- ✅ **backend 쪽 구현 완료 (10/20 저녁)**: `/agent/tasks` 요청에 `userId`·`role`을 넣어 보낸다 (JWT에서 꺼낸 값). `/internal/**`는 `X-Role`을 읽어 금액을 가린다.
+- **`X-Role`이 없거나 모르는 값이면 `PLANNER` 기준으로 가린다** (금액 전부 `null`). 헤더를 빠뜨렸을 때 금액이 새는 것보다 안 보이는 쪽이 안전하다. 대소문자는 구분하지 않는다. → **C가 헤더를 안 넘기면 BUYER가 물어도 AI 답변에 금액이 안 나온다.**
 
 ### 1.2 역할별 금액 공개 범위 (규칙 SEC-001)
 
 | 역할 | 볼 수 있는 것 |
 |---|---|
-| `PLANNER` 생산관리 | 금액 비공개 |
+| `PLANNER` 생산관리 | 금액 비공개. **추가 비용은 등급(`cost_level`)만** (기획안 2.4) |
 | `BUYER` 구매 | 총액까지 |
 | `APPROVER` 구매팀장 | 계약 단가까지 |
 
-- 1차 차단은 **backend masking**이 `/internal/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다.
+✅ **구현 완료 (10/20 저녁, `Masking.java`)** — 응답 JSON의 **칸 이름**으로 가린다. 어느 API든 같은 이름이면 같이 가려진다.
+
+| 칸 | PLANNER | BUYER | APPROVER |
+|---|:-:|:-:|:-:|
+| `unit_price` (단가·계약 단가) | `null` | `null` | 보임 |
+| `amount` · `added_cost` (총액·추가 비용) | `null` | 보임 | 보임 |
+| `cost_level` (`LOW`·`MID`·`HIGH` = 30만 원 미만·100만 원 미만·그 이상) | 보임 | 보임 | 보임 |
+
+- **키는 남기고 값만 `null`**이다. 역할마다 응답 모양이 달라지지 않는다.
+- 1차 차단은 **backend masking**이 `/internal/**`와 `/api/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다. 역할은 `/api`는 JWT, `/internal`은 `X-Role`에서 읽는다.
+- SSE `APPROVAL_REQUIRED`의 `amount`는 승인 API(7단계)를 만들 때 같은 규칙을 적용한다.
 - 2차는 agent Harness가 도구 결과에 단가 필드가 남아 있으면 모델에 넘기기 전에 지운다.
 
 ### 1.3 DB 스키마와 계정
@@ -235,6 +264,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
     "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
     "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
     "added_cost": 390000,              // 원. 당김 100개 × 17일 × 200원 + 분할 수수료 50,000 (마스킹 대상)
+    "cost_level": "MID",               // 30만 미만 LOW · 100만 미만 MID · 그 이상 HIGH. 생산관리 담당자는 이것만 본다
     "risk": "MID",                     // LOW | MID | HIGH. 납기 준수율 + 당기는 일수
     "feasible": true,                  // LT-001 통과. 통과 못 한 대안은 아예 안 나오므로 항상 true
     "resolves": true,                  // 이 대안 하나로 그 부품의 결품(orderable=false)이 다 풀리나 — backend가 다시 계산해서 채움
@@ -342,16 +372,27 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 
 | Method | Path | 응답 | 권한 |
 |---|---|---|---|
-| POST | `/api/auth/login` | JWT `{sub, role, exp}` | 모두 |
-| POST | `/api/ai/tasks` | `202 {taskId}` | 로그인 |
+| POST | `/api/auth/login` | ✅ `{token, user_id, name, role, expires_at}` | 모두 |
+| POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
 | GET | `/api/ai/tasks/{id}` | `{status, answer, result, sources}` | 요청자 |
-| GET | `/api/ai/tasks/{id}/stream` | `text/event-stream` | 요청자 |
+| GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
 | POST | `/api/ai/tasks/{id}/approval` | `202` | APPROVER |
 | GET | `/api/ai/tasks?mine=true` | 목록 | 로그인 |
 | GET | `/api/approvals?status=PENDING` | 승인 대기함 | APPROVER |
-| GET | `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
+| GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` (응답 모양은 2.1 `/internal`과 같다) · ⬜ `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
 | PUT | `/api/plans/{id}` | 생산 일정 변경 | PLANNER |
 | PUT | `/api/purchase-orders/{id}/due-date` | 협력사 지연 입력 | BUYER |
+
+✅ = 구현됨 (10/20 저녁). 나머지는 7·8단계.
+
+**로그인과 토큰** (10/20 저녁 구현)
+- 요청 `POST /api/auth/login {"user_id": "buyer", "password": "1234"}` → `{"token": "eyJ…", "user_id": "buyer", "name": "박구매", "role": "BUYER", "expires_at": "…"}`
+- 실패는 `401 {"error": "INVALID_CREDENTIALS", …}`. 아이디가 틀렸는지 비밀번호가 틀렸는지 알려 주지 않는다.
+- 이후 모든 `/api/**` 요청에 `Authorization: Bearer {token}`. 없거나 만료면 `401`.
+- **SSE만 예외**: `GET /api/ai/tasks/{id}/stream?access_token={token}`. 브라우저 `EventSource`는 헤더를 못 붙인다. 다른 경로에서는 주소의 토큰을 받지 않는다.
+- 토큰 유효 8시간. 갱신 토큰은 없다 — 만료되면 다시 로그인.
+- 응답의 `role`·`name`은 화면 표시에만 쓴다. 권한 판단은 backend가 한다 (교재 5장).
+- 시연 계정: `planner`(김계획) · `buyer`(박구매) · `approver`(정팀장), 비밀번호 `1234`.
 
 ### 3.2 SSE 이벤트 6종
 

@@ -4,10 +4,8 @@ import java.time.LocalDate;
 import java.util.*;
 
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * business-mcp 도구 1차 8개가 부르는 {@code /internal/**} (contracts.md 2.1).
@@ -238,22 +236,6 @@ class InternalApi {
             throw new ApiError("LEADTIME_INFEASIBLE", "리드타임상 그 날짜에 받을 수 없습니다.",
                     "가장 빠른 가능일은 " + earliest + "입니다. 그 이후 날짜로 다시 요청하세요.");
         return newDue;
-    }
-
-    // ------------------------------------------------------------------
-    // 오류 응답 (contracts.md 2.5)
-    // ------------------------------------------------------------------
-
-    @ExceptionHandler(ApiError.class)
-    ResponseEntity<Map<String, Object>> onApiError(ApiError e) {
-        return ResponseEntity.status(e.status).body(m("error", e.code, "message", e.getMessage(), "retry_hint", e.retryHint));
-    }
-
-    /** ?from=bad 처럼 쿼리 값 형식이 틀린 경우. Spring 기본 400 대신 같은 오류 형식으로 낸다. */
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    ResponseEntity<Map<String, Object>> onBadParam(MethodArgumentTypeMismatchException e) {
-        return onApiError(ApiError.invalid(e.getName() + " 값을 읽지 못했습니다: " + e.getValue(),
-                "날짜는 YYYY-MM-DD 형식으로 주세요. 예: 2026-11-25"));
     }
 
     // ------------------------------------------------------------------

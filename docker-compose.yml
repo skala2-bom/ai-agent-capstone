@@ -24,6 +24,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bom
       SPRING_DATASOURCE_USERNAME: app        # public 스키마만 쓸 수 있는 계정 (db/init.sql)
       SPRING_DATASOURCE_PASSWORD: app
+      # JWT 서명 키. 기본값은 내부망 시연용이다. 밖에 띄우면 .env에서 32바이트 이상 새 값으로 바꾼다
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-at-least-32-bytes}
     depends_on:
       postgres: { condition: service_healthy }   # DB가 받을 준비가 된 뒤에 뜬다
 

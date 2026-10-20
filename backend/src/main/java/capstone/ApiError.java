@@ -1,6 +1,14 @@
 package capstone;
 
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+
+import static capstone.InternalApi.m;
 
 /**
  * 업무 오류. {@code /internal/**}에서 4xx + {@code {error, message, retry_hint}}로 나간다 (contracts.md 2.5).
@@ -29,5 +37,22 @@ class ApiError extends RuntimeException {
     /** 인자가 없거나 형식이 틀렸다. 계약 2.5의 9개 코드 어디에도 안 맞아서 더한 코드다 (decisions.md 6.12). */
     static ApiError invalid(String message, String retryHint) {
         return new ApiError("INVALID_ARGUMENT", message, retryHint);
+    }
+}
+
+/** {@link ApiError}를 응답으로 바꾼다. /internal과 /api가 같은 오류 형식을 쓴다. */
+@RestControllerAdvice
+class ApiErrors {
+
+    @ExceptionHandler(ApiError.class)
+    ResponseEntity<Map<String, Object>> onApiError(ApiError e) {
+        return ResponseEntity.status(e.status).body(m("error", e.code, "message", e.getMessage(), "retry_hint", e.retryHint));
+    }
+
+    /** ?from=bad 처럼 쿼리 값 형식이 틀린 경우. Spring 기본 400 대신 같은 오류 형식으로 낸다. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<Map<String, Object>> onBadParam(MethodArgumentTypeMismatchException e) {
+        return onApiError(ApiError.invalid(e.getName() + " 값을 읽지 못했습니다: " + e.getValue(),
+                "날짜는 YYYY-MM-DD 형식으로 주세요. 예: 2026-11-25"));
     }
 }
