@@ -73,6 +73,8 @@ class InternalApi {
     @GetMapping("/inventory")
     Map<String, Object> getInventory(@RequestParam(required = false) String type,
                                      @RequestParam(name = "item_id", required = false) String itemId) {
+        type = blankToNull(type);
+        itemId = blankToNull(itemId);
         if (itemId != null) getItem(itemId);  // 없는 ID면 빈 목록 대신 NOT_FOUND로 알려 준다
         List<Map<String, Object>> rows = db.queryForList("""
                 select v.item_id, i.name, i.type, v.on_hand, i.safety_stock,
@@ -109,6 +111,8 @@ class InternalApi {
                                      @RequestParam(name = "item_id", required = false) String itemId,
                                      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        itemId = blankToNull(itemId);
+        if (blankToNull(status) == null) status = "OPEN";
         if (itemId != null) getItem(itemId);
         return m("purchase_orders", db.queryForList("""
                 select po_id, item_id, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,
@@ -296,6 +300,15 @@ class InternalApi {
         if (ids.isEmpty()) ids = db.queryForList(list + " order by 1 limit 20", String.class);
         throw new ApiError("NOT_FOUND", what + " " + id + "을(를) 찾을 수 없습니다.",
                 "비슷한 ID: " + String.join(", ", ids));
+    }
+
+    /**
+     * 빈 쿼리 값({@code ?item_id=})은 "조건 없음"으로 본다. business-mcp(httpx)는 None 인자를 빈 값으로 보내는데,
+     * 이걸 값으로 받으면 type="" 조건에 걸려 오류 없이 빈 목록이 나간다 — 모델이 "재고 없음"으로 읽는다.
+     * 부르는 쪽마다 고치는 대신 받는 쪽 한 곳에서 막는다.
+     */
+    static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
     }
 
     /** 순서를 지키는 Map. Map.of는 순서가 없고 null 값과 10쌍 초과를 못 받는다. */

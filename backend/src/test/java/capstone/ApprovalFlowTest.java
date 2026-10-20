@@ -121,6 +121,13 @@ class ApprovalFlowTest {
                                  m("target_id", "PP-07", "action", "update_plan", "approval_id", null));
     }
 
+    @Test
+    void 빈_쿼리_값은_조건_없음으로_본다() {
+        // business-mcp(httpx)는 None 인자를 ?item_id= 처럼 빈 값으로 보낸다. 빈 목록이나 NOT_FOUND가 나면 안 된다
+        assertThat((List<?>) internal.getInventory("", "").get("items")).hasSizeGreaterThan(28);
+        assertThat((List<?>) internal.listReceipts("", "", null, null).get("purchase_orders")).isNotEmpty();
+    }
+
     // ------------------------------------------------------------------
 
     /** 변경 도구 호출 body = 승인 카드의 args + approval_id (agent-draft가 이렇게 부른다) */
