@@ -74,7 +74,11 @@
           {"item_id": "RELAY", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-114", "split_qty": 400, "new_due_date": "2026-11-23"}, "added_cost": 110000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
           {"item_id": "POWER-MODULE", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-113", "split_qty": 200, "new_due_date": "2026-11-23"}, "added_cost": 126000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
           {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-114", "new_due_date": "2026-11-23"}, "added_cost": 160000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": false},
-          {"item_id": "POWER-MODULE", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-113", "new_due_date": "2026-11-23"}, "added_cost": 384000, "cost_level": "MID", "risk": "HIGH", "resolves": true, "recommended": false}
+          {"item_id": "POWER-MODULE", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-113", "new_due_date": "2026-11-23"}, "added_cost": 384000, "cost_level": "MID", "risk": "HIGH", "resolves": true, "recommended": false},
+          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-115", "new_qty": 500}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true},
+          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-104", "new_qty": 700}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false},
+          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-115", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false},
+          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-104", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false}
         ],
         "recommended_option_id": "OPT-1"
       }
@@ -99,8 +103,12 @@
           {"item_id": "CASE-DOOR-V1", "date": "2026-11-15", "qty": 800, "amount": 640000},
           {"item_id": "COIN-CELL", "date": "2026-11-15", "qty": 800, "amount": 200000}
         ],
-        "options": [],
-        "recommended_option_id": null
+        "options": [
+          {"item_id": "CASE-DOOR-V1", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-110"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true},
+          {"item_id": "COIN-CELL", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-103", "new_due_date": "2027-01-04"}, "added_cost": 0, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
+          {"item_id": "COIN-CELL", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-103"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false}
+        ],
+        "recommended_option_id": "OPT-1"
       }
     },
     {

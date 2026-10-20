@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toApprovals, toHistory, toWorkspace } from "../src/services/api";
+import { toApprovals, toHistory, toMetrics, toWorkspace } from "../src/services/api";
 
 // backend 실제 응답 모양 (contracts.md 2.1·3.3) → 화면 타입. 응답 칸 이름이 바뀌면 여기서 깨진다
 describe("API 모드 응답 변환", () => {
@@ -40,5 +40,10 @@ describe("API 모드 응답 변환", () => {
     ]);
     expect(h[0]).toEqual({ id: "T-1", at: "2026-11-02 10:00", title: "MCU 해결 방법", target: "AI 질문 · 박구매", status: "승인 대기", detail: "" });
     expect(h[1]).toMatchObject({ target: "자동 분석", status: "완료", detail: "릴레이 1,000개 부족" });
+  });
+
+  it("협력사 평가지표를 화면 표로 바꾸고 저장용 ID를 남긴다", () => {
+    expect(toMetrics([{ supplier_id: "SUP-POWER", supplier_name: "파워링크전자", item_id: "RELAY", item_name: "릴레이", on_time_rate: 78.0, quality_score: 88, evaluated_by: "buyer", evaluated_at: "2026-10-15" }])[0])
+      .toEqual({ supplierId: "SUP-POWER", itemId: "RELAY", supplier: "파워링크전자", item: "릴레이", onTime: 78, quality: 88, by: "박구매", date: "2026-10-15" });
   });
 });

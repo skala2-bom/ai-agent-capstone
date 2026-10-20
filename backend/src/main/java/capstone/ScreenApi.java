@@ -28,12 +28,14 @@ class ScreenApi {
     private final JdbcTemplate db;
     private final Approvals approvals;
     private final TransactionTemplate tx;
+    private final Tasks tasks;
 
-    ScreenApi(InternalApi internal, JdbcTemplate db, Approvals approvals, TransactionTemplate tx) {
+    ScreenApi(InternalApi internal, JdbcTemplate db, Approvals approvals, TransactionTemplate tx, Tasks tasks) {
         this.internal = internal;
         this.db = db;
         this.approvals = approvals;
         this.tx = tx;
+        this.tasks = tasks;
     }
 
     @GetMapping("/plans")
@@ -54,6 +56,19 @@ class ScreenApi {
                                        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return internal.listReceipts(status, itemId, from, to);
+    }
+
+    /** GET /api/items/{id}/bom — BOM 트리 (contracts.md 3.1). explode_bom과 같은 계산 */
+    @GetMapping("/items/{id}/bom")
+    Map<String, Object> bom(@PathVariable String id,
+                            @RequestParam(name = "on_date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate onDate) {
+        return internal.explodeBom(id, onDate);
+    }
+
+    /** GET /api/suppliers/metrics — 협력사 평가지표 목록 (화면 평가지표 표) */
+    @GetMapping("/suppliers/metrics")
+    Map<String, Object> metrics(@RequestParam(name = "item_id", required = false) String itemId) {
+        return internal.supplierMetrics(itemId);
     }
 
     // ------------------------------------------------------------------
@@ -96,14 +111,18 @@ class ScreenApi {
      *
      * <p>승인이 없는 이유: 협력사가 늦는다는 <b>사실</b>을 적는 것이지 우리가 결정하는 변경이 아니다 (아키텍처 4.6).
      * 그래서 리드타임 검사도 하지 않는다 — 협력사가 정한 날짜다. 사유는 필수 (이력에 남는다).
-     * 9단계: 저장 후 trigger=SYSTEM 영향 분석 작업을 자동으로 만든다 (SC4).
+     *
+     * <p><b>저장한 뒤 영향 분석 작업을 자동으로 만든다</b> (trigger=SYSTEM, 아키텍처 4.6, decisions.md 6.6).
+     * 생산관리팀은 일정을 바꾸지 않았으니 문제를 모른다 — 구매가 놓치면 생산 당일에야 알게 된다 (기획안 SC4).
+     * 응답의 {@code analysis_task_id}로 화면이 바로 결과를 따라갈 수 있다.
      */
     @PutMapping("/purchase-orders/{id}/due-date")
-    Map<String, Object> supplierDelay(@PathVariable String id, @RequestBody Map<String, Object> body, @AuthenticationPrincipal Jwt user) {
+    Map<String, Object> supplierDelay(@PathVariable String id, @RequestBody Map<String, Object> rawBody, @AuthenticationPrincipal Jwt user) {
+        Map<String, Object> body = new LinkedHashMap<>(rawBody);
         Auth.require(user, "BUYER");
         if (!(body.get("reason") instanceof String reason) || reason.isBlank())
             throw ApiError.invalid("사유가 없습니다.", "협력사 통보 내용을 reason에 적어 주세요. 변경 이력에 남습니다.");
-        return tx.execute(t -> {
+        Map<String, Object> po = tx.execute(t -> {
             List<Map<String, Object>> rows = db.queryForList(
                     "select po_id, item_id, qty, due_date::text as due_date, status from purchase_order where po_id = ? for update", id);
             if (rows.isEmpty())
@@ -116,12 +135,82 @@ class ScreenApi {
             Map<String, Object> after = new LinkedHashMap<>(before);
             after.put("due_date", due.toString());
             approvals.history("PURCHASE_ORDER", id, "supplier_delay", before, after, (String) body.get("reason"), user.getSubject(), null);
+            body.put("_before", before.get("due_date"));
             // 응답은 바뀐 발주 한 건, 목록 조회(/api/purchase-orders)와 같은 모양
             return db.queryForList("""
                     select po_id, item_id, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,
                            order_date::text as order_date, due_date::text as due_date, status, parent_po_id
                     from purchase_order po join supplier s on s.supplier_id = po.supplier_id where po_id = ?""", id).getFirst();
         });
+        // 변경이 커밋된 뒤에 만든다 — agent가 바뀐 DB를 읽어야 한다
+        Map<String, Object> result = new LinkedHashMap<>(po);
+        result.put("analysis_task_id", startDelayAnalysis(user.getSubject(), po, body));
+        return result;
+    }
+
+    /**
+     * 협력사 지연 자동 분석 작업 (trigger=SYSTEM).
+     *
+     * <ul>
+     *   <li>whatif를 backend가 채운다 — 무엇이 바뀌었는지 이미 안다. 모델이 질문에서 추측할 이유가 없다 (contracts.md 2.6).
+     *       변경은 이미 DB에 들어갔으므로 같은 날짜로 다시 적용해도 결과는 같다</li>
+     *   <li>역할은 <b>PLANNER</b>로 돌린다 — 이 결과는 구매와 생산관리가 같이 본다. 금액을 가장 많이 가린 쪽으로 만들어야
+     *       생산관리 담당자에게 금액이 새지 않는다 (SEC-001). 구매는 금액이 필요하면 직접 묻는다</li>
+     *   <li>작업 주인은 지연을 입력한 사람이다 (이력에 누가 시작했는지 남게)</li>
+     * </ul>
+     */
+    private String startDelayAnalysis(String userId, Map<String, Object> po, Map<String, Object> body) {
+        String question = "[자동 분석] 협력사 입고 지연: %s(%s %,d개) 입고일 %s → %s. 사유: %s. 이 변경으로 생기는 결품·과잉을 알려 주세요."
+                .formatted(po.get("po_id"), po.get("item_id"), (int) po.get("qty"), body.get("_before"), po.get("due_date"), body.get("reason"));
+        List<Map<String, Object>> whatif = List.of(
+                InternalApi.m("op", "request_due_date_change", "po_id", po.get("po_id"), "new_due_date", po.get("due_date")));
+        return tasks.start(userId, "PLANNER", question, "SYSTEM", whatif);
+    }
+
+    /**
+     * PUT /api/suppliers/{supplierId}/items/{itemId}/metrics — 협력사 평가지표 입력 (decisions.md 2.4, BUYER·APPROVER).
+     *
+     * <p>구매 담당자가 입고 검수 후 납기 준수율·품질 점수 등을 넣는다. 보낸 칸만 바꾸고, 언제·누가 넣었는지 남긴다.
+     * <b>AI 도구로는 열지 않는다</b> — 평가지표는 대안 비교의 기준값이라, AI가 고칠 수 있으면 자기 추천을 통과시키려고
+     * 기준을 바꾸는 길이 열린다 (채점 기준을 채점자가 고치는 셈). 그래서 이 API는 {@code /api}(사람 로그인)에만 있다.
+     */
+    @PutMapping("/suppliers/{supplierId}/items/{itemId}/metrics")
+    Map<String, Object> updateMetric(@PathVariable String supplierId, @PathVariable String itemId,
+                                     @RequestBody Map<String, Object> body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "BUYER");
+        // 칸 이름 → 허용 범위. 칸 이름은 이 목록에서만 SQL에 들어간다
+        Map<String, double[]> fields = new LinkedHashMap<>();
+        fields.put("on_time_rate", new double[]{0, 100});
+        fields.put("quality_score", new double[]{0, 100});
+        fields.put("unit_price", new double[]{0, 1e9});
+        fields.put("lead_time_days", new double[]{1, 365});
+        fields.put("expedite_cost_per_day", new double[]{0, 1e9});
+        fields.put("split_fee", new double[]{0, 1e9});
+        fields.put("delay_penalty", new double[]{0, 1e9});
+        List<String> sets = new java.util.ArrayList<>();
+        List<Object> values = new java.util.ArrayList<>();
+        for (var f : fields.entrySet()) {
+            Object v = body.get(f.getKey());
+            if (v == null) continue;
+            if (!(v instanceof Number n) || n.doubleValue() < f.getValue()[0] || n.doubleValue() > f.getValue()[1])
+                throw ApiError.invalid(f.getKey() + " 값이 범위를 벗어났습니다: " + v,
+                        f.getKey() + "는 " + (long) f.getValue()[0] + " ~ " + (long) f.getValue()[1] + " 사이 숫자로 주세요.");
+            sets.add(f.getKey() + " = ?");
+            values.add(f.getKey().equals("on_time_rate") ? n.doubleValue() : (Object) n.intValue());
+        }
+        if (sets.isEmpty())
+            throw ApiError.invalid("바꿀 값이 없습니다.", "다음 중 하나 이상을 보내세요: " + String.join(", ", fields.keySet()));
+        values.add(InternalApi.TODAY);
+        values.add(user.getSubject());
+        values.add(supplierId);
+        values.add(itemId);
+        int n = db.update("update supplier_metric set " + String.join(", ", sets) + ", evaluated_at = ?, evaluated_by = ?"
+                + " where supplier_id = ? and item_id = ?", values.toArray());
+        if (n == 0)
+            throw new ApiError("NOT_FOUND", "평가지표 " + supplierId + " × " + itemId + "을(를) 찾을 수 없습니다.",
+                    "GET /api/suppliers/metrics에서 협력사·부품 조합을 확인하세요.");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) internal.supplierMetrics(itemId).get("metrics");
+        return rows.stream().filter(r -> supplierId.equals(r.get("supplier_id"))).findFirst().orElseThrow();
     }
 
     private static LocalDate notBeforeToday(Object v, String key) {

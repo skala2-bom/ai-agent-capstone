@@ -45,7 +45,12 @@ def _forward_headers() -> dict:
     해석하지 않고 넘기기만 한다 — 금액 마스킹은 backend가 한다 (SEC-001).
     """
     headers = get_http_headers(include_all=True)
-    return {k: v for k, v in headers.items() if k.lower().startswith("x-")}
+    out = {k: v for k, v in headers.items() if k.lower().startswith("x-") and k.lower() != "x-service-token"}
+    # 서비스 토큰은 넘겨받은 것(agent 것)을 버리고 business-mcp 자기 토큰을 쓴다.
+    # backend는 서비스마다 열어 주는 경로가 다르다 — agent 토큰으로는 업무 API가 안 열린다 (backend ServiceTokens)
+    if os.getenv("SERVICE_TOKEN"):
+        out["X-Service-Token"] = os.environ["SERVICE_TOKEN"]
+    return out
 
 
 def _call(method: str, path: str, *, json: dict | None = None, params: dict | None = None):
@@ -150,7 +155,43 @@ def compare_options(issues: list[dict], whatif: list[dict] | None = None) -> dic
 
 
 # ---------------------------------------------------------------------------
-# 변경 2개 — 승인 필요 (destructive_hint = true)
+# 2차 조회 3개 (contracts 2.1) — B 파트가 추가 (10/20 밤)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=READ)
+def explode_bom(product_id: str, on_date: str | None = None) -> dict:
+    """완제품(FG-HUB 등) 하나를 부품 단위로 펼친다. on_date(YYYY-MM-DD, 기본 기준일 2026-11-02) 기준 BOM을 쓴다.
+
+    설계변경이 있으면 날짜에 따라 부품이 다르다 (도어센서 케이스: 11/30까지 옛 케이스, 12/1부터 새 케이스).
+    돌려주는 값: product_id, name, on_date, tree[{level, parent_id, item_id, name, type(ASSY|PART), qty_per, qty}],
+    parts[{item_id, name, qty}] (완제품 1대에 드는 구매 부품 개수 합계). 없는 제품이면 NOT_FOUND(완제품 ID 목록).
+    """
+    return _call("GET", f"/bom/{product_id}/explode", params={"on_date": on_date})
+
+
+@mcp.tool(annotations=READ)
+def where_used(item_id: str, on_date: str | None = None) -> dict:
+    """부품 하나가 들어가는 완제품과 1대당 개수. 어떤 부품이 모자라면 어느 제품이 영향받는지 볼 때 쓴다.
+
+    돌려주는 값: item_id, on_date, products[{product_id, name, qty_per_unit(개)}]. 2개 이상이면 공용 부품이다.
+    """
+    return _call("GET", f"/bom/where-used/{item_id}", params={"on_date": on_date})
+
+
+@mcp.tool(annotations=READ)
+def get_supplier_metrics(item_id: str | None = None) -> dict:
+    """협력사 × 부품 평가지표. item_id를 빼면 전부. 주 협력사가 먼저, 대체 협력사(is_primary=false)가 뒤에 온다.
+
+    돌려주는 값: metrics[{supplier_id, supplier_name, is_primary, item_id, item_name, unit_price(원),
+    lead_time_days(일), expedite_cost_per_day(원/개·일), split_fee(원), delay_penalty(원), on_time_rate(%),
+    quality_score(0~100), evaluated_at, evaluated_by}]. 단가는 역할에 따라 null로 가려진다.
+    이 값은 조회만 할 수 있다 (입력은 사람이 화면에서만, decisions 2.4).
+    """
+    return _call("GET", "/suppliers/metrics", params={"item_id": item_id})
+
+
+# ---------------------------------------------------------------------------
+# 변경 4개 — 승인 필요 (destructive_hint = true)
 # ---------------------------------------------------------------------------
 
 @mcp.tool(annotations=CHANGE)
@@ -173,6 +214,25 @@ def split_po(po_id: str, split_qty: int, new_due_date: str, approval_id: str) ->
     """
     return _call("POST", f"/purchase-orders/{po_id}/split",
                  json={"split_qty": split_qty, "new_due_date": new_due_date, "approval_id": approval_id})
+
+
+@mcp.tool(annotations=CHANGE)
+def change_po_qty(po_id: str, new_qty: int, approval_id: str) -> dict:
+    """발주 수량을 new_qty개로 바꾼다 (과잉 재고를 줄일 때). 팀장 승인을 받은 approval_id가 있어야 한다.
+
+    new_qty는 그 부품의 최소 발주 수량(MOQ) 이상이어야 한다 (BELOW_MOQ, retry_hint에 최소 수량).
+    0개로 만들려면 cancel_po를 쓴다. 돌려주는 값: po_id, before{qty}, after{qty}, status.
+    """
+    return _call("POST", f"/purchase-orders/{po_id}/qty", json={"new_qty": new_qty, "approval_id": approval_id})
+
+
+@mcp.tool(annotations=CHANGE)
+def cancel_po(po_id: str, approval_id: str) -> dict:
+    """발주를 취소한다 (설계변경으로 못 쓰게 된 부품, 쓸 곳 없는 과잉). 팀장 승인을 받은 approval_id가 있어야 한다.
+
+    이미 입고·취소된 발주는 PO_NOT_OPEN. 돌려주는 값: po_id, before{status: OPEN}, after{status: CANCELLED}.
+    """
+    return _call("POST", f"/purchase-orders/{po_id}/cancel", json={"approval_id": approval_id})
 
 
 if __name__ == "__main__":

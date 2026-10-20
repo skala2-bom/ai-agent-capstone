@@ -47,7 +47,8 @@ class ApprovalFlowTest {
         approvals = new Approvals(db, new ObjectMapper());
         impact = new ImpactAnalysis(db);
         internal = new InternalApi(db, impact, new OptionAnalysis(db, impact), approvals, tx);
-        screen = new ScreenApi(internal, db, approvals, tx);
+        // agent에 못 닿는 주소 — 자동 분석 작업은 만들어지고 FAILED로 끝난다 (여기서는 작업이 생기는지만 본다)
+        screen = new ScreenApi(internal, db, approvals, tx, new Tasks(db, new ObjectMapper(), approvals, "http://localhost:1"));
         // 승인 카드는 작업(ai_task)을 참조한다. agent 없이 카드를 만들려고 작업 행만 넣어 둔다
         db.update("insert into ai_task (task_id, thread_id, user_id, role, question) values ('T-1', 'T-1', 'buyer', 'BUYER', 'q'), ('T-2', 'T-2', 'planner', 'PLANNER', 'q')");
     }
@@ -110,6 +111,10 @@ class ApprovalFlowTest {
         assertCode(() -> screen.supplierDelay("PO-2610-106", m("due_date", "2026-11-27"), buyer), "INVALID_ARGUMENT");
         var po = screen.supplierDelay("PO-2610-106", m("due_date", "2026-11-27", "reason", "파워링크 설비 고장 통보"), buyer);
         assertThat(po).containsEntry("due_date", "2026-11-27");
+        // 자동 분석 작업: SYSTEM, PLANNER 역할(금액 가림), 질문에 무엇이 바뀌었는지가 들어간다
+        assertThat(db.queryForMap("select trigger, role, user_id, question from ai_task where task_id = ?", po.get("analysis_task_id")))
+                .containsEntry("trigger", "SYSTEM").containsEntry("role", "PLANNER").containsEntry("user_id", "buyer")
+                .hasEntrySatisfying("question", q -> assertThat((String) q).contains("PO-2610-106", "2026-11-20 → 2026-11-27", "설비 고장"));
         // DB가 바뀌었으니 whatif 없이도 SC4 결품이 보인다
         assertThat(impact.analyze(List.of()).get("shortages").toString()).contains("item_id=RELAY", "projected_stock=-1000");
 
@@ -121,6 +126,56 @@ class ApprovalFlowTest {
         assertThat(db.queryForList("select target_id, action, approval_id from change_history where approval_id is null order by id"))
                 .containsExactly(m("target_id", "PO-2610-106", "action", "supplier_delay", "approval_id", null),
                                  m("target_id", "PP-07", "action", "update_plan", "approval_id", null));
+    }
+
+    @Test
+    void 이차_도구_BOM_펼치기와_사용_제품() {
+        // 허브 1대 = 구매 부품 16종 (기획안 1.1), MCU 1 · 수정진동자 2 (무선모듈 2개)
+        var hub = internal.explodeBom("FG-HUB", null);
+        assertThat((List<?>) hub.get("parts")).hasSize(16);
+        assertThat(hub.get("parts").toString()).contains("item_id=MCU, name=MCU, qty=1", "item_id=CRYSTAL, name=수정진동자, qty=2");
+        // 설계변경: 11/30까지 옛 케이스, 12/1부터 새 케이스
+        assertThat(internal.explodeBom("FG-DOOR", java.time.LocalDate.of(2026, 11, 30)).get("parts").toString()).contains("CASE-DOOR-V1").doesNotContain("CASE-DOOR-V2");
+        assertThat(internal.explodeBom("FG-DOOR", java.time.LocalDate.of(2026, 12, 1)).get("parts").toString()).contains("CASE-DOOR-V2").doesNotContain("CASE-DOOR-V1");
+        // MCU는 4종 모두, 릴레이는 플러그 1 · 스위치 2
+        assertThat((List<?>) internal.whereUsed("MCU", null).get("products")).hasSize(4);
+        assertThat(internal.whereUsed("RELAY", null).get("products").toString()).contains("FG-PLUG", "qty_per_unit=1", "FG-SWITCH", "qty_per_unit=2");
+        assertCode(() -> internal.explodeBom("MCU", null), "NOT_FOUND");
+    }
+
+    @Test
+    void 이차_도구_수량_변경과_취소는_승인을_거쳐_실행된다() {
+        db.update("insert into ai_task (task_id, thread_id, user_id, role, question) values ('T-3', 'T-3', 'buyer', 'BUYER', 'q')");
+        // SC2 해결: 플러그 케이스 11/27분 800 → 500
+        Map<String, Object> qtyArgs = m("po_id", "PO-2610-115", "new_qty", 500);
+        String q = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", qtyArgs)).get("approval_id");
+        approvals.decide("T-3", q, "APPROVED", null, "approver");
+        // MOQ(300) 미만으로 바꾸려는 호출은 승인과 인자가 달라서 먼저 막히므로, MOQ 검사는 별도 승인으로 본다
+        Map<String, Object> tooSmall = m("po_id", "PO-2610-115", "new_qty", 100);
+        String small = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", tooSmall)).get("approval_id");
+        approvals.decide("T-3", small, "APPROVED", null, "approver");
+        assertCode(() -> internal.changePoQty("PO-2610-115", call(tooSmall, small)), "BELOW_MOQ");
+        assertThat(internal.changePoQty("PO-2610-115", call(qtyArgs, q)).toString()).contains("before={qty=800}", "after={qty=500}");
+
+        // SC3 해결: 옛 케이스 발주 취소
+        Map<String, Object> cancelArgs = m("po_id", "PO-2610-110");
+        String c = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "cancel_po", "args", cancelArgs)).get("approval_id");
+        assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");   // 승인 전
+        approvals.decide("T-3", c, "APPROVED", null, "approver");
+        assertThat(internal.cancelPo("PO-2610-110", call(cancelArgs, c))).containsEntry("after", Map.of("status", "CANCELLED"));
+        assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");  // 같은 승인 두 번
+        assertThat(db.queryForObject("select status from purchase_order where po_id = 'PO-2610-110'", String.class)).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void 평가지표는_구매가_화면에서만_입력한다() {
+        Jwt buyer = jwt("buyer", "BUYER"), planner = jwt("planner", "PLANNER");
+        assertCode(() -> screen.updateMetric("SUP-POWER", "RELAY", m("on_time_rate", 80.5), planner), "ROLE_NOT_ALLOWED");
+        assertCode(() -> screen.updateMetric("SUP-POWER", "RELAY", m("on_time_rate", 120), buyer), "INVALID_ARGUMENT");
+        assertCode(() -> screen.updateMetric("SUP-POWER", "MCU", m("on_time_rate", 90), buyer), "NOT_FOUND");
+        var row = screen.updateMetric("SUP-POWER", "RELAY", m("on_time_rate", 80.5, "quality_score", 90), buyer);
+        assertThat(row).containsEntry("evaluated_by", "buyer").containsEntry("evaluated_at", "2026-11-02").containsEntry("quality_score", 90);
+        assertThat(((Number) row.get("on_time_rate")).doubleValue()).isEqualTo(80.5);
     }
 
     @Test

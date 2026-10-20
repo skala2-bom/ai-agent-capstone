@@ -29,6 +29,11 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
+| 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |
+| 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | – | 🔴 SC2·SC3 과잉 해결을 시연하려면 그래프가 `target_rule = INV-003` 대안도 승인 흐름에 태워야 한다 |
+| 24 | **협력사 지연 입력 → 자동 분석 작업** (`trigger = SYSTEM`, `whatif`를 backend가 채움, PLANNER 역할로 돌아 금액 없음). 응답에 `analysis_task_id` | 2.6·3.1 | 지연 입력 뒤 `analysis_task_id`로 결과 보여 주기, 생산관리 작업 목록에도 나옴 | 없음 (그대로 동작 확인) |
+| 25 | 화면 API: `GET /api/items/{id}/bom`, `GET /api/suppliers/metrics`, `PUT /api/suppliers/{s}/items/{i}/metrics` (평가지표 입력, BUYER) | 3.1 | 평가지표 표·입력 연결됨 (반영됨) | 없음 |
 | 20 | **`DONE.result`는 `{intent, whatif, impact}`** — 결품은 `result.impact` 안 | 3.2 | 화면이 `result.impact`를 읽게 고침 (반영됨) | 지금 모양 그대로 (바꾸면 알려 주기) |
 | 19 | **작업·이벤트가 DB에 남는다** (재시작해도 승인 대기 작업이 이어짐). `GET /api/ai/tasks/{id}`, `GET /api/ai/tasks?mine=true` 생김 | 3.1 | 작업 이력 화면을 실제 목록으로 (반영됨) | 없음 |
 | 18 | 재고 응답에 `supplier_id`·`supplier_name`·`lead_time_days`·`used_in`(들어가는 완제품 이름), 발주 응답에 `supplier_name` — **칸 추가만** | 2.1 | 자재 화면의 협력사·리드타임·공용 제품 표시에 쓴다 (반영됨) | 없음 |
@@ -85,6 +90,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - business-mcp는 받은 헤더를 **해석하지 않고 그대로** 전달한다.
 - 나중에 붙이면 agent와 business-mcp를 동시에 고쳐야 하므로 **처음부터 넣는다.**
 - ✅ **backend 쪽 구현 완료 (10/20 저녁)**: `/agent/tasks` 요청에 `userId`·`role`을 넣어 보낸다 (JWT에서 꺼낸 값). `/internal/**`는 `X-Role`을 읽어 금액을 가린다.
+- ✅ **`X-Service-Token` 검사 (10/20 밤)**: 서비스마다 토큰이 다르고 자기 경로만 열린다 — agent → `/internal/tasks/**`, business-mcp → 나머지. business-mcp는 agent에게서 넘겨받은 토큰을 버리고 자기 토큰으로 바꿔 보낸다. 값은 compose 환경변수(`AGENT_SERVICE_TOKEN`·`BUSINESS_MCP_SERVICE_TOKEN`, 기본값은 시연용).
 - **`X-Role`이 없거나 모르는 값이면 `PLANNER` 기준으로 가린다** (금액 전부 `null`). 헤더를 빠뜨렸을 때 금액이 새는 것보다 안 보이는 쪽이 안전하다. 대소문자는 구분하지 않는다. → **C가 헤더를 안 넘기면 BUYER가 물어도 AI 답변에 금액이 안 나온다.**
 
 ### 1.2 역할별 금액 공개 범위 (규칙 SEC-001)
@@ -104,6 +110,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 | `cost_level` (`LOW`·`MID`·`HIGH` = 30만 원 미만·100만 원 미만·그 이상) | 보임 | 보임 | 보임 |
 
 - **키는 남기고 값만 `null`**이다. 역할마다 응답 모양이 달라지지 않는다.
+- `saved_amount`(과잉 대안의 덜 사는 금액)도 `amount`와 같이 가린다 (10/20 밤).
 - 1차 차단은 **backend masking**이 `/internal/**`와 `/api/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다. 역할은 `/api`는 JWT, `/internal`은 `X-Role`에서 읽는다.
 - SSE `APPROVAL_REQUIRED`의 `amount`는 승인 API(7단계)를 만들 때 같은 규칙을 적용한다.
 - 2차는 agent Harness가 도구 결과에 단가 필드가 남아 있으면 모델에 넘기기 전에 지운다.
@@ -198,6 +205,33 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 
 #### 2차 (조회 폭을 넓히는 것) — 5개
 
+✅ **10/20 밤 구현** (backend + business-mcp 도구 등록). 응답 모양:
+
+```jsonc
+// explode_bom  GET /internal/bom/FG-HUB/explode?on_date=2026-11-02   (on_date 기본 기준일. 설계변경 유효일 때문에 날짜가 필요)
+{ "product_id": "FG-HUB", "name": "IoT 허브", "on_date": "2026-11-02",
+  "tree":  [{ "level": 1, "parent_id": "FG-HUB", "item_id": "ASSY-HUB-MB", "name": "허브 메인보드", "type": "ASSY", "qty_per": 1, "qty": 1 }, …],
+  "parts": [{ "item_id": "MCU", "name": "MCU", "qty": 1 }, …] }      // 완제품 1대당 구매 부품 합계 (16종)
+
+// where_used  GET /internal/bom/where-used/RELAY
+{ "item_id": "RELAY", "on_date": "2026-11-02",
+  "products": [{ "product_id": "FG-PLUG", "name": "스마트 플러그", "qty_per_unit": 1 }, { "product_id": "FG-SWITCH", …, "qty_per_unit": 2 }] }
+
+// get_supplier_metrics  GET /internal/suppliers/metrics?item_id=RELAY   (item_id 빼면 전부. 주 협력사 먼저)
+{ "metrics": [{ "supplier_id": "SUP-POWER", "supplier_name": "파워링크전자", "is_primary": true, "item_id": "RELAY", "item_name": "릴레이",
+    "unit_price": 900, "lead_time_days": 28, "expedite_cost_per_day": 50, "split_fee": 30000, "delay_penalty": 150000,
+    "on_time_rate": 78.0, "quality_score": 88, "evaluated_at": "2026-10-15", "evaluated_by": "buyer" }, …] }
+
+// change_po_qty  POST /internal/purchase-orders/PO-2610-115/qty  { "new_qty": 500, "approval_id": "…" }
+{ "po_id": "PO-2610-115", "before": { "qty": 800 }, "after": { "qty": 500 }, "status": "OPEN" }   // MOQ 미만이면 BELOW_MOQ
+
+// cancel_po  POST /internal/purchase-orders/PO-2610-110/cancel  { "approval_id": "…" }
+{ "po_id": "PO-2610-110", "before": { "status": "OPEN" }, "after": { "status": "CANCELLED" } }
+```
+
+- 변경 2개도 1차와 같은 규칙이다: 팀장 승인과 도구·인자가 같아야 실행, 변경·이력·승인 상태를 한 트랜잭션으로.
+- 수량 변경은 MOQ를 본다 — 분할(나눠 받기, 3.4)과 달리 주문량 자체가 줄어든다.
+
 | 도구 | Method · Path | 승인 |
 |---|---|:-:|
 | `explode_bom` | GET `/internal/bom/{product_id}/explode?on_date=` | |
@@ -274,7 +308,8 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   "policy_version": "v0.1",
   "options": [{
     "option_id": "OPT-1",
-    "type": "SPLIT_PO",                // SPLIT_PO | DUE_DATE_CHANGE (REALLOCATE는 아직 만들지 않는다)
+    "type": "SPLIT_PO",                // 결품: SPLIT_PO | DUE_DATE_CHANGE, 과잉: CHANGE_QTY | CANCEL_PO | DUE_DATE_CHANGE(미루기)
+    "target_rule": "INV-001",          // 이 대안이 푸는 것: INV-001 결품 | INV-003 과잉
     "item_id": "MCU",                  // 이 대안이 푸는 부품
     "summary": "PO-2609-001(MCU 500개, 12/12 입고)에서 100개만 떼어 11/25에 먼저 받는다",
     "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
@@ -293,7 +328,8 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 ```
 
 - `tool`·`args`를 그대로 담는 이유: 모델이 고른 대안을 **그대로 승인 카드로 올리고 그대로 실행**할 수 있다. 모델이 인자를 다시 만들지 않으니 숫자가 틀어질 여지가 없다.
-- 대안은 **`orderable=false` 결품만** 대상으로 만든다. `orderable=true`는 "지금 발주하면 제때 온다"는 정상 안내라서 기존 발주를 건드릴 이유가 없다. 그래서 SC3(새 케이스 −800, 발주 가능)은 대안이 0개다.
+- **과잉 대안** (10/20 밤): 과잉 부품마다, 과잉이 잡힌 날까지 들어오는 발주를 과잉량만큼 줄이거나(MOQ 미만이 되면 취소) 다음 사용일로 미룬다. 비용은 0, 대신 덜 사는 금액 `saved_amount`(원, 마스킹 대상). 줄이다 같은 부품이 모자라게 되면 `side_effects`에 나와 추천되지 않는다 (SC3 코인전지 취소가 그 예). 결품 대안이 항상 먼저 정렬된다.
+- 결품 대안은 **`orderable=false` 결품만** 대상으로 만든다. `orderable=true`는 "지금 발주하면 제때 온다"는 정상 안내라서 기존 발주를 건드릴 이유가 없다. 그래서 SC3(새 케이스 −800, 발주 가능)은 대안이 0개다.
 - **추천 순서**: 결품을 푸는 것 → 부작용 없는 것 → 위험 낮은 것 → 싼 것. 결품을 다 풀면서 부작용이 없는 대안이 없으면 `recommended_option_id`는 `null`이다. 근거는 [decisions.md 6.14](decisions.md).
 - **결품 부품이 여럿이면 추천안도 여럿이다** (SC2: 릴레이·전원 모듈 각 1개). 둘 다 승인해야 결품이 다 풀린다. 승인 요청은 대안마다 따로 올린다 (승인 카드 1장 = 도구 호출 1번).
 - `added_cost`·`risk`는 `supplier_metric`에서 나온다 ([decisions.md 2절](decisions.md)).
@@ -337,6 +373,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `BOM_CYCLE` | 순환 BOM | 순환 경로 |
 | `APPROVAL_REQUIRED` | 승인 없이 변경 시도. 승인이 PENDING·REJECTED·EXECUTED이거나 **도구·인자가 승인 카드와 다를 때**도 | 승인 절차, 또는 승인된 호출 그대로의 인자 |
 | `UPSTREAM_TIMEOUT` | 백엔드 응답 지연 | 잠시 후 재시도 |
+| `SERVICE_TOKEN_REQUIRED` | `/internal`에 서비스 토큰이 없거나 틀림 (401) — **10/20 밤 추가**. 설정 문제라 모델이 고칠 수 없다 | 어느 서비스의 `SERVICE_TOKEN`을 확인할지 |
 | `INVALID_ARGUMENT` | 인자가 없거나 형식이 틀림 (날짜 형식, 모르는 `op`, 0 이하 수량) — **10/20 오후 추가** | 맞는 형식이나 가능한 값 목록 |
 | `ROLE_NOT_ALLOWED` | 이 역할로는 못 하는 일. agent에선 생산관리 담당자 작업의 승인 요청 (403) — **10/20 밤 추가** | 할 수 있는 역할 |
 | `APPROVAL_NOT_PENDING` | 이미 처리된 승인을 다시 결정 (409, 화면) — **10/20 밤 추가** | 현재 상태 |
@@ -398,11 +435,12 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
 | GET | `/api/ai/tasks?mine=true` | ✅ 작업 목록, 최근 50개. 생산관리는 항상 자기 것만, 구매·팀장은 `mine`을 빼면 전체 | 로그인 |
 | GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3) | APPROVER |
-| GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` (응답 모양은 2.1 `/internal`과 같다) · ⬜ `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
+| GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` · `/api/suppliers/metrics` (응답 모양은 2.1 `/internal`과 같다) | 조회 | 로그인 (금액 마스킹) |
+| PUT | ✅ `/api/suppliers/{supplier_id}/items/{item_id}/metrics` `{on_time_rate?, quality_score?, unit_price?, lead_time_days?, expedite_cost_per_day?, split_fee?, delay_penalty?}` | 바뀐 지표 한 줄. 보낸 칸만 바꾸고 `evaluated_at`·`evaluated_by`를 남긴다 | BUYER·APPROVER (AI 도구로는 안 연다) |
 | PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
-| PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양). 사유 필수 | BUYER·APPROVER |
+| PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양) + `analysis_task_id`(자동 분석 작업). 사유 필수 | BUYER·APPROVER |
 
-✅ = 구현됨 (10/20). 남은 것은 BOM 조회(9단계, `explode_bom`과 같이).
+✅ = 구현됨 (10/20). 3.1 화면 API는 전부 구현됐다.
 
 **작업 한 건** (`GET /api/ai/tasks/{id}`, 목록의 한 줄) — 작업 API는 처음부터 camelCase(`taskId`)라 그대로 맞췄다:
 

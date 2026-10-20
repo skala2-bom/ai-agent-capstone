@@ -124,6 +124,42 @@ class InternalApi {
     }
 
     // ------------------------------------------------------------------
+    // 2차 조회 3개 (contracts.md 2.1)
+    // ------------------------------------------------------------------
+
+    /** explode_bom — 제품을 부품 단위로 펼친다. on_date 기본은 기준일 (설계변경 유효일 때문에 날짜가 필요하다) */
+    @GetMapping("/bom/{productId}/explode")
+    Map<String, Object> explodeBom(@PathVariable String productId,
+                                   @RequestParam(name = "on_date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate onDate) {
+        return impact.bom(productId, onDate == null ? TODAY : onDate);
+    }
+
+    /** where_used — 이 부품이 들어가는 완제품 */
+    @GetMapping("/bom/where-used/{itemId}")
+    Map<String, Object> whereUsed(@PathVariable String itemId,
+                                  @RequestParam(name = "on_date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate onDate) {
+        return impact.whereUsed(itemId, onDate == null ? TODAY : onDate);
+    }
+
+    /**
+     * get_supplier_metrics — 협력사 × 부품 평가지표 (decisions.md 2절). item_id를 빼면 전부.
+     * 주 협력사가 먼저 나온다. 단가는 응답 직전에 역할대로 가려진다 ({@link Masking}).
+     * <b>조회만</b> 도구로 연다 — 입력은 사람이 화면에서만 한다 (decisions.md 2.4).
+     */
+    @GetMapping("/suppliers/metrics")
+    Map<String, Object> supplierMetrics(@RequestParam(name = "item_id", required = false) String itemId) {
+        itemId = blankToNull(itemId);
+        if (itemId != null) getItem(itemId);
+        return m("metrics", db.queryForList("""
+                select m.supplier_id, s.name as supplier_name, s.is_primary, m.item_id, i.name as item_name,
+                       m.unit_price, m.lead_time_days, m.expedite_cost_per_day, m.split_fee, m.delay_penalty,
+                       m.on_time_rate, m.quality_score, m.evaluated_at::text as evaluated_at, m.evaluated_by
+                from supplier_metric m join supplier s using (supplier_id) join item i on i.item_id = m.item_id
+                where cast(? as text) is null or m.item_id = ?
+                order by m.item_id, s.is_primary desc, m.supplier_id""", itemId, itemId));
+    }
+
+    // ------------------------------------------------------------------
     // 계산 2개
     // ------------------------------------------------------------------
 
@@ -229,6 +265,45 @@ class InternalApi {
             Map<String, Object> created = m("po_id", newId, "qty", splitQty, "due_date", newDue.toString(), "status", "OPEN", "parent_po_id", id);
             approvals.executed(c.approvalId(), c.requester(), "split_po", id, c.before(), List.of(original, created));
             return m("original", original, "new", created);
+        });
+    }
+
+    /**
+     * change_po_qty — 발주 수량 변경 (2차, 과잉 해결용). 검사: 승인 → OPEN → 수량 → MOQ.
+     * 분할(3.4)과 달리 MOQ를 본다 — 이건 나눠 받는 게 아니라 주문량 자체가 줄어드는 것이라,
+     * 협력사의 생산 로트 기준(MOQ)이 그대로 적용된다. 0개로 만들려면 cancel_po를 쓴다.
+     */
+    @PostMapping("/purchase-orders/{id}/qty")
+    Map<String, Object> changePoQty(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        return tx.execute(t -> {
+            Change c = begin(id, body, "change_po_qty");
+            int qty = (int) c.po().get("qty");
+            if (!(body.get("new_qty") instanceof Number n) || n.intValue() <= 0 || n.doubleValue() != n.intValue())
+                throw ApiError.invalid("new_qty는 1 이상의 정수여야 합니다.", "0개로 만들려면 cancel_po를 쓰세요.");
+            int newQty = ((Number) body.get("new_qty")).intValue();
+            if (newQty == qty)
+                throw ApiError.invalid("수량이 지금과 같습니다 (" + qty + "개).", "바꿀 수량을 주세요.");
+            int moq = db.queryForObject("select moq from item where item_id = ?", Integer.class, c.po().get("item_id"));
+            if (newQty < moq)
+                throw new ApiError("BELOW_MOQ", "최소 발주 수량 미만입니다.",
+                        "최소 수량은 " + moq + "개입니다. " + moq + "개 이상으로 다시 요청하거나, 다 필요 없으면 cancel_po를 쓰세요.");
+            db.update("update purchase_order set qty = ? where po_id = ?", newQty, id);
+            Map<String, Object> after = m("po_id", id, "item_id", c.po().get("item_id"), "qty", newQty, "due_date", c.po().get("due_date"));
+            approvals.executed(c.approvalId(), c.requester(), "change_po_qty", id, c.before(), after);
+            return m("po_id", id, "before", m("qty", qty), "after", m("qty", newQty), "status", "OPEN");
+        });
+    }
+
+    /** cancel_po — 발주 취소 (2차, 과잉·설계변경 진부화 해결용). 검사: 승인 → OPEN. 행은 지우지 않고 CANCELLED로 둔다 (이력) */
+    @PostMapping("/purchase-orders/{id}/cancel")
+    Map<String, Object> cancelPo(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        return tx.execute(t -> {
+            Change c = begin(id, body, "cancel_po");
+            db.update("update purchase_order set status = 'CANCELLED' where po_id = ?", id);
+            Map<String, Object> after = new LinkedHashMap<>(c.before());
+            after.put("status", "CANCELLED");
+            approvals.executed(c.approvalId(), c.requester(), "cancel_po", id, c.before(), after);
+            return m("po_id", id, "before", m("status", "OPEN"), "after", m("status", "CANCELLED"));
         });
     }
 

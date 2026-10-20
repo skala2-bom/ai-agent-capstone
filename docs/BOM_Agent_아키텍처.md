@@ -759,3 +759,4 @@ flowchart LR
 | 인증·마스킹 | JWT(HS256, 8시간), SSE만 `?access_token=`, `X-Role` 없으면 전부 가림 | [decisions.md 6.17](decisions.md) |
 | 승인·변경 | 승인과 도구·인자가 같을 때만 실행, 변경·이력·승인 상태 한 트랜잭션, 화면 변경은 승인 없이 이력만 | [decisions.md 6.18](decisions.md) |
 | 작업 저장 | `ai_task`·`task_event`, 재시작해도 승인 대기 작업이 이어짐 | [decisions.md 6.20](decisions.md) |
+| 9단계 | 서비스 토큰(서비스·경로별), 자동 분석(SYSTEM, PLANNER 역할), 2차 도구 5개, 과잉 대안, 평가지표 입력 | [decisions.md 6.21](decisions.md) |

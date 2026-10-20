@@ -30,6 +30,9 @@ services:
       SPRING_DATASOURCE_PASSWORD: app
       # JWT 서명 키. 기본값은 내부망 시연용이다. 밖에 띄우면 .env에서 32바이트 이상 새 값으로 바꾼다
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-at-least-32-bytes}
+      # /internal 서비스 토큰. 서비스마다 다르고 각자 자기 경로만 열린다 (ServiceTokens.java). 기본값은 내부망 시연용
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-agent-token}
+      BUSINESS_MCP_SERVICE_TOKEN: ${BUSINESS_MCP_SERVICE_TOKEN:-dev-business-mcp-token}
     depends_on:
       postgres: { condition: service_healthy }   # DB가 받을 준비가 된 뒤에 뜬다
 
@@ -38,6 +41,7 @@ services:
     # 포트 없음 = 내부 전용. backend만 부른다
     environment:
       BACKEND_URL: http://backend:8080
+      SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-agent-token}   # 진행 이벤트 콜백용
       BUSINESS_MCP_URL: http://business-mcp:9101/mcp   # /mcp 빠뜨리면 404
       RAG_MCP_URL: http://rag-mcp:9102/mcp
       # 키가 비어 있으면 agent가 가짜 모델로 돈다. 키는 .env에만 두고 커밋하지 않는다
@@ -55,6 +59,7 @@ services:
     # 포트 없음 = 내부 전용. agent만 MCP로 부른다
     environment:
       BACKEND_URL: http://backend:8080   # 업무 데이터는 전부 backend를 거친다
+      SERVICE_TOKEN: ${BUSINESS_MCP_SERVICE_TOKEN:-dev-business-mcp-token}   # /internal 업무 API용
 
   rag-mcp:
     build: ./rag-mcp

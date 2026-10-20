@@ -190,6 +190,19 @@ export function toHistory(tasks: Row[]): Workspace["history"] {
     detail: String(t.answer ?? ""),
   }));
 }
+/** 협력사 평가지표(GET /api/suppliers/metrics) → 화면 평가지표 표 */
+export function toMetrics(rows: Row[]): Workspace["metrics"] {
+  return rows.map((m) => ({
+    supplierId: String(m.supplier_id),
+    itemId: String(m.item_id),
+    supplier: String(m.supplier_name),
+    item: String(m.item_name),
+    onTime: Number(m.on_time_rate),
+    quality: Number(m.quality_score),
+    by: userNames[String(m.evaluated_by)] ?? String(m.evaluated_by),
+    date: String(m.evaluated_at),
+  }));
+}
 const api: Gateway = {
   async load(s) {
     const [rp, ri, rpo] = await Promise.all([
@@ -199,9 +212,10 @@ const api: Gateway = {
     ]);
     const { plans, items, purchases } = toWorkspace(rp, ri, rpo);
     // 승인 대기함은 팀장만 볼 수 있다 (contracts 3.1). 다른 역할은 빈 목록
-    const [cards, tasks] = await Promise.all([
+    const [cards, tasks, metrics] = await Promise.all([
       s.role === "APPROVER" ? request<Row[]>("/approvals", s.token) : Promise.resolve([] as Row[]),
       request<Row[]>("/ai/tasks", s.token),
+      request<{ metrics: Row[] }>("/suppliers/metrics", s.token),
     ]);
     const { approvals, options } = toApprovals(
       cards,
@@ -214,7 +228,7 @@ const api: Gateway = {
       options,
       approvals,
       history: toHistory(tasks),
-      metrics: [],
+      metrics: toMetrics(metrics.metrics),
     };
   },
   async save(s, c) {
@@ -228,6 +242,15 @@ const api: Gateway = {
         due_date: c.date,
         reason: c.reason,
       });
+    else if (c.type === "metric") {
+      // 평가지표 입력은 사람만 한다 (AI 도구로 열지 않음, decisions 2.4). 표의 몇 번째 줄인지로 협력사·부품을 찾는다
+      const m = (await this.load(s)).metrics[c.index];
+      if (!m?.supplierId) throw new Error("평가지표를 찾지 못했습니다. 새로고침 후 다시 시도하세요.");
+      await request(`/suppliers/${m.supplierId}/items/${m.itemId}/metrics`, s.token, "PUT", {
+        on_time_rate: c.onTime,
+        quality_score: c.quality,
+      });
+    }
     else if (c.type === "approval")
       // 팀장 결정 → backend가 저장하고 agent에 재개를 요청한다 (contracts 3.3)
       await request(

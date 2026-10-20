@@ -116,7 +116,7 @@ cd backend && mvn test
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
 | `frontend/` | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드) | 프론트 담당 | 해결안·이력·평가지표 화면의 API 연결, 생산관리 `cost_level` 표시 |
-| `backend/` | 작업 접수·이벤트 저장·SSE 중계(`Tasks`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | 2차 도구 5개, 자동 분석, 평가지표 입력, `/internal/**` 서비스 토큰 |
+| `backend/` | 작업 접수·이벤트 저장·SSE 중계(`Tasks`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | (1~9단계 완료) 대기열(RabbitMQ, 가산점) |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
@@ -127,4 +127,4 @@ cd backend && mvn test
 ## 일부러 뺀 것
 
 - `TOKEN` 스트리밍, healthcheck(postgres만 있음)
-- `/internal/**`가 지금은 backend 공개 포트로도 열려 있다. 서비스 토큰 검사는 백엔드 담당이 추가한다.
+- 대기열(RabbitMQ, 가산점)은 아직 없다.

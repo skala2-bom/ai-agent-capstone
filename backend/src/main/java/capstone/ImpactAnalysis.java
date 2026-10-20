@@ -100,12 +100,17 @@ class ImpactAnalysis {
         return new State(types, parts, onHand, plans, pos, bom);
     }
 
-    /** 소요를 만들고 부품마다 판정한다. */
-    Map<String, Object> judge(State st) {
-        // 소요 (부품별, 날짜순)
+    /** 생산계획을 펼친 부품별 소요 (F-02). 대안 비교가 "다음에 언제 쓰나"를 볼 때도 쓴다 */
+    Map<String, List<Use>> uses(State st) {
         Map<String, List<Use>> uses = new HashMap<>();
         for (Plan p : st.plans().values())
             explode(p.product(), p.qty(), p, st.bom(), st.types(), uses, new ArrayList<>(List.of(p.product())));
+        return uses;
+    }
+
+    /** 소요를 만들고 부품마다 판정한다. */
+    Map<String, Object> judge(State st) {
+        Map<String, List<Use>> uses = uses(st);
         Map<String, TreeMap<LocalDate, Integer>> receipts = new HashMap<>();
         for (Po po : st.pos().values())
             receipts.computeIfAbsent(po.item(), k -> new TreeMap<>()).merge(po.due(), po.qty(), Integer::sum);
@@ -204,6 +209,67 @@ class ImpactAnalysis {
                 path.removeLast();
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // BOM 조회 (explode_bom · where_used · 화면 BOM) — 영향 분석과 같은 BOM·유효일 규칙을 쓴다
+    // ------------------------------------------------------------------
+
+    /**
+     * 제품(또는 반제품) 하나를 {@code on} 날짜 기준으로 펼친다.
+     * {@code tree}는 단계별 줄(반제품 포함, 화면 트리용), {@code parts}는 구매 부품별 1대당 합계(F-02, 계산과 같은 단위).
+     * 설계변경 유효일이 지난 줄은 빠진다 — 도어센서는 11/30까지 옛 케이스, 12/1부터 새 케이스.
+     */
+    Map<String, Object> bom(String productId, LocalDate on) {
+        State st = load(null);
+        Map<String, String> names = new HashMap<>();
+        db.query("select item_id, name from item", rs -> { names.put(rs.getString(1), rs.getString(2)); });
+        String type = st.types().get(productId);
+        if (!"FG".equals(type) && !"ASSY".equals(type))
+            throw new ApiError("NOT_FOUND", "완제품·반제품 " + productId + "을(를) 찾을 수 없습니다.",
+                    "완제품 ID: " + String.join(", ", st.types().entrySet().stream().filter(e -> "FG".equals(e.getValue())).map(Map.Entry::getKey).sorted().toList()));
+        List<Map<String, Object>> tree = new ArrayList<>();
+        Map<String, Integer> parts = new TreeMap<>();
+        walk(productId, 1, 1, on, st, names, tree, parts, new ArrayList<>(List.of(productId)));
+        return m("product_id", productId, "name", names.get(productId), "on_date", on.toString(), "tree", tree,
+                "parts", parts.entrySet().stream().map(e -> m("item_id", e.getKey(), "name", names.get(e.getKey()), "qty", e.getValue())).toList());
+    }
+
+    private static void walk(String parent, int multiplier, int level, LocalDate on, State st, Map<String, String> names,
+                             List<Map<String, Object>> tree, Map<String, Integer> parts, List<String> path) {
+        for (BomLine line : st.bom().getOrDefault(parent, List.of())) {
+            if (!line.validOn(on)) continue;
+            if (path.contains(line.child())) {
+                path.add(line.child());
+                throw new ApiError("BOM_CYCLE", "BOM에 순환이 있습니다.", "순환 경로: " + String.join(" → ", path));
+            }
+            int qty = multiplier * line.qty();
+            String type = st.types().get(line.child());
+            tree.add(m("level", level, "parent_id", parent, "item_id", line.child(), "name", names.get(line.child()),
+                    "type", type, "qty_per", line.qty(), "qty", qty));
+            if ("PART".equals(type)) parts.merge(line.child(), qty, Integer::sum);
+            else {
+                path.add(line.child());
+                walk(line.child(), qty, level + 1, on, st, names, tree, parts, path);
+                path.removeLast();
+            }
+        }
+    }
+
+    /** where_used: 이 부품이 {@code on} 날짜에 들어가는 완제품과 1대당 개수. 결품이 어느 제품에 번지는지 볼 때 */
+    Map<String, Object> whereUsed(String itemId, LocalDate on) {
+        State st = load(null);
+        if (!st.types().containsKey(itemId))
+            throw new ApiError("NOT_FOUND", "품목 " + itemId + "을(를) 찾을 수 없습니다.", "부품 ID는 get_inventory(type=PART)로 확인하세요.");
+        List<Map<String, Object>> products = new ArrayList<>();
+        for (var e : new TreeMap<>(st.types()).entrySet()) {
+            if (!"FG".equals(e.getValue())) continue;
+            Map<String, Object> b = bom(e.getKey(), on);
+            @SuppressWarnings("unchecked") List<Map<String, Object>> ps = (List<Map<String, Object>>) b.get("parts");
+            ps.stream().filter(p -> itemId.equals(p.get("item_id"))).findFirst()
+                    .ifPresent(p -> products.add(m("product_id", e.getKey(), "name", b.get("name"), "qty_per_unit", p.get("qty"))));
+        }
+        return m("item_id", itemId, "on_date", on.toString(), "products", products);
     }
 
     // ------------------------------------------------------------------

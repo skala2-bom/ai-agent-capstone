@@ -110,7 +110,9 @@ class Tasks {
     @GetMapping("/api/ai/tasks/{id}")
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Map<String, Object> t = row(id);
-        if (!t.get("userId").equals(user.getSubject()) && !Auth.allows(user.getClaimAsString("role"), "BUYER"))
+        // 자동 분석(SYSTEM)은 생산관리도 봐야 하는 결과다 (아키텍처 4.6). 그래서 PLANNER 역할로 만들어 금액이 없다
+        if (!t.get("userId").equals(user.getSubject()) && !"SYSTEM".equals(t.get("trigger"))
+                && !Auth.allows(user.getClaimAsString("role"), "BUYER"))
             throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람의 작업입니다.", "생산관리 담당자는 자기 작업만 볼 수 있습니다.");
         return t;
     }
@@ -122,8 +124,12 @@ class Tasks {
     @GetMapping("/api/ai/tasks")
     List<Map<String, Object>> list(@RequestParam(defaultValue = "false") boolean mine, @AuthenticationPrincipal Jwt user) {
         boolean onlyMine = mine || !Auth.allows(user.getClaimAsString("role"), "BUYER");
-        return db.queryForList("select task_id from ai_task where (? = false or user_id = ?) order by created_at desc limit 50",
-                String.class, onlyMine, user.getSubject()).stream().map(this::row).toList();
+        // 생산관리의 "내 것"에는 자동 분석(SYSTEM)도 들어간다 — 생산관리가 꼭 알아야 하는 결과라서
+        return db.queryForList("""
+                select task_id from ai_task
+                where (? = false or user_id = ? or (trigger = 'SYSTEM' and ? = 'PLANNER'))
+                order by created_at desc limit 50""",
+                String.class, onlyMine, user.getSubject(), user.getClaimAsString("role")).stream().map(this::row).toList();
     }
 
     /**
@@ -139,7 +145,9 @@ class Tasks {
     @GetMapping(path = "/api/ai/tasks/{id}/stream", produces = "text/event-stream")
     SseEmitter stream(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Task task = find(id);
-        if (!task.userId().equals(user.getSubject()))
+        // 자동 분석은 누구나 따라볼 수 있다. PLANNER 역할로 돌아 금액이 없다 (ScreenApi.startDelayAnalysis)
+        boolean system = "SYSTEM".equals(db.queryForObject("select trigger from ai_task where task_id = ?", String.class, id));
+        if (!system && !task.userId().equals(user.getSubject()))
             throw new org.springframework.web.server.ResponseStatusException(HttpStatus.FORBIDDEN, "질문한 사람만 볼 수 있습니다");
         SseEmitter emitter = new SseEmitter(120_000L);  // 작업 전체 제한 120초 (아키텍처 4.2)
         synchronized (lock(id)) {

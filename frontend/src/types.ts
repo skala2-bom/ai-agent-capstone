@@ -97,6 +97,8 @@ export interface History {
   detail: string;
 }
 export interface Metric {
+  supplierId?: string; // API 모드에서 저장할 때 쓰는 ID (화면에는 이름을 보여 준다)
+  itemId?: string;
   supplier: string;
   item: string;
   onTime: number;

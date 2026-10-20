@@ -158,7 +158,9 @@ async def emit(task_id: str, event: dict, *, important: bool = False) -> httpx.R
     for i in range(tries):
         try:
             async with httpx.AsyncClient(timeout=2) as c:
-                r = await c.post(f"{BACKEND_URL}/internal/tasks/{task_id}/events", json=event)
+                # agent 토큰은 이 이벤트 경로에만 열린다 (backend ServiceTokens)
+                r = await c.post(f"{BACKEND_URL}/internal/tasks/{task_id}/events", json=event,
+                                 headers={"X-Service-Token": os.getenv("SERVICE_TOKEN", "")})
             if r.status_code < 500:
                 return r
         except httpx.HTTPError:
@@ -193,6 +195,8 @@ LABELS = {
     "analyze_impact": "영향 분석 중", "compare_options": "해결 방법 비교 중", "list_plans": "생산 계획 조회 중",
     "get_item": "품목 조회 중", "read_doc": "근거 문서 읽는 중",
     "split_po": "발주 분할 실행 중", "request_due_date_change": "입고일 변경 실행 중",
+    "change_po_qty": "발주 수량 변경 실행 중", "cancel_po": "발주 취소 실행 중",
+    "explode_bom": "BOM 펼치는 중", "where_used": "사용 제품 찾는 중", "get_supplier_metrics": "협력사 지표 조회 중",
 }
 
 

@@ -25,7 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
  * <table>
  *   <tr><th>칸</th><th>PLANNER</th><th>BUYER</th><th>APPROVER</th></tr>
  *   <tr><td>unit_price (단가·계약 단가)</td><td>null</td><td>null</td><td>보임</td></tr>
- *   <tr><td>amount · added_cost (총액·추가 비용)</td><td>null</td><td>보임</td><td>보임</td></tr>
+ *   <tr><td>amount · added_cost · saved_amount (총액·추가 비용·덜 사는 금액)</td><td>null</td><td>보임</td><td>보임</td></tr>
  *   <tr><td>cost_level (추가 비용 등급)</td><td>보임</td><td>보임</td><td>보임</td></tr>
  * </table>
  *
@@ -77,7 +77,7 @@ class Masking implements ResponseBodyAdvice<Object> {
             for (var e : mm.entrySet()) {
                 String k = e.getKey();
                 if (hideUnitPrice && k.equals("unit_price")) e.setValue(null);
-                else if (hideTotals && (k.equals("amount") || k.equals("added_cost"))) e.setValue(null);
+                else if (hideTotals && (k.equals("amount") || k.equals("added_cost") || k.equals("saved_amount"))) e.setValue(null);
                 else walk(e.getValue(), hideUnitPrice, hideTotals);
             }
         } else if (node instanceof List<?> list) {
