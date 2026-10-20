@@ -29,6 +29,7 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 29 | **AI 작업이 RabbitMQ 대기열을 거친다** (`ai.tasks`, 실패하면 30초·2분 뒤 다시, 3번째 실패는 DLQ + `FAILED`). 접수·승인 후 재개 둘 다. **꺼내 보내는 것도 backend**라 agent 쪽 HTTP 경로(`/agent/tasks`, `/resume`)는 그대로 | decisions 6.24 | 없음. 재시도 중에는 작업이 `QUEUED`로 최대 2분 30초 머문다. 새 오류 코드 `QUEUE_UNAVAILABLE`(대기열에도 못 넣음) | 없음. 같은 작업을 두 번 받지 않게 backend가 막는다 (이미 시작한 작업은 다시 안 보냄) |
 | 28 | 화면용 분석 API `POST /api/analysis/impact`·`POST /api/analysis/options` `{whatif}` — AI 도구와 같은 계산, 로그인 역할대로 금액 가림 | 3.1 | ✅ 반영함: 업무 현황 위험, 해결안 비교, 생산계획 영향 미리보기 | 없음 |
 | 27 | **RAG 근거 문서 6개** (`data/docs/`, `data/documents.json`) — 시스템 ID·결정에 맞춘 v1.2. 조항 단위 `doc://{doc_id}/{clause_no}` | 2.2 근거 | – | 🔴 **색인(indexer)·`search_docs`·pgvector 테이블을 만들어 이 문서를 읽게.** rag-mcp 하드코딩 조항은 지운다 (`data/README.md`) |
 | 26 | `compare_options` 대안에 **`side_effects` 명세 형식**(NEW·WORSENED, 전후 결품량, `product_id`)과 **`remaining_issues`** 추가 | 2.3 | – | verify가 `remaining_issues`로 "왜 안 풀렸는지"를 설명할 수 있다. 기존 `resolves`는 그대로 |
@@ -545,7 +546,7 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 - 같은 작업·도구·인자로 PENDING 카드가 있으면 새로 만들지 않고 그 `approvalId`를 준다 (agent 이벤트 재전송 대비). 화면에도 다시 보내지 않는다.
 - 변경 도구는 승인이 `APPROVED`이고 **도구·인자가 카드와 정확히 같을 때만** 실행한다. 실행되면 `EXECUTED` — 같은 승인으로 두 번 실행할 수 없다.
 - 변경 + 변경 이력 + 승인 `EXECUTED`는 **한 트랜잭션**이다 (AUD-001). 하나라도 실패하면 아무것도 안 바뀐다.
-- 팀장 결정은 agent 재개와 묶지 않는다. agent가 죽어 있어도 결정은 저장되고, 화면에 `FAILED`(`AGENT_UNAVAILABLE`)가 간다.
+- 팀장 결정은 agent 재개와 묶지 않는다. agent가 죽어 있어도 결정은 저장되고, 재개 요청은 대기열에서 30초·2분 뒤 다시 보낸다. 3번 다 실패하면 화면에 `FAILED`(`AGENT_UNAVAILABLE`)가 간다 (decisions 6.24).
 
 ### 3.4 승인 정책
 

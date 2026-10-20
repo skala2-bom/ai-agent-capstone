@@ -7,7 +7,7 @@
 
 ```
 ai-agent-capstone/
-├─ docker-compose.yml          서비스 5개 정의 (공개 포트: frontend 3000, backend 8080)
+├─ docker-compose.yml          서비스 정의 (공개 포트: frontend 3000, backend 8080)
 ├─ .env.example                OPENAI_API_KEY, OPENAI_MODEL (복사해서 .env로)
 ├─ .gitignore
 ├─ README.md
@@ -28,6 +28,7 @@ ai-agent-capstone/
 │  └─ src/main/java/capstone/
 │     ├─ BackendApplication.java   시작점, 모듈 목록
 │     ├─ Tasks.java                AI 작업 접수(202), 이벤트 저장·SSE 중계, 승인 결정 후 재개
+│     ├─ TaskQueue.java            AI 작업 대기열(RabbitMQ) 설정 — 30초·2분 재시도, DLQ
 │     ├─ InternalApi.java          /internal/** 도구 8개
 │     ├─ ImpactAnalysis.java · OptionAnalysis.java   영향 분석·대안 비교 계산
 │     ├─ Approvals.java            승인 카드·대기함·실행 전 확인·변경 이력
@@ -116,7 +117,7 @@ cd backend && mvn test
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
 | `frontend/` | Vue 3 + Vite 업무 화면 (compose는 실제 API 모드) | 프론트 담당 | (API 모드 화면 전부 연결됨) 과잉 해결안의 승인 요청은 agent 처리 후 |
-| `backend/` | 작업 접수·이벤트 저장·SSE 중계(`Tasks`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | (1~9단계 완료) 대기열(RabbitMQ, 가산점) |
+| `backend/` | 작업 접수·대기열·이벤트 저장·SSE 중계(`Tasks`·`TaskQueue`), 승인(`Approvals`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | (1~9단계, 대기열 완료) |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
@@ -128,4 +129,4 @@ cd backend && mvn test
 ## 일부러 뺀 것
 
 - `TOKEN` 스트리밍, healthcheck(postgres만 있음)
-- 대기열(RabbitMQ, 가산점)은 아직 없다.
+- 작업 대기열(RabbitMQ)은 backend가 넣고 backend가 꺼내 agent에 보낸다. agent가 꺼져 있으면 30초·2분 뒤 다시 보낸다 ([decisions 6.24](docs/decisions.md)).
