@@ -1,0 +1,25 @@
+{
+  "name": "bom-agent-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "pinia": "^3.0.0",
+    "lucide-vue-next": "^0.468.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.3",
+    "vite": "^6.1.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vue-tsc": "^2.2.0",
+    "vitest": "^3.0.0"
+  }
+}
