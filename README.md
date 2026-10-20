@@ -18,15 +18,20 @@ ai-agent-capstone/
 │  ├─ walking-skeleton.md      이 뼈대의 근거·의도·기준과 다른 점
 │  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
 │  └─ AI_Agent_Capstone_MCP_정리.md   교재 정리 노트
-├─ frontend/                   Vue 3 (CDN) + nginx
-│  ├─ index.html               질문 입력, SSE 이벤트 목록 표시
+├─ frontend/                   Vue 3 + Vite + TypeScript (자세한 건 frontend/README.md)
+│  ├─ src/                     화면, services/api.ts(서버 응답 변환), mocks/(목데이터)
 │  ├─ nginx.conf               /api/** → backend 프록시 (SSE 버퍼링 끔)
-│  └─ Dockerfile
+│  └─ Dockerfile               기본은 목데이터 모드 (VITE_DATA_MODE)
 ├─ backend/                    Spring Boot 3 (Java 21, Maven)
 │  ├─ pom.xml
 │  ├─ Dockerfile
 │  └─ src/main/java/capstone/
-│     └─ BackendApplication.java   작업 API(202), SSE 중계, /internal/** (고정 JSON)
+│     ├─ BackendApplication.java   작업 API(202), SSE 중계, 승인 결정
+│     ├─ InternalApi.java          /internal/** 도구 8개
+│     ├─ ImpactAnalysis.java · OptionAnalysis.java   영향 분석·대안 비교 계산
+│     ├─ Approvals.java            승인 카드·대기함·실행 전 확인·변경 이력
+│     ├─ ScreenApi.java            화면 조회·변경 API
+│     └─ Auth.java · Masking.java  로그인(JWT)·역할별 금액 가리기
 ├─ agent/                      FastAPI + LangGraph
 │  ├─ main.py                  StateGraph(agent ↔ tools), MCP 연결, 가짜 모델, 이벤트 발행
 │  └─ Dockerfile
@@ -41,7 +46,7 @@ ai-agent-capstone/
 SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](docs/BOM_Agent_아키텍처.md))
 
 > ⚠️ **여기 구조는 임시이며 토의로 바뀔 수 있음.**
-> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 인증, 대안 비교 계산, 승인 흐름은 없다. postgres에 시연 데이터(seed)가 들어가고, backend `/internal`이 그걸 읽어 영향 분석(결품·경고·과잉)을 실제로 계산한다.
+> 지금 코드는 서비스 5개가 끝까지 연결되는지만 확인하는 walking skeleton이다. 로그인(JWT)·역할별 금액 가리기·승인 흐름까지 있다. 작업은 아직 메모리에만 있다. postgres에 시연 데이터(seed)가 들어가고, backend `/internal`이 그걸 읽어 영향 분석(결품·경고·과잉)과 해결 대안 비교를 실제로 계산한다.
 
 ## 요청 흐름
 
@@ -77,7 +82,19 @@ cp .env.example .env   # OPENAI_API_KEY는 비워 두면 가짜 모델
 docker compose up --build
 ```
 
-http://localhost:3000 에서 "질문"을 누르면 `TOOL_START → TOOL_END → TOOL_START → TOOL_END → DONE`이 차례로 보인다.
+http://localhost:3000 이 화면이다. **지금은 목데이터 모드로 빌드된다** (프론트 Dockerfile 기본값). 실제 backend와 붙이는 API 모드는 프론트의 응답 변환이 끝난 뒤 켠다 ([contracts 최근 변경](docs/contracts.md) 13~15번).
+
+backend 흐름은 직접 확인할 수 있다 (시연 계정 `planner`·`buyer`·`approver`, 비밀번호 `1234`):
+
+```bash
+TOKEN=$(curl -s -XPOST localhost:8080/api/auth/login -H 'Content-Type: application/json' -d '{"user_id":"planner","password":"1234"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+```
+
+```bash
+curl -s -XPOST localhost:8080/api/ai/tasks -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"question":"허브를 11/25로 당기면?"}'
+```
+
+받은 `taskId`로 `curl -N -H "Authorization: Bearer $TOKEN" localhost:8080/api/ai/tasks/{taskId}/stream`을 부르면 `TOOL_START → TOOL_END → TOOL_START → TOOL_END → DONE`이 차례로 온다.
 
 `db/*.sql`을 고쳤으면 DB를 지우고 다시 띄워야 반영된다 (seed는 빈 DB에서만 들어간다).
 
@@ -97,8 +114,8 @@ cd backend && mvn test
 
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 채울 내용 (아키텍처 문서 기준) |
 |---|---|---|---|
-| `frontend/` | CDN Vue 한 장 + nginx | 프론트 담당 | Vite 전환, 진행 상태·결과·승인 카드·근거 패널, 로그인 |
-| `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개(`InternalApi`), 영향 분석 계산(`ImpactAnalysis`) + 골든셋 테스트 | 백엔드 담당 | 인증·권한, DB(ai_task·task_event 등), 계산 서비스, 승인, `/internal/**` 서비스 토큰 |
+| `frontend/` | Vue 3 + Vite 업무 화면 (목데이터 모드 기본) | 프론트 담당 | API 모드 연결: `services/api.ts` 응답 변환, 로그인 `user_id` |
+| `backend/` | 작업 접수·SSE 중계(`BackendApplication`), `/internal` 1차 8개(`InternalApi`), 영향 분석·대안 비교 계산(`ImpactAnalysis`·`OptionAnalysis`), 로그인·마스킹(`Auth`·`Masking`) + 테스트 | 백엔드 담당 | 작업 DB(ai_task·task_event), 2차 도구 5개, 자동 분석, 평가지표 입력, `/internal/**` 서비스 토큰 |
 | `agent/` | ReAct 그래프 + 가짜 모델 | Agent 담당 | 5장 그래프 노드(classify_intent 등), Harness 8요소, checkpointer, 승인 재개 |
 | `business-mcp/` | `analyze_impact` 도구 하나 | MCP 담당 | 8.1 조회·계산·변경 도구, 오류 코드별 ToolError |
 | `rag-mcp/` | 조항 Resource 하나 (원문 하드코딩) | RAG 담당 | `search_docs` 도구, pgvector 색인, indexer |
@@ -108,6 +125,6 @@ cd backend && mvn test
 
 ## 일부러 뺀 것
 
-- 인증, 작업·승인 테이블, 대안 비교 계산, 승인(`APPROVAL_REQUIRED`), `TOKEN` 스트리밍, healthcheck(postgres만 있음)
+- 작업 테이블(작업·이벤트는 아직 메모리), `TOKEN` 스트리밍, healthcheck(postgres만 있음)
 - `/internal/**`가 지금은 backend 공개 포트로도 열려 있다. 서비스 토큰 검사는 백엔드 담당이 추가한다.
 - 작업과 이벤트는 backend 메모리에만 있어서 재시작하면 사라진다.

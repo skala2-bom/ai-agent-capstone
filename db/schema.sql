@@ -83,7 +83,7 @@ CREATE TABLE purchase_order (
 CREATE INDEX ON purchase_order (item_id, due_date) WHERE status = 'OPEN';
 
 -- 협력사 × 부품 평가지표 (decisions.md 2.2). compare_options가 대안의 비용·위험을 여기서 계산한다.
--- decisions 2.2에서 칸 2개를 더했다:
+-- decisions 2.2에서 칸 2개를 더했고, expedite_cost_per_day의 단위를 개·일로 바꿨다:
 --   lead_time_days — 대체 협력사는 리드타임이 다르다. item.lead_time_days는 주 협력사 값이다
 --   split_fee      — 분할 배송 수수료 (decisions.md 3.4). 계약 조건 문서에 있는 숫자를 계산이 쓰려면 DB에도 있어야 한다
 CREATE TABLE supplier_metric (
@@ -91,7 +91,9 @@ CREATE TABLE supplier_metric (
     item_id               text NOT NULL REFERENCES item,
     unit_price            int  NOT NULL,   -- 원
     lead_time_days        int  NOT NULL,
-    expedite_cost_per_day int  NOT NULL,   -- 원/일. 이미 낸 발주를 하루 당길 때 붙는 비용 (발주 1건 기준)
+    -- 원/(개·일). 이미 낸 발주에서 1개를 1일 당길 때 붙는 비용. 많이·오래 당길수록 비싸다.
+    -- 발주 1건 기준으로 두면 "전체 당기기"가 "급한 만큼만 나눠 당기기"보다 항상 싸져서 분할의 의미가 없어진다 (decisions.md 6.14)
+    expedite_cost_per_day int  NOT NULL,
     split_fee             int  NOT NULL,   -- 원. 발주 1건을 나눠 받을 때 한 번
     delay_penalty         int  NOT NULL,   -- 원. 납기 지연 시 우리가 무는 패널티 (decisions.md 2.2 그대로)
     on_time_rate          numeric(5,2) NOT NULL CHECK (on_time_rate BETWEEN 0 AND 100),  -- %
@@ -100,5 +102,43 @@ CREATE TABLE supplier_metric (
     evaluated_by          text NOT NULL REFERENCES app_user,
     PRIMARY KEY (supplier_id, item_id)
 );
+
+-- 승인 카드 (approval 모듈). 변경 도구는 금액과 무관하게 전부 여기를 거친다 (decisions.md 6.1).
+-- 상태: PENDING → APPROVED | REJECTED, APPROVED → EXECUTED. 만료 없음 (decisions.md 1.7)
+CREATE TABLE approval (
+    approval_id    text PRIMARY KEY,           -- backend가 만든다. agent는 이벤트를 보낼 때 이 값을 모른다 (contracts.md 3.3)
+    task_id        text NOT NULL,              -- 작업은 아직 메모리에 있어 FK를 걸지 않는다 (8단계에서 ai_task로)
+    tool           text NOT NULL,              -- 변경 도구 이름. 실행할 때 이것과
+    args           jsonb NOT NULL,             -- 이 인자가 그대로 와야만 실행한다 (contracts.md 2.7)
+    summary        text,
+    amount         bigint,                     -- 원. 화면에 보낼 때 역할대로 가린다
+    evidence       jsonb NOT NULL DEFAULT '[]',
+    before         jsonb,                      -- 변경 전후. 사람이 카드에서 한눈에 비교하게 (contracts.md 3.3)
+    after          jsonb,
+    status         text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXECUTED')),
+    requested_by   text NOT NULL REFERENCES app_user,
+    requested_at   timestamptz NOT NULL DEFAULT now(),
+    decided_by     text REFERENCES app_user,
+    decided_at     timestamptz,
+    reason         text,                       -- 거절 사유 (필수) 또는 승인 메모
+    executed_at    timestamptz,
+    CHECK (status <> 'REJECTED' OR coalesce(reason, '') <> '')
+);
+CREATE INDEX ON approval (status, requested_at);
+
+-- 변경 이력 (규칙 AUD-001). 발주·생산계획이 바뀔 때마다 한 줄. 변경과 같은 트랜잭션에서 쓴다
+CREATE TABLE change_history (
+    id          bigserial PRIMARY KEY,
+    target_type text NOT NULL CHECK (target_type IN ('PURCHASE_ORDER', 'PRODUCTION_PLAN')),
+    target_id   text NOT NULL,
+    action      text NOT NULL,                 -- 변경 도구 이름, 또는 화면 변경이면 update_plan · supplier_delay
+    before      jsonb,
+    after       jsonb,
+    reason      text,
+    changed_by  text NOT NULL REFERENCES app_user,
+    approval_id text REFERENCES approval,      -- 승인을 거친 변경이면 그 승인. 화면에서 직접 바꾼 사실 기록이면 null
+    changed_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON change_history (target_type, target_id);
 
 RESET ROLE;

@@ -4,7 +4,32 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-20 (오후 — `/internal` 1차 응답 모양·DB 접속 정보·seed·골든셋, `orderable` 칸 추가)
+> **갱신**: 2026-10-20 저녁 — 아래 "최근 변경" 표 참고
+
+## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~밤, B 파트)
+
+> 맨 위에 두는 이유: 계약이 바뀐 줄이 문서 곳곳에 흩어져 있어서, 무엇이 바뀌었고 **누가 무엇을 해야 하는지**를 한 번에 보게 하려는 것이다. 다음 변경이 생기면 이 표를 새로 쓴다.
+
+| # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
+|:-:|---|---|---|---|
+| 1 | **평가셋 정답은 `eval/golden.json`** (기획안 PDF 아님) | 2.8 | 시연 질문 예시에 `question` 사용 가능 | 🔴 **Harness 평가가 이 파일을 읽게** |
+| 2 | `analyze_impact` whatif 연산 6개 | 2.2 | – | 🔴 **business-mcp 도구 설명에 6개 모두 적기**, `classify_intent` 출력 형식 |
+| 3 | `compare_options` 요청에 `whatif` 추가, 응답에 `item_id`·`resolves`·`recommended`·`cost_level` | 2.3 | – | verify가 `{"op": tool, **args}`로 다시 계산 |
+| 4 | **`X-Role`이 없으면 금액이 전부 가려진다** (생산관리 기준) | 1.1 | – | 🔴 **agent → business-mcp → backend로 `X-Role`·`X-User-Id` 헤더 전달**. backend가 `/agent/tasks`에 `userId`·`role`을 넣어 준다 |
+| 5 | 로그인 생김. `/api/**`는 JWT 필수, SSE는 `?access_token=` | 3.1 | 🔴 **로그인 화면, 모든 요청에 `Authorization` 헤더** (지금 화면에 임시 버튼을 넣어 뒀다) | – |
+| 6 | 생산관리 담당자에게 추가 비용은 금액 대신 등급(`cost_level`) | 1.2 | 생산관리 화면에서 `cost_level` 표시 | – |
+| 7 | 오류 코드 `INVALID_ARGUMENT` 추가 | 2.5 | – | 없음 (그대로 전달) |
+| 8 | `analyze_impact` 응답에서 `evidence_uri` 제거, `compare_options`의 `evidence`는 빈 목록 | 2.2·2.3 | – | 근거는 `search_docs`로 |
+| 9 | 새 발주(추가 발주·대체 협력사 구매)는 **도구로 열지 않는다** (B 제안, 이견 있으면 뒤집기) | decisions 6.16 | – | – |
+| 10 | **승인 흐름이 실제로 동작한다**: 카드 저장·대기함·승인/거절·agent 재개 요청, 변경 도구는 승인과 도구·인자가 같을 때만 저장 | 3.1·3.3 | 승인 대기함·승인 카드 화면을 실제 API로 | 🔴 **`agent-draft`를 main에 합치기** — 지금 main의 agent엔 `/resume`이 없어 승인 후 FAILED가 난다 |
+| 11 | `APPROVAL_REQUIRED` 이벤트 응답이 `{approvalId}`, SSE 이벤트에 `before`·`after` 추가 | 3.2·3.3 | 승인 카드에 변경 전후 표시 | (참고) 같은 이벤트를 다시 보내도 카드는 하나 |
+| 12 | 화면 변경 API 2개 — **프론트가 정한 요청 모양 그대로**: `PUT /api/plans/{id} {date, qty}`, `PUT /api/purchase-orders/{id}/due-date {due_date, reason}` | 3.1 | API 모드에서 바로 쓸 수 있다 | – |
+| 13 | **로그인 요청 칸은 `user_id`** (프론트 잠정안은 `username`) | 3.1 | 🔴 **`services/api.ts`의 `username` → `user_id`** | – |
+| 14 | 조회 응답은 `{plans: [...]}`처럼 감싸져 있고 snake_case | 2.1 | 🔴 **`services/api.ts`에서 화면 타입으로 변환** (`plan_id`→`id`, `on_hand`→`stock` 등) | – |
+| 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
+| 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
+| 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+
 
 ## 파트 구분
 
@@ -53,16 +78,28 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - **역할을 도구 인자에 넣지 않는다.** 도구 인자는 모델이 채우는 값이라 조작될 수 있다.
 - business-mcp는 받은 헤더를 **해석하지 않고 그대로** 전달한다.
 - 나중에 붙이면 agent와 business-mcp를 동시에 고쳐야 하므로 **처음부터 넣는다.**
+- ✅ **backend 쪽 구현 완료 (10/20 저녁)**: `/agent/tasks` 요청에 `userId`·`role`을 넣어 보낸다 (JWT에서 꺼낸 값). `/internal/**`는 `X-Role`을 읽어 금액을 가린다.
+- **`X-Role`이 없거나 모르는 값이면 `PLANNER` 기준으로 가린다** (금액 전부 `null`). 헤더를 빠뜨렸을 때 금액이 새는 것보다 안 보이는 쪽이 안전하다. 대소문자는 구분하지 않는다. → **C가 헤더를 안 넘기면 BUYER가 물어도 AI 답변에 금액이 안 나온다.**
 
 ### 1.2 역할별 금액 공개 범위 (규칙 SEC-001)
 
 | 역할 | 볼 수 있는 것 |
 |---|---|
-| `PLANNER` 생산관리 | 금액 비공개 |
+| `PLANNER` 생산관리 | 금액 비공개. **추가 비용은 등급(`cost_level`)만** (기획안 2.4) |
 | `BUYER` 구매 | 총액까지 |
 | `APPROVER` 구매팀장 | 계약 단가까지 |
 
-- 1차 차단은 **backend masking**이 `/internal/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다.
+✅ **구현 완료 (10/20 저녁, `Masking.java`)** — 응답 JSON의 **칸 이름**으로 가린다. 어느 API든 같은 이름이면 같이 가려진다.
+
+| 칸 | PLANNER | BUYER | APPROVER |
+|---|:-:|:-:|:-:|
+| `unit_price` (단가·계약 단가) | `null` | `null` | 보임 |
+| `amount` · `added_cost` (총액·추가 비용) | `null` | 보임 | 보임 |
+| `cost_level` (`LOW`·`MID`·`HIGH` = 30만 원 미만·100만 원 미만·그 이상) | 보임 | 보임 | 보임 |
+
+- **키는 남기고 값만 `null`**이다. 역할마다 응답 모양이 달라지지 않는다.
+- 1차 차단은 **backend masking**이 `/internal/**`와 `/api/**` 응답에서 한다. 규칙은 여기 한 곳에만 둔다. 역할은 `/api`는 JWT, `/internal`은 `X-Role`에서 읽는다.
+- SSE `APPROVAL_REQUIRED`의 `amount`는 승인 API(7단계)를 만들 때 같은 규칙을 적용한다.
 - 2차는 agent Harness가 도구 결과에 단가 필드가 남아 있으면 모델에 넘기기 전에 지운다.
 
 ### 1.3 DB 스키마와 계정
@@ -147,7 +184,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
   "new":      { "po_id": "PO-2609-010", "qty": 100, "due_date": "2026-11-25", "status": "OPEN", "parent_po_id": "PO-2609-001" } }
 ```
 
-- 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "issues": [...] }` (`issues`는 `analyze_impact`의 `shortages` 항목을 그대로 넣는다).
+- 요청 body: `analyze_impact`는 `{ "whatif": [...] }`, `compare_options`는 `{ "whatif": [...], "issues": [...] }` (2.3).
 - 변경 2개는 고정 응답이어도 **검사는 진짜로 한다** (승인 ID 유무 → OPEN → 수량 → 리드타임 → 날짜 같음). 오류 경로를 지금 시험할 수 있다. 시험용으로 이미 입고된 `PO-2608-014`가 있다. 저장은 아직 안 한다.
 - 금액 필드(`unit_price`·`amount`·`added_cost`)는 지금 가리지 않는다. 마스킹(1.2)이 붙으면 **키는 남기고 값을 `null`로** 바꾼다 — 키가 사라지면 모양이 역할마다 달라져서 도구 결과를 읽는 쪽이 분기해야 한다.
 
@@ -214,33 +251,51 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - `policy_version`은 기준을 바꿔도 과거 결과를 해석할 수 있게 한다. Harness 평가셋 전후 비교에 그대로 쓰인다.
 - 판정 수식과 경계 조건은 [아키텍처 1.2](BOM_Agent_아키텍처.md).
 
-### 2.3 `compare_options` 응답
+### 2.3 `compare_options` 요청과 응답
+
+✅ **실제 계산으로 동작한다** (`OptionAnalysis.java`, 평가셋 SC1~SC4 대안 정답 테스트 통과). 아래는 SC1의 실제 응답 중 첫 대안이다.
+
+**요청** — `{ "whatif": [...], "issues": [...] }` (10/20 오후 변경: 전에는 `issues`만 있었다)
+- `whatif`: `analyze_impact`에 넣었던 것과 **같은 가정**. 결품은 가정 위에서만 생기므로 대안도 그 위에서 만들고 검증해야 한다. 변경이 이미 DB에 반영됐으면 비운다.
+- `issues`: 풀고 싶은 결품. `analyze_impact`의 `shortages` 항목을 그대로 넣어도 된다 (`item_id`만 본다). 비우면 전부.
+
+**응답**
 
 ```jsonc
 {
   "policy_version": "v0.1",
   "options": [{
     "option_id": "OPT-1",
-    "type": "SPLIT_PO",               // SPLIT_PO | DUE_DATE_CHANGE | REALLOCATE
-    "summary": "PO-2609-001(MCU 500개, 12/12)을 400/100으로 나눠 100개를 11/25에 받는다",
+    "type": "SPLIT_PO",                // SPLIT_PO | DUE_DATE_CHANGE (REALLOCATE는 아직 만들지 않는다)
+    "item_id": "MCU",                  // 이 대안이 푸는 부품
+    "summary": "PO-2609-001(MCU 500개, 12/12 입고)에서 100개만 떼어 11/25에 먼저 받는다",
     "tool": "split_po",                // 승인 카드와 실행에 그대로 쓴다
     "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
-    "added_cost": 390000,              // 원. 긴급 비용(17일 × 20,000) + 분할 배송 수수료 50,000
-    "risk": "LOW",                     // LOW | MID | HIGH. 협력사 on_time_rate 기반
-    "feasible": true,                  // LT-001 통과 여부
-    "side_effects": [],                // 다른 제품에 생기는 영향
-    "evidence": ["doc://SUPPLY-2026-003/5.1"]
+    "added_cost": 390000,              // 원. 당김 100개 × 17일 × 200원 + 분할 수수료 50,000 (마스킹 대상)
+    "cost_level": "MID",               // 30만 미만 LOW · 100만 미만 MID · 그 이상 HIGH. 생산관리 담당자는 이것만 본다
+    "risk": "MID",                     // LOW | MID | HIGH. 납기 준수율 + 당기는 일수
+    "feasible": true,                  // LT-001 통과. 통과 못 한 대안은 아예 안 나오므로 항상 true
+    "resolves": true,                  // 이 대안 하나로 그 부품의 결품(orderable=false)이 다 풀리나 — backend가 다시 계산해서 채움
+    "side_effects": [],                // 다른 곳에 새로 생기는 결품 [{item_id, plan_id, plan_date, projected_stock}]
+    "recommended": true,               // 부품마다 하나만 true
+    "evidence": []                     // backend는 비워 둔다. agent가 search_docs 결과로 채운다
   }],
-  "recommended_option_id": "OPT-1"
+  "recommended_option_id": "OPT-1"     // 첫 번째 추천안. 결품 부품이 여럿이면 options의 recommended=true를 모두 본다
 }
 ```
 
 - `tool`·`args`를 그대로 담는 이유: 모델이 고른 대안을 **그대로 승인 카드로 올리고 그대로 실행**할 수 있다. 모델이 인자를 다시 만들지 않으니 숫자가 틀어질 여지가 없다.
-- `added_cost`·`risk`는 B의 계산 서비스가 `supplier_metric`을 읽어 채운다 ([decisions.md 2절](decisions.md)).
+- 대안은 **`orderable=false` 결품만** 대상으로 만든다. `orderable=true`는 "지금 발주하면 제때 온다"는 정상 안내라서 기존 발주를 건드릴 이유가 없다. 그래서 SC3(새 케이스 −800, 발주 가능)은 대안이 0개다.
+- **추천 순서**: 결품을 푸는 것 → 부작용 없는 것 → 위험 낮은 것 → 싼 것. 결품을 다 풀면서 부작용이 없는 대안이 없으면 `recommended_option_id`는 `null`이다. 근거는 [decisions.md 6.14](decisions.md).
+- **결품 부품이 여럿이면 추천안도 여럿이다** (SC2: 릴레이·전원 모듈 각 1개). 둘 다 승인해야 결품이 다 풀린다. 승인 요청은 대안마다 따로 올린다 (승인 카드 1장 = 도구 호출 1번).
+- `added_cost`·`risk`는 `supplier_metric`에서 나온다 ([decisions.md 2절](decisions.md)).
 
 ### 2.4 `verify` 통과 기준 (C가 구현)
 
-고른 대안을 적용해 `analyze_impact`를 **다시** 부른 뒤:
+고른 대안을 적용해 `analyze_impact`를 **다시** 부른 뒤 (whatif = 원래 가정 + `{"op": tool, **args}`):
+
+> `compare_options`가 이미 같은 계산으로 `resolves`·`side_effects`를 채워 준다. verify는 그 값을 믿어도 되고, Harness 증빙을 위해 다시 불러 확인해도 된다. 결과는 같다.
+
 
 | 조건 | 판정 |
 |---|---|
@@ -272,9 +327,12 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `INVALID_SPLIT_QTY` | 분할 수량이 범위 밖 | 가능한 범위 |
 | `SPLIT_NOT_USEFUL` | 분할 후 입고일이 원래와 같음 | 나눌 이유가 없음 |
 | `BOM_CYCLE` | 순환 BOM | 순환 경로 |
-| `APPROVAL_REQUIRED` | 승인 없이 변경 시도 | 승인 절차 안내 |
+| `APPROVAL_REQUIRED` | 승인 없이 변경 시도. 승인이 PENDING·REJECTED·EXECUTED이거나 **도구·인자가 승인 카드와 다를 때**도 | 승인 절차, 또는 승인된 호출 그대로의 인자 |
 | `UPSTREAM_TIMEOUT` | 백엔드 응답 지연 | 잠시 후 재시도 |
 | `INVALID_ARGUMENT` | 인자가 없거나 형식이 틀림 (날짜 형식, 모르는 `op`, 0 이하 수량) — **10/20 오후 추가** | 맞는 형식이나 가능한 값 목록 |
+| `ROLE_NOT_ALLOWED` | 이 역할로는 못 하는 일. agent에선 생산관리 담당자 작업의 승인 요청 (403) — **10/20 밤 추가** | 할 수 있는 역할 |
+| `APPROVAL_NOT_PENDING` | 이미 처리된 승인을 다시 결정 (409, 화면) — **10/20 밤 추가** | 현재 상태 |
+| `PLAN_NOT_OPEN` | 끝났거나 취소된 생산계획 변경 (409, 화면) — **10/20 밤 추가** | 현재 상태 |
 
 > **판정과 오류를 섞지 않는다.** 결품·경고·과잉은 정상 응답의 **결과**다. 오류는 **호출 자체가 성립하지 않을 때**만 쓴다.
 
@@ -311,7 +369,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | 칸 | 주인 |
 |---|---|
 | `question` · `role` · `expected_tools` | C |
-| `whatif` · `expected` | B (`expected`는 계산으로만 채운다. 손계산 금지) |
+| `whatif` · `expected` | B (`expected`는 계산으로만 채운다. 손계산 금지). `expected.options`·`recommended_option_id`는 `compare_options` 정답 |
 
 - 형식·문항 추가 절차는 [`eval/README.md`](../eval/README.md).
 - `whatif`는 C의 `classify_intent`가 질문에서 뽑아야 할 정답이기도 하다.
@@ -325,16 +383,27 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 
 | Method | Path | 응답 | 권한 |
 |---|---|---|---|
-| POST | `/api/auth/login` | JWT `{sub, role, exp}` | 모두 |
-| POST | `/api/ai/tasks` | `202 {taskId}` | 로그인 |
+| POST | `/api/auth/login` | ✅ `{token, user_id, name, role, expires_at}` | 모두 |
+| POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
 | GET | `/api/ai/tasks/{id}` | `{status, answer, result, sources}` | 요청자 |
-| GET | `/api/ai/tasks/{id}/stream` | `text/event-stream` | 요청자 |
-| POST | `/api/ai/tasks/{id}/approval` | `202` | APPROVER |
+| GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
+| POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
 | GET | `/api/ai/tasks?mine=true` | 목록 | 로그인 |
-| GET | `/api/approvals?status=PENDING` | 승인 대기함 | APPROVER |
-| GET | `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
-| PUT | `/api/plans/{id}` | 생산 일정 변경 | PLANNER |
-| PUT | `/api/purchase-orders/{id}/due-date` | 협력사 지연 입력 | BUYER |
+| GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3) | APPROVER |
+| GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` (응답 모양은 2.1 `/internal`과 같다) · ⬜ `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
+| PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
+| PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양). 사유 필수 | BUYER·APPROVER |
+
+✅ = 구현됨 (10/20). 나머지(`GET /api/ai/tasks/{id}`, 작업 목록, BOM 조회)는 8·9단계. 화면 변경 2개의 요청 모양은 프론트 브랜치가 먼저 정한 것을 따랐다.
+
+**로그인과 토큰** (10/20 저녁 구현)
+- 요청 `POST /api/auth/login {"user_id": "buyer", "password": "1234"}` → `{"token": "eyJ…", "user_id": "buyer", "name": "박구매", "role": "BUYER", "expires_at": "…"}`
+- 실패는 `401 {"error": "INVALID_CREDENTIALS", …}`. 아이디가 틀렸는지 비밀번호가 틀렸는지 알려 주지 않는다.
+- 이후 모든 `/api/**` 요청에 `Authorization: Bearer {token}`. 없거나 만료면 `401`.
+- **SSE만 예외**: `GET /api/ai/tasks/{id}/stream?access_token={token}`. 브라우저 `EventSource`는 헤더를 못 붙인다. 다른 경로에서는 주소의 토큰을 받지 않는다.
+- 토큰 유효 8시간. 갱신 토큰은 없다 — 만료되면 다시 로그인.
+- 응답의 `role`·`name`은 화면 표시에만 쓴다. 권한 판단은 backend가 한다 (교재 5장).
+- 시연 계정: `planner`(김계획) · `buyer`(박구매) · `approver`(정팀장), 비밀번호 `1234`.
 
 ### 3.2 SSE 이벤트 6종
 
@@ -345,7 +414,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `TOKEN` | `text` | 답변 영역에 이어 붙임 |
 | `TOOL_START` | `tool`, `label` | 진행 상태 |
 | `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
-| `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence` | 승인 카드 |
+| `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence`, ✅ `before`, `after` | 승인 카드 |
 | `DONE` | `status`, `answer`, `result`, `sources` | 스트림 닫고 목록 갱신 |
 | `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
 
@@ -361,9 +430,31 @@ backend ──▶ 화면     위 + approvalId          (amount는 역할에 맞�
 backend ──▶ agent    { threadId, approvalId, decision, reason }
 ```
 
-- `approvalId`는 **backend가 만든다.** agent는 이벤트를 보낼 때 그 값을 알 수 없다.
+- `approvalId`는 **backend가 만든다.** agent는 이벤트를 보낼 때 그 값을 알 수 없다. (✅ 이벤트 응답 `{approvalId}`로 돌려주긴 한다)
 - 거절은 `reason` 필수.
 - 승인 카드에는 **변경 전후를 함께** 보여 준다. 도구 이름과 인자만으로는 사람이 판단할 수 없다.
+
+✅ **구현 (10/20 밤, `Approvals.java`)**
+
+승인 카드 (`GET /api/approvals`의 한 줄, `/api/approvals/{id}`):
+
+```jsonc
+{ "approval_id": "APR-8bd9fbd5", "task_id": "…", "tool": "split_po",
+  "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
+  "summary": "…", "amount": 390000, "evidence": [],
+  "before": { "po_id": "PO-2609-001", "item_id": "MCU", "qty": 500, "due_date": "2026-12-12" },
+  "after": [ { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-12-12" },
+             { "po_id": "(신규)", "qty": 100, "due_date": "2026-11-25" } ],   // 실행 후엔 실제 새 번호로 바뀐다
+  "status": "PENDING",                 // PENDING → APPROVED | REJECTED, APPROVED → EXECUTED
+  "requested_by": "buyer", "requested_at": "…", "decided_by": null, "decided_at": null,
+  "reason": null, "executed_at": null }
+```
+
+- 요청자 역할이 BUYER·APPROVER가 아니면 카드를 만들지 않는다 → agent에 `403 ROLE_NOT_ALLOWED`.
+- 같은 작업·도구·인자로 PENDING 카드가 있으면 새로 만들지 않고 그 `approvalId`를 준다 (agent 이벤트 재전송 대비). 화면에도 다시 보내지 않는다.
+- 변경 도구는 승인이 `APPROVED`이고 **도구·인자가 카드와 정확히 같을 때만** 실행한다. 실행되면 `EXECUTED` — 같은 승인으로 두 번 실행할 수 없다.
+- 변경 + 변경 이력 + 승인 `EXECUTED`는 **한 트랜잭션**이다 (AUD-001). 하나라도 실패하면 아무것도 안 바뀐다.
+- 팀장 결정은 agent 재개와 묶지 않는다. agent가 죽어 있어도 결정은 저장되고, 화면에 `FAILED`(`AGENT_UNAVAILABLE`)가 간다.
 
 ### 3.4 승인 정책
 

@@ -34,13 +34,20 @@ class ImpactAnalysis {
 
     record Part(String id, int leadTime, int safety, boolean highValue, Integer unitPrice) {}
     record Plan(String id, String product, LocalDate date, int qty) {}
-    record Po(String id, String item, int qty, LocalDate due) {}
+    record Po(String id, String item, String supplier, int qty, LocalDate orderDate, LocalDate due) {
+        Po withQty(int q) { return new Po(id, item, supplier, q, orderDate, due); }
+        Po withDue(LocalDate d) { return new Po(id, item, supplier, qty, orderDate, d); }
+    }
     record BomLine(String child, int qty, LocalDate from, LocalDate to) {
         boolean validOn(LocalDate d) {
             return (from == null || !d.isBefore(from)) && (to == null || !d.isAfter(to));
         }
     }
     record Use(String planId, LocalDate date, int qty) {}
+
+    /** 계산에 필요한 전부. plans·pos는 whatif가 고치므로 매번 새로 읽는다. */
+    record State(Map<String, String> types, Map<String, Part> parts, Map<String, Integer> onHand,
+                 Map<String, Plan> plans, Map<String, Po> pos, Map<String, List<BomLine>> bom) {}
 
     private final JdbcTemplate db;
 
@@ -50,7 +57,20 @@ class ImpactAnalysis {
 
     /** whatif가 null이거나 비어 있으면 지금 상태 그대로 판정한다 (seed 기준 0건). */
     Map<String, Object> analyze(List<Map<String, Object>> whatif) {
-        // ---- 1. 읽기
+        return judge(load(whatif));
+    }
+
+    /**
+     * LT-001: 발주일부터 리드타임이 지나야 받을 수 있고, 오늘·과거 입고는 없다.
+     * 이미 낸 발주는 그 발주일, 새 발주는 오늘이 발주일이다 (decisions.md 7.2).
+     */
+    static LocalDate earliestReceipt(LocalDate orderDate, int leadTime) {
+        LocalDate ready = orderDate.plusDays(leadTime);
+        return ready.isAfter(TODAY) ? ready : TODAY.plusDays(1);
+    }
+
+    /** DB에서 지금 상태를 읽고 whatif를 메모리에 적용한다. */
+    State load(List<Map<String, Object>> whatif) {
         Map<String, String> types = new HashMap<>();
         Map<String, Part> parts = new TreeMap<>();
         db.query("""
@@ -68,31 +88,34 @@ class ImpactAnalysis {
         db.query("select plan_id, product_id, plan_date, qty from production_plan where status = 'PLANNED' order by plan_id",
                 rs -> { plans.put(rs.getString(1), new Plan(rs.getString(1), rs.getString(2), rs.getObject(3, LocalDate.class), rs.getInt(4))); });
         Map<String, Po> pos = new LinkedHashMap<>();
-        db.query("select po_id, item_id, qty, due_date from purchase_order where status = 'OPEN' order by po_id",
-                rs -> { pos.put(rs.getString(1), new Po(rs.getString(1), rs.getString(2), rs.getInt(3), rs.getObject(4, LocalDate.class))); });
+        db.query("select po_id, item_id, supplier_id, qty, order_date, due_date from purchase_order where status = 'OPEN' order by po_id",
+                rs -> { pos.put(rs.getString(1), new Po(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4),
+                        rs.getObject(5, LocalDate.class), rs.getObject(6, LocalDate.class))); });
         Map<String, List<BomLine>> bom = new HashMap<>();
         db.query("select parent_id, child_id, qty_per, valid_from, valid_to from bom",
                 rs -> { bom.computeIfAbsent(rs.getString(1), k -> new ArrayList<>()).add(new BomLine(rs.getString(2), rs.getInt(3),
                         rs.getObject(4, LocalDate.class), rs.getObject(5, LocalDate.class))); });
 
-        // ---- 2. 가정 변경
         if (whatif != null) for (Map<String, Object> op : whatif) apply(op, plans, pos);
+        return new State(types, parts, onHand, plans, pos, bom);
+    }
 
-        // ---- 3. 소요 (부품별, 날짜순)
+    /** 소요를 만들고 부품마다 판정한다. */
+    Map<String, Object> judge(State st) {
+        // 소요 (부품별, 날짜순)
         Map<String, List<Use>> uses = new HashMap<>();
-        for (Plan p : plans.values())
-            explode(p.product(), p.qty(), p, bom, types, uses, new ArrayList<>(List.of(p.product())));
+        for (Plan p : st.plans().values())
+            explode(p.product(), p.qty(), p, st.bom(), st.types(), uses, new ArrayList<>(List.of(p.product())));
         Map<String, TreeMap<LocalDate, Integer>> receipts = new HashMap<>();
-        for (Po po : pos.values())
+        for (Po po : st.pos().values())
             receipts.computeIfAbsent(po.item(), k -> new TreeMap<>()).merge(po.due(), po.qty(), Integer::sum);
 
-        // ---- 4. 판정
         List<Map<String, Object>> shortages = new ArrayList<>(), warnings = new ArrayList<>(), excesses = new ArrayList<>();
-        for (Part part : parts.values()) {
+        for (Part part : st.parts().values()) {
             List<Use> u = uses.getOrDefault(part.id(), new ArrayList<>());
             u.sort(Comparator.comparing(Use::date).thenComparing(Use::planId));
             TreeMap<LocalDate, Integer> in = receipts.getOrDefault(part.id(), new TreeMap<>());
-            judge(part, onHand.getOrDefault(part.id(), 0), in, u, shortages, warnings, excesses);
+            judge(part, st.onHand().getOrDefault(part.id(), 0), in, u, shortages, warnings, excesses);
         }
         Comparator<Map<String, Object>> byDate = Comparator.comparing((Map<String, Object> e) -> (String) e.get("plan_date"))
                 .thenComparing(e -> (String) e.get("item_id"));
@@ -208,7 +231,7 @@ class ImpactAnalysis {
             }
             case "request_due_date_change" -> {
                 Po po = find(pos, op, "po_id", "발주");
-                pos.put(po.id(), new Po(po.id(), po.item(), po.qty(), date(op, "new_due_date")));
+                pos.put(po.id(), po.withDue(date(op, "new_due_date")));
             }
             case "split_po" -> {
                 Po po = find(pos, op, "po_id", "발주");
@@ -216,12 +239,13 @@ class ImpactAnalysis {
                 if (q >= po.qty())
                     throw new ApiError("INVALID_SPLIT_QTY", "분할 수량이 범위를 벗어났습니다.",
                             "split_qty는 1 ~ " + (po.qty() - 1) + " 사이여야 합니다 (원 발주 " + po.qty() + "개).");
-                pos.put(po.id(), new Po(po.id(), po.item(), po.qty() - q, po.due()));
-                pos.put(po.id() + "~split", new Po(po.id() + "~split", po.item(), q, date(op, "new_due_date")));
+                pos.put(po.id(), po.withQty(po.qty() - q));
+                String newId = po.id() + "~split";   // 실제 번호는 변경 API가 만든다. 가정 안에서만 쓰는 이름
+                pos.put(newId, new Po(newId, po.item(), po.supplier(), q, po.orderDate(), date(op, "new_due_date")));
             }
             case "change_po_qty" -> {
                 Po po = find(pos, op, "po_id", "발주");
-                pos.put(po.id(), new Po(po.id(), po.item(), positive(op, "new_qty"), po.due()));
+                pos.put(po.id(), po.withQty(positive(op, "new_qty")));
             }
             case "cancel_po" -> pos.remove(find(pos, op, "po_id", "발주").id());
             default -> throw ApiError.invalid("모르는 가정 변경입니다: " + name,

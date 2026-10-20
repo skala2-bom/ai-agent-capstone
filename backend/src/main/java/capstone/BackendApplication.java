@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -49,15 +51,18 @@ public class BackendApplication {
      * @param emitters 이 작업을 지금 보고 있는 화면들. 보통 1개지만, 같은 작업을
      *                 두 탭에서 열 수도 있어서 목록이다.
      */
-    record Task(String id, List<Map<String, Object>> events, List<SseEmitter> emitters) {}
+    record Task(String id, String userId, String role, List<Map<String, Object>> events, List<SseEmitter> emitters) {}
 
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
 
     /** agent 호출용. compose 안에서는 서비스 이름이 그대로 주소가 된다 (http://agent:8000). */
     private final RestClient agent;
 
-    BackendApplication(@Value("${AGENT_URL:http://agent:8000}") String agentUrl) {
+    private final Approvals approvals;
+
+    BackendApplication(@Value("${AGENT_URL:http://agent:8000}") String agentUrl, Approvals approvals) {
         this.agent = RestClient.create(agentUrl);
+        this.approvals = approvals;
     }
 
     // ------------------------------------------------------------------
@@ -73,20 +78,31 @@ public class BackendApplication {
      *
      * <p>agent 호출이 실패해도 화면이 영원히 기다리지 않도록 FAILED 이벤트를 남긴다.
      *
-     * <p>아직 없는 것: 로그인·권한 확인, 작업 DB 저장, 대기열(P2).
+     * <p>요청자(JWT의 sub·role)를 작업에 저장하고 agent에 넘긴다. agent는 이 값을 {@code X-User-Id}·{@code X-Role}
+     * 헤더로 도구 호출에 실어 보낸다 (contracts.md 1.1). 역할을 질문 내용이나 도구 인자에서 받지 않는 이유:
+     * 그건 사용자나 모델이 바꿀 수 있는 값이다.
+     *
+     * <p>아직 없는 것: 작업 DB 저장, 대기열(P2).
      */
     @PostMapping("/api/ai/tasks")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    Map<String, String> createTask(@RequestBody Map<String, String> body) {
+    Map<String, String> createTask(@RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
         String id = UUID.randomUUID().toString();
+        String userId = user.getSubject(), role = user.getClaimAsString("role");
         // threadId는 지금 taskId와 같게 쓴다. 승인 후 재개(interrupt/resume)를 붙일 때
         // 같은 대화를 이어가는 열쇠가 되는 값이라, 그때 별도로 관리해야 할 수도 있다.
-        tasks.put(id, new Task(id, new ArrayList<>(), new ArrayList<>()));
+        tasks.put(id, new Task(id, userId, role, new ArrayList<>(), new ArrayList<>()));
         CompletableFuture.runAsync(() -> {
             try {
-                agent.post().uri("/agent/tasks")
-                        .body(Map.of("taskId", id, "threadId", id, "question", body.getOrDefault("question", "")))
-                        .retrieve().toBodilessEntity();
+                // whatif는 사람이 물은 작업이라 null이다. 질문에서 뽑는 건 agent의 classify_intent가 한다 (contracts.md 2.6)
+                Map<String, Object> req = new HashMap<>();
+                req.put("taskId", id);
+                req.put("threadId", id);
+                req.put("userId", userId);
+                req.put("role", role);
+                req.put("question", body.getOrDefault("question", ""));
+                req.put("whatif", null);
+                agent.post().uri("/agent/tasks").body(req).retrieve().toBodilessEntity();
             } catch (Exception e) {
                 addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE", "message", e.getMessage()));
             }
@@ -104,11 +120,16 @@ public class BackendApplication {
      *
      * <p>이미 끝난 작업을 구독하면 쌓인 이벤트를 다 보낸 뒤 바로 스트림을 닫는다.
      *
-     * <p>아직 없는 것: 15초 heartbeat, 본인 작업인지 확인.
+     * <p>질문한 사람만 구독할 수 있다 (contracts.md 3.1 "요청자"). 팀장은 승인 대기함으로 카드를 받는다.
+     * 토큰은 {@code ?access_token=}으로 받는다 — 브라우저 EventSource는 헤더를 못 붙인다 ({@link Auth}).
+     *
+     * <p>아직 없는 것: 15초 heartbeat.
      */
     @GetMapping(path = "/api/ai/tasks/{id}/stream", produces = "text/event-stream")
-    SseEmitter stream(@PathVariable String id) {
+    SseEmitter stream(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Task task = find(id);
+        if (!task.userId().equals(user.getSubject()))
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.FORBIDDEN, "질문한 사람만 볼 수 있습니다");
         SseEmitter emitter = new SseEmitter(120_000L);  // 작업 전체 제한 120초 (아키텍처 4.2)
         // addEvent와 같은 자물쇠로 묶는다. 안 묶으면 "쌓인 것 전송"과 "새 이벤트 도착"이
         // 겹쳐서 이벤트가 중복되거나 빠질 수 있다.
@@ -133,13 +154,66 @@ public class BackendApplication {
      * <p>계층상 아래(AI Serving)에서 위(Application)로 가는 호출이라 예외적이지만,
      * 이벤트를 화면에 중계할 수 있는 건 backend뿐이라 아키텍처 3장이 허용한 2개 예외 중 하나다.
      *
-     * <p>아직 없는 것: 서비스 토큰 확인 (아키텍처 10장). 지금은 8080이 공개 포트라
-     * 밖에서도 부를 수 있다. 인증 담당이 막아야 한다.
+     * <p>아직 없는 것: 서비스 토큰 확인 (아키텍처 10장, 9단계). 지금은 8080이 공개 포트라
+     * 밖에서도 부를 수 있다.
      */
     @PostMapping("/internal/tasks/{id}/events")
-    void receiveEvent(@PathVariable String id, @RequestBody Map<String, Object> event) {
-        find(id);  // 없는 작업이면 404
+    Map<String, Object> receiveEvent(@PathVariable String id, @RequestBody Map<String, Object> event) {
+        Task task = find(id);  // 없는 작업이면 404
+        if ("APPROVAL_REQUIRED".equals(event.get("type"))) return approvalRequired(task, event);
         addEvent(id, event);
+        return Map.of();
+    }
+
+    /**
+     * APPROVAL_REQUIRED: 승인 카드를 저장하고 approvalId를 붙여 화면에 보낸다 (contracts.md 3.3).
+     *
+     * <ul>
+     *   <li>요청자가 BUYER·APPROVER가 아니면 403 ROLE_NOT_ALLOWED — agent는 이걸 받고 안내로 끝낸다</li>
+     *   <li>agent가 같은 이벤트를 다시 보내면(전송 재시도) 같은 카드를 돌려주고 화면에는 다시 보내지 않는다</li>
+     *   <li>금액은 <b>질문한 사람의 역할</b>대로 가려서 보낸다. 이 스트림은 질문한 사람만 본다</li>
+     *   <li>응답 {@code {approvalId}}는 agent가 참고용으로 쓸 수 있다. 재개(resume) 때도 같은 값이 간다</li>
+     * </ul>
+     */
+    private Map<String, Object> approvalRequired(Task task, Map<String, Object> event) {
+        Map<String, Object> card = approvals.create(task.id(), task.userId(), task.role(), event);
+        if ((boolean) card.get("created")) {
+            Map<String, Object> e = new LinkedHashMap<>(event);
+            e.put("approvalId", card.get("approval_id"));
+            e.put("before", card.get("before"));   // 변경 전후 — 사람이 카드에서 한눈에 비교 (contracts.md 3.3)
+            e.put("after", card.get("after"));
+            Masking.mask(e, task.role());
+            addEvent(task.id(), e);
+        }
+        return Map.of("approvalId", card.get("approval_id"));
+    }
+
+    /**
+     * POST /api/ai/tasks/{id}/approval {@code {approvalId, decision, reason}} — 팀장의 승인·거절 (contracts.md 3.1·3.3).
+     *
+     * <p>결정을 저장한 뒤 agent에 재개를 요청하고 202를 바로 돌려준다. 승인이면 agent가 변경 도구를 부르고,
+     * 거절이면 사유를 반영해 다른 대안을 낸다 (최대 2회, contracts.md 3.4).
+     * 결정을 저장하는 것과 agent를 부르는 것을 묶지 않는다 — agent가 죽어 있어도 팀장의 결정은 남아야 한다.
+     */
+    @PostMapping("/api/ai/tasks/{id}/approval")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    Map<String, Object> decide(@PathVariable String id, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "APPROVER");
+        Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
+        CompletableFuture.runAsync(() -> {
+            try {
+                Map<String, Object> req = new HashMap<>();
+                req.put("threadId", id);   // threadId = taskId (createTask 참고)
+                req.put("approvalId", card.get("approval_id"));
+                req.put("decision", card.get("status"));
+                req.put("reason", card.get("reason"));
+                agent.post().uri("/agent/tasks/{id}/resume", id).body(req).retrieve().toBodilessEntity();
+            } catch (Exception e) {
+                if (tasks.containsKey(id))
+                    addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE", "message", "승인은 저장됐지만 AI 작업을 이어 가지 못했습니다: " + e.getMessage()));
+            }
+        });
+        return Map.of("approvalId", card.get("approval_id"), "status", card.get("status"));
     }
 
     // 업무 데이터용 /internal/** (business-mcp 도구 8개)는 InternalApi.java에 있다.

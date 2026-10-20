@@ -754,3 +754,7 @@ flowchart LR
 | 요청자 역할 전달 | 헤더 4개 (`X-Task-Id`·`X-User-Id`·`X-Role`·`X-Service-Token`) | [contracts.md 1.1](contracts.md) |
 | seed 데이터 | B 파트가 작성(`db/seed.sql`), 기준일 2026-11-02. 기획안과 다른 점·골든셋 정답 | [decisions.md 7](decisions.md) |
 | 골든셋 과잉 정답 | 리드타임 8주 부품 과잉이 빠짐 (SC3 BLE 칩·홀 센서) | [decisions.md 1.3·7.3](decisions.md) |
+| 생산관리 담당자 비용 표시 | 금액 대신 등급(`cost_level`) — 기획안 2.4대로 | [decisions.md 6.15](decisions.md) |
+| 새 발주 도구 | 열지 않는다 (B 제안, 이견 시 뒤집기) | [decisions.md 6.16](decisions.md) |
+| 인증·마스킹 | JWT(HS256, 8시간), SSE만 `?access_token=`, `X-Role` 없으면 전부 가림 | [decisions.md 6.17](decisions.md) |
+| 승인·변경 | 승인과 도구·인자가 같을 때만 실행, 변경·이력·승인 상태 한 트랜잭션, 화면 변경은 승인 없이 이력만 | [decisions.md 6.18](decisions.md) |

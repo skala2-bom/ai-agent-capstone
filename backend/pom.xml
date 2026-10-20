@@ -19,6 +19,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- 인증: 로그인 시 JWT를 직접 발급하고(JwtEncoder), /api/**에서 검증한다(Resource Server).
+             별도 JWT 라이브러리(jjwt 등)를 더하지 않고 Spring Security에 들어 있는 Nimbus를 쓴다 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
         <!-- JPA 대신 JdbcTemplate: 조회 결과를 그대로 snake_case JSON으로 내보내면 돼서 엔티티 클래스가 필요 없다 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
