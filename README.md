@@ -1,5 +1,34 @@
 # AI Agent Capstone
 
+```
+ai-agent-capstone/
+├─ docker-compose.yml          서비스 5개 정의 (공개 포트: frontend 3000, backend 8080)
+├─ .env.example                OPENAI_API_KEY, OPENAI_MODEL (복사해서 .env로)
+├─ .gitignore
+├─ README.md
+├─ docs/
+│  ├─ BOM_Agent_아키텍처.md     아키텍처 문서 v0.2
+│  └─ AI_Agent_Capstone_MCP_정리.md   교재 정리 노트
+├─ frontend/                   Vue 3 (CDN) + nginx
+│  ├─ index.html               질문 입력, SSE 이벤트 목록 표시
+│  ├─ nginx.conf               /api/** → backend 프록시 (SSE 버퍼링 끔)
+│  └─ Dockerfile
+├─ backend/                    Spring Boot 3 (Java 21, Maven)
+│  ├─ pom.xml
+│  ├─ Dockerfile
+│  └─ src/main/java/capstone/
+│     └─ BackendApplication.java   작업 API(202), SSE 중계, /internal/** (고정 JSON)
+├─ agent/                      FastAPI + LangGraph
+│  ├─ main.py                  StateGraph(agent ↔ tools), MCP 연결, 가짜 모델, 이벤트 발행
+│  └─ Dockerfile
+├─ business-mcp/               FastMCP, :9101/mcp
+│  ├─ server.py                analyze_impact 도구 → backend /internal/analysis/impact
+│  └─ Dockerfile
+└─ rag-mcp/                    FastMCP, :9102/mcp
+   ├─ server.py                doc://{doc_id}/{clause_no} Resource (원문 하드코딩)
+   └─ Dockerfile
+```
+
 SKALA 2기 AI Agent Capstone 팀 저장소. 주제: BOM Agent ([아키텍처](docs/BOM_Agent_아키텍처.md))
 
 > ⚠️ **여기 구조는 임시이며 토의로 바뀔 수 있음.**
