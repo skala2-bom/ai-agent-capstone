@@ -12,7 +12,11 @@
 # 설계 배경: docs/walking-skeleton.md
 services:
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # 실제 API로 화면을 띄운다 (Dockerfile 기본값은 목데이터 mock). 목데이터로 보려면 .env에 VITE_DATA_MODE=mock
+      args:
+        VITE_DATA_MODE: ${VITE_DATA_MODE:-api}
     ports: ["3000:80"]        # 공개. 브라우저가 여기로 들어온다
     depends_on: [backend]
 

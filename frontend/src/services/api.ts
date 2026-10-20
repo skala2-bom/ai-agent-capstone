@@ -85,19 +85,110 @@ const mock: Gateway = {
     databases.delete(environment);
   },
 };
+// [로컬 통합 임시] backend 화면 API 응답({plans:[{plan_id,…}]})을 화면 타입 배열로 바꾼다.
+// 정식 DTO는 A·B 파트 합의 사항 (contracts 3.1). 합의되면 이 변환을 그 형식에 맞춰 바꾼다.
+type Row = Record<string, unknown>;
+const PLAN_STATUS: Record<string, string> = { PLANNED: "확정" };
+function toWorkspace(rp: { plans: Row[] }, ri: { items: Row[] }, rpo: { purchase_orders: Row[] }) {
+  const names = new Map(ri.items.map((i) => [String(i.item_id), String(i.name)]));
+  const plans: Workspace["plans"] = rp.plans.map((p) => ({
+    id: String(p.plan_id),
+    product: names.get(String(p.product_id)) ?? String(p.product_id),
+    date: String(p.plan_date),
+    qty: Number(p.qty),
+    status: PLAN_STATUS[String(p.status)] ?? String(p.status),
+  }));
+  const items: Workspace["items"] = ri.items.map((i) => ({
+    id: String(i.item_id),
+    name: String(i.name),
+    type: i.type === "FG" ? "FG" : "PART",
+    stock: Number(i.on_hand),
+    safety: Number(i.safety_stock ?? 0),
+    supplier: "",
+    lead: 0,
+    shared: [],
+  }));
+  const purchases: Workspace["purchases"] = rpo.purchase_orders.map((o) => ({
+    id: String(o.po_id),
+    item: names.get(String(o.item_id)) ?? String(o.item_id),
+    supplier: String(o.supplier_id),
+    qty: Number(o.qty),
+    date: String(o.due_date),
+    received: 0,
+    passed: 0,
+    failed: 0,
+    status: String(o.status),
+  }));
+  return { plans, items, purchases };
+}
+// [로컬 통합 임시] 승인 카드(contracts 3.3)를 화면의 Approval + Option으로 바꾼다.
+// 화면 승인함은 optionId로 대안을 찾아 그리므로, 카드마다 대안 하나를 만들어 붙인다 (id = approval_id).
+const approvalTasks = new Map<string, string>(); // approval_id → task_id (결정 API 경로에 필요)
+function toApprovals(cards: Row[], names: Map<string, string>) {
+  const approvals: Workspace["approvals"] = [];
+  const options: Workspace["options"] = [];
+  for (const c of cards) {
+    const id = String(c.approval_id);
+    const args = (c.args ?? {}) as Row;
+    const before = (c.before ?? {}) as Row;
+    const split = c.tool === "split_po";
+    approvalTasks.set(id, String(c.task_id));
+    approvals.push({
+      id,
+      taskId: String(c.task_id),
+      optionId: id,
+      requester: String(c.requested_by),
+      at: String(c.requested_at),
+      status: c.status as Workspace["approvals"][number]["status"],
+      reason: (c.reason as string) ?? undefined,
+      beforeQty: Number(before.qty),
+      beforeDate: String(before.due_date),
+    });
+    options.push({
+      action: split ? "split" : "due-date",
+      id,
+      revision: 1,
+      name: String(c.summary ?? c.tool),
+      item: names.get(String(before.item_id)) ?? String(before.item_id),
+      po: String(args.po_id),
+      qty: split ? Number(args.split_qty) : Number(before.qty),
+      date: String(args.new_due_date),
+      resolves: true,
+      verification: "VERIFIED",
+      impact: split ? "" : `입고 예정일 ${before.due_date} → ${args.new_due_date}`,
+      risk: "",
+      confirmed: true,
+      review: "확정",
+      reason: String(c.summary ?? ""),
+      role: "APPROVER",
+      addedCost: Number(c.amount ?? 0),
+      costEvidence: "",
+      unitPrice: 0,
+    });
+  }
+  return { approvals, options };
+}
 const api: Gateway = {
   async load(s) {
-    const [plans, items, purchases] = await Promise.all([
-      request<Workspace["plans"]>("/plans", s.token),
-      request<Workspace["items"]>("/inventory", s.token),
-      request<Workspace["purchases"]>("/purchase-orders", s.token),
+    const [rp, ri, rpo] = await Promise.all([
+      request<{ plans: Row[] }>("/plans", s.token),
+      request<{ items: Row[] }>("/inventory", s.token),
+      request<{ purchase_orders: Row[] }>("/purchase-orders", s.token),
     ]);
+    const { plans, items, purchases } = toWorkspace(rp, ri, rpo);
+    // 승인 대기함은 팀장만 볼 수 있다 (contracts 3.1). 다른 역할은 빈 목록
+    const cards =
+      s.role === "APPROVER" ? await request<Row[]>("/approvals", s.token) : [];
+    const { approvals, options } = toApprovals(
+      cards,
+      new Map(ri.items.map((i) => [String(i.item_id), String(i.name)])),
+    );
     return {
       plans,
       items,
       purchases,
-      options: [],
-      approvals: [],
+      options,
+      approvals,
       history: [],
       metrics: [],
     };
@@ -113,6 +204,14 @@ const api: Gateway = {
         due_date: c.date,
         reason: c.reason,
       });
+    else if (c.type === "approval")
+      // 팀장 결정 → backend가 저장하고 agent에 재개를 요청한다 (contracts 3.3)
+      await request(
+        `/ai/tasks/${encodeURIComponent(approvalTasks.get(c.id) ?? "")}/approval`,
+        s.token,
+        "POST",
+        { approvalId: c.id, decision: c.decision, reason: c.reason || null },
+      );
     else
       throw new Error(
         "이 업무의 화면 DTO/API 계약은 아직 연결되지 않았습니다.",
@@ -130,7 +229,8 @@ export async function login(
     "/auth/login",
     undefined,
     "POST",
-    { username, password },
+    // [로컬 통합 임시] backend Auth는 user_id를 읽는다 (contracts 3.1). 칸 이름은 A·B 합의 필요
+    { user_id: username, password },
   );
   if (!r.token || !["PLANNER", "BUYER", "APPROVER"].includes(r.role))
     throw new Error("로그인 응답 DTO 계약을 확인해주세요.");

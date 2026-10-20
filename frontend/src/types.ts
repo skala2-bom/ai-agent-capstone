@@ -44,7 +44,7 @@ export interface Scenario {
   issues: Issue[];
 }
 export interface Option {
-  action: "split" | "plan" | "new-po" | "reallocate";
+  action: "split" | "plan" | "new-po" | "reallocate" | "due-date";
   id: string;
   revision: number;
   name: string;

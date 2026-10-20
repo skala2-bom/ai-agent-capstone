@@ -188,9 +188,13 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       </button>
     </div>
     <p v-if="selected.status === 'REJECTED'">
-      거절 사유: {{ selected.reason }}<br />보완 대안이 생성되었습니다. 구매
-      검수부터 다시 진행하세요.
+      거절 사유: {{ selected.reason }}<br />{{
+        mode === "api"
+          ? "AI가 사유를 반영해 다른 대안을 다시 승인 요청합니다."
+          : "보완 대안이 생성되었습니다. 구매 검수부터 다시 진행하세요."
+      }}
     </p>
+    <p v-if="selected.status === 'EXECUTED'">발주 변경이 실행되었습니다.</p>
     <p v-if="w.error" class="error">{{ w.error }}</p></Drawer
   >
 </template>
