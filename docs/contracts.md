@@ -29,6 +29,7 @@
 | 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
 | 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
 | 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 26 | `compare_options` 대안에 **`side_effects` 명세 형식**(NEW·WORSENED, 전후 결품량, `product_id`)과 **`remaining_issues`** 추가 | 2.3 | – | verify가 `remaining_issues`로 "왜 안 풀렸는지"를 설명할 수 있다. 기존 `resolves`는 그대로 |
 | 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
 | 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |
 | 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | – | 🔴 SC2·SC3 과잉 해결을 시연하려면 그래프가 `target_rule = INV-003` 대안도 승인 흐름에 태워야 한다 |
@@ -319,13 +320,32 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
     "risk": "MID",                     // LOW | MID | HIGH. 납기 준수율 + 당기는 일수
     "feasible": true,                  // LT-001 통과. 통과 못 한 대안은 아예 안 나오므로 항상 true
     "resolves": true,                  // 이 대안 하나로 그 부품의 결품(orderable=false)이 다 풀리나 — backend가 다시 계산해서 채움
-    "side_effects": [],                // 다른 곳에 새로 생기는 결품 [{item_id, plan_id, plan_date, projected_stock}]
+    "side_effects": [],                // 이 대안 때문에 새로 생기거나(NEW) 더 커진(WORSENED) 결품 — 아래 형식
+    "remaining_issues": [],            // 이 대안이 풀려던 결품 중 그대로 남은 것 — 아래 형식
     "recommended": true,               // 부품마다 하나만 true
     "evidence": []                     // backend는 비워 둔다. agent가 search_docs 결과로 채운다
   }],
   "recommended_option_id": "OPT-1"     // 첫 번째 추천안. 결품 부품이 여럿이면 options의 recommended=true를 모두 본다
 }
 ```
+
+**`side_effects`·`remaining_issues` 원소** (10/20 밤, [side_effects 계산 명세] 반영)
+
+```jsonc
+// side_effects[] — 대안을 적용한 뒤 (부품, 계획, 날짜)별 결품량이 적용 전보다 커진 곳
+{ "type": "NEW_SHORTAGE",            // NEW_SHORTAGE(전엔 결품 아님) | WORSENED_SHORTAGE(전에도 결품, 더 모자람)
+  "rule_id": "INV-001", "item_id": "COIN-CELL", "product_id": "FG-DOOR", "plan_id": "PP-02", "plan_date": "2027-01-04",
+  "before_shortage_qty": 0, "after_shortage_qty": 600, "increase_qty": 600 }
+
+// remaining_issues[] — 결품 대안: 풀려던 결품이 남음 / 과잉 대안: 그 부품의 과잉이 남음
+{ "rule_id": "INV-001", "item_id": "MCU", "product_id": "FG-PLUG", "plan_id": "PP-04", "plan_date": "2026-11-30", "shortage_qty": 100 }
+{ "rule_id": "INV-003", "item_id": "CASE-PLUG", "date": "2026-11-27", "excess_qty": 300 }
+```
+
+- 전후는 **같은 기준**으로 비교한다: 전 = DB + 원래 `whatif`, 후 = DB + 원래 `whatif` + 대안 `{op: tool, **args}`. DB는 바꾸지 않는다.
+- 결품량은 날짜마다 따로 본다 (합산하지 않음). 결품량 = `max(0, −projected_stock)`.
+- `side_effects`가 빈 목록이면 **계산으로 확인한 결과 부작용이 없다**는 뜻이다 (예전 고정값 `[]`가 아니다).
+- `resolves`는 그대로 둔다: `remaining_issues`에 발주로 못 푸는 결품이 없으면 `true`. 추천은 `resolves = true`이고 `side_effects`가 빈 대안만 된다.
 
 - `tool`·`args`를 그대로 담는 이유: 모델이 고른 대안을 **그대로 승인 카드로 올리고 그대로 실행**할 수 있다. 모델이 인자를 다시 만들지 않으니 숫자가 틀어질 여지가 없다.
 - **과잉 대안** (10/20 밤): 과잉 부품마다, 과잉이 잡힌 날까지 들어오는 발주를 과잉량만큼 줄이거나(MOQ 미만이 되면 취소) 다음 사용일로 미룬다. 비용은 0, 대신 덜 사는 금액 `saved_amount`(원, 마스킹 대상). 줄이다 같은 부품이 모자라게 되면 `side_effects`에 나와 추천되지 않는다 (SC3 코인전지 취소가 그 예). 결품 대안이 항상 먼저 정렬된다.

@@ -92,6 +92,26 @@ class ImpactAnalysisTest {
         return tests.stream();
     }
 
+    /**
+     * side_effects 명세: 대안 때문에 "새로 생긴(NEW)" 결품과 "원래 있던 게 더 커진(WORSENED)" 결품을 구분한다.
+     * 시나리오 데이터만으로는 WORSENED가 안 생겨서 일부러 만든다: SC3 + 1/22 코인전지 발주를 600 → 100개로 줄이면
+     * 1/25 생산(PP-07)에 이미 300개가 모자란다. 거기서 11/15 코인전지 발주를 취소하는 대안을 고르면
+     * 1/4 생산(PP-02)에 새 결품, 1/25 결품은 300 → 1,100으로 커진다. 이 대안은 추천되면 안 된다.
+     */
+    @Test
+    void 대안이_원래_있던_결품을_키우면_WORSENED로_잡고_추천하지_않는다() {
+        var r = options.compare(List.of(
+                op("reschedule_plan", "plan_id", "PP-02", "new_date", "2027-01-04"),
+                op("change_po_qty", "po_id", "PO-2610-121", "new_qty", 100)), Set.of("COIN-CELL"));
+        var cancel = list(r, "options").stream().filter(o -> "CANCEL_PO".equals(o.get("type"))).findFirst().orElseThrow();
+        assertThat(list(cancel, "side_effects")).extracting(e -> e.get("type") + " " + e.get("plan_id") + " " + e.get("before_shortage_qty") + "→" + e.get("after_shortage_qty"))
+                .containsExactly("NEW_SHORTAGE PP-02 0→600", "WORSENED_SHORTAGE PP-07 300→1100");
+        assertThat(cancel.get("recommended")).isEqualTo(false);
+        // 입고를 다음 사용일로 미루는 대안은 부작용 없이 과잉을 푼다
+        var postpone = list(r, "options").stream().filter(o -> Boolean.TRUE.equals(o.get("recommended"))).findFirst().orElseThrow();
+        assertThat(postpone).containsEntry("type", "DUE_DATE_CHANGE").containsEntry("side_effects", List.of());
+    }
+
     // ------------------------------------------------------------------
     // 오류 — retry_hint가 비어 있지 않은가
     // ------------------------------------------------------------------

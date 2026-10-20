@@ -148,7 +148,9 @@ def compare_options(issues: list[dict], whatif: list[dict] | None = None) -> dic
     issues: analyze_impact의 shortages 항목을 그대로 넣는다 (item_id만 본다). 비우면 전부.
     돌려주는 값: options[{option_id, type(SPLIT_PO|DUE_DATE_CHANGE), item_id, summary,
     tool, args(그대로 실행에 쓰는 인자), added_cost(원), cost_level, risk(LOW|MID|HIGH), feasible,
-    resolves(이 대안 하나로 그 부품 결품이 풀리나), side_effects, recommended}], recommended_option_id.
+    resolves(이 대안 하나로 그 부품 결품이 풀리나), side_effects[{type(NEW_SHORTAGE|WORSENED_SHORTAGE), item_id,
+    product_id, plan_id, plan_date, before_shortage_qty, after_shortage_qty, increase_qty}](이 대안 때문에 새로 생기거나
+    커진 결품), remaining_issues[](풀려던 결품·과잉 중 남은 것), recommended}], recommended_option_id.
     tool·args는 고치지 말고 그대로 쓴다. 모델이 인자를 다시 만들면 숫자가 틀어질 수 있다.
     """
     return _call("POST", "/analysis/options", json={"whatif": whatif or [], "issues": issues})

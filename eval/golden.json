@@ -36,10 +36,10 @@
         "warnings": [],
         "excesses": [],
         "options": [
-          {"item_id": "MCU", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25"}, "added_cost": 390000, "cost_level": "MID", "risk": "MID", "resolves": true, "recommended": true},
-          {"item_id": "MCU", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2609-001", "new_due_date": "2026-11-25"}, "added_cost": 1700000, "cost_level": "HIGH", "risk": "MID", "resolves": true, "recommended": false},
-          {"item_id": "MCU", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2609-008", "split_qty": 100, "new_due_date": "2026-11-25"}, "added_cost": 90000, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false},
-          {"item_id": "MCU", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2609-008", "new_due_date": "2026-11-25"}, "added_cost": 320000, "cost_level": "MID", "risk": "LOW", "resolves": false, "recommended": false}
+          {"item_id": "MCU", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25"}, "added_cost": 390000, "cost_level": "MID", "risk": "MID", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "MCU", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2609-001", "new_due_date": "2026-11-25"}, "added_cost": 1700000, "cost_level": "HIGH", "risk": "MID", "resolves": true, "recommended": false, "side_effects": [], "remaining_issues": []},
+          {"item_id": "MCU", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2609-008", "split_qty": 100, "new_due_date": "2026-11-25"}, "added_cost": 90000, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false, "side_effects": [], "remaining_issues": [{"rule_id": "INV-001", "item_id": "MCU", "product_id": "FG-PLUG", "plan_id": "PP-04", "plan_date": "2026-11-30", "shortage_qty": 100}]},
+          {"item_id": "MCU", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2609-008", "new_due_date": "2026-11-25"}, "added_cost": 320000, "cost_level": "MID", "risk": "LOW", "resolves": false, "recommended": false, "side_effects": [], "remaining_issues": [{"rule_id": "INV-001", "item_id": "MCU", "product_id": "FG-PLUG", "plan_id": "PP-04", "plan_date": "2026-11-30", "shortage_qty": 100}]}
         ],
         "recommended_option_id": "OPT-1"
       }
@@ -71,14 +71,14 @@
           {"item_id": "CASE-PLUG", "date": "2026-11-27", "qty": 300, "amount": 480000}
         ],
         "options": [
-          {"item_id": "RELAY", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-114", "split_qty": 400, "new_due_date": "2026-11-23"}, "added_cost": 110000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
-          {"item_id": "POWER-MODULE", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-113", "split_qty": 200, "new_due_date": "2026-11-23"}, "added_cost": 126000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
-          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-114", "new_due_date": "2026-11-23"}, "added_cost": 160000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": false},
-          {"item_id": "POWER-MODULE", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-113", "new_due_date": "2026-11-23"}, "added_cost": 384000, "cost_level": "MID", "risk": "HIGH", "resolves": true, "recommended": false},
-          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-115", "new_qty": 500}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true},
-          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-104", "new_qty": 700}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false},
-          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-115", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false},
-          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-104", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false}
+          {"item_id": "RELAY", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-114", "split_qty": 400, "new_due_date": "2026-11-23"}, "added_cost": 110000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "POWER-MODULE", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-113", "split_qty": 200, "new_due_date": "2026-11-23"}, "added_cost": 126000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-114", "new_due_date": "2026-11-23"}, "added_cost": 160000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": false, "side_effects": [], "remaining_issues": []},
+          {"item_id": "POWER-MODULE", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-113", "new_due_date": "2026-11-23"}, "added_cost": 384000, "cost_level": "MID", "risk": "HIGH", "resolves": true, "recommended": false, "side_effects": [], "remaining_issues": []},
+          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-115", "new_qty": 500}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "CASE-PLUG", "type": "CHANGE_QTY", "tool": "change_po_qty", "args": {"po_id": "PO-2610-104", "new_qty": 700}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false, "side_effects": [{"type": "NEW_SHORTAGE", "rule_id": "INV-001", "item_id": "CASE-PLUG", "product_id": "FG-PLUG", "plan_id": "PP-01", "plan_date": "2026-11-16", "before_shortage_qty": 0, "after_shortage_qty": 200, "increase_qty": 200}], "remaining_issues": []},
+          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-115", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false, "side_effects": [], "remaining_issues": [{"rule_id": "INV-003", "item_id": "CASE-PLUG", "date": "2026-11-30", "excess_qty": 300}]},
+          {"item_id": "CASE-PLUG", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-104", "new_due_date": "2026-11-30"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": false, "recommended": false, "side_effects": [{"type": "NEW_SHORTAGE", "rule_id": "INV-001", "item_id": "CASE-PLUG", "product_id": "FG-PLUG", "plan_id": "PP-01", "plan_date": "2026-11-16", "before_shortage_qty": 0, "after_shortage_qty": 900, "increase_qty": 900}], "remaining_issues": [{"rule_id": "INV-003", "item_id": "CASE-PLUG", "date": "2026-11-30", "excess_qty": 300}]}
         ],
         "recommended_option_id": "OPT-1"
       }
@@ -104,9 +104,9 @@
           {"item_id": "COIN-CELL", "date": "2026-11-15", "qty": 800, "amount": 200000}
         ],
         "options": [
-          {"item_id": "CASE-DOOR-V1", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-110"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true},
-          {"item_id": "COIN-CELL", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-103", "new_due_date": "2027-01-04"}, "added_cost": 0, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
-          {"item_id": "COIN-CELL", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-103"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false}
+          {"item_id": "CASE-DOOR-V1", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-110"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "COIN-CELL", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-103", "new_due_date": "2027-01-04"}, "added_cost": 0, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "COIN-CELL", "type": "CANCEL_PO", "tool": "cancel_po", "args": {"po_id": "PO-2610-103"}, "added_cost": 0, "cost_level": "LOW", "risk": "LOW", "resolves": true, "recommended": false, "side_effects": [{"type": "NEW_SHORTAGE", "rule_id": "INV-001", "item_id": "COIN-CELL", "product_id": "FG-DOOR", "plan_id": "PP-02", "plan_date": "2027-01-04", "before_shortage_qty": 0, "after_shortage_qty": 600, "increase_qty": 600}, {"type": "NEW_SHORTAGE", "rule_id": "INV-001", "item_id": "COIN-CELL", "product_id": "FG-DOOR", "plan_id": "PP-07", "plan_date": "2027-01-25", "before_shortage_qty": 0, "after_shortage_qty": 600, "increase_qty": 600}], "remaining_issues": []}
         ],
         "recommended_option_id": "OPT-1"
       }
@@ -128,9 +128,9 @@
         "warnings": [],
         "excesses": [],
         "options": [
-          {"item_id": "RELAY", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-106", "split_qty": 1000, "new_due_date": "2026-11-23"}, "added_cost": 230000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true},
-          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-106", "new_due_date": "2026-11-23"}, "added_cost": 240000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": false},
-          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-114", "new_due_date": "2026-11-23"}, "added_cost": 160000, "cost_level": "LOW", "risk": "HIGH", "resolves": false, "recommended": false}
+          {"item_id": "RELAY", "type": "SPLIT_PO", "tool": "split_po", "args": {"po_id": "PO-2610-106", "split_qty": 1000, "new_due_date": "2026-11-23"}, "added_cost": 230000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": true, "side_effects": [], "remaining_issues": []},
+          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-106", "new_due_date": "2026-11-23"}, "added_cost": 240000, "cost_level": "LOW", "risk": "HIGH", "resolves": true, "recommended": false, "side_effects": [], "remaining_issues": []},
+          {"item_id": "RELAY", "type": "DUE_DATE_CHANGE", "tool": "request_due_date_change", "args": {"po_id": "PO-2610-114", "new_due_date": "2026-11-23"}, "added_cost": 160000, "cost_level": "LOW", "risk": "HIGH", "resolves": false, "recommended": false, "side_effects": [], "remaining_issues": [{"rule_id": "INV-001", "item_id": "RELAY", "product_id": "FG-SWITCH", "plan_id": "PP-03", "plan_date": "2026-11-23", "shortage_qty": 200}]}
         ],
         "recommended_option_id": "OPT-1"
       }

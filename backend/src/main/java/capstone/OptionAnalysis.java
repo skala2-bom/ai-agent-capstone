@@ -52,8 +52,12 @@ class OptionAnalysis {
         ImpactAnalysis.State st = impact.load(whatif);
         Map<String, Object> judged = impact.judge(st);
         List<Map<String, Object>> before = shortages(judged);
-        Set<String> beforeKeys = new HashSet<>();
-        before.forEach(s -> beforeKeys.add(key(s)));
+        // 대안을 적용하기 전(원래 가정만 적용한 상태)의 결품량. 전후를 (부품, 계획, 날짜) 단위로 비교한다 (side_effects 명세 1·3절)
+        Map<String, Integer> beforeQty = new HashMap<>();
+        before.forEach(s -> beforeQty.put(key(s), -(int) s.get("projected_stock")));
+        Map<String, String> planProduct = new HashMap<>();
+        st.plans().values().forEach(p -> planProduct.put(p.id(), p.product()));
+        Base base = new Base(beforeQty, planProduct);
 
         // 대상은 orderable=false 결품만이다. true는 "지금 발주하면 제때 온다"는 정상 안내라서
         // 이미 낸 발주를 건드릴 이유가 없다 (기획안 1.3 "추가 발주 필요는 실수가 아니라 정상 안내").
@@ -72,6 +76,8 @@ class OptionAnalysis {
         List<Map<String, Object>> options = new ArrayList<>();
         for (var e : byItem.entrySet()) {
             String item = e.getKey();
+            Set<String> targets = new HashSet<>();   // 이 대안들이 풀려는 결품
+            e.getValue().forEach(x -> targets.add(key(x)));
             LocalDate need = LocalDate.parse((String) e.getValue().getFirst().get("plan_date"));   // 첫 결품일
             int qty = e.getValue().stream().mapToInt(s -> -(int) s.get("projected_stock")).max().orElseThrow();
             for (ImpactAnalysis.Po po : st.pos().values()) {
@@ -85,18 +91,18 @@ class OptionAnalysis {
                 int perUnitDay = (int) metric.get("expedite_cost_per_day");
                 String head = "%s(%s %,d개, %s 입고)".formatted(po.id(), names.get(item), po.qty(), po.due().format(MD));
                 if (qty < po.qty())
-                    options.add(option(whatif, beforeKeys, item, "SPLIT_PO",
+                    options.add(option(whatif, base, targets, item, "SPLIT_PO",
                             "%s에서 %,d개만 떼어 %s에 먼저 받는다".formatted(head, qty, need.format(MD)),
                             "split_po", m("po_id", po.id(), "split_qty", qty, "new_due_date", need.toString()),
                             qty * days * perUnitDay + (int) metric.get("split_fee"), metric, days));
-                options.add(option(whatif, beforeKeys, item, "DUE_DATE_CHANGE",
+                options.add(option(whatif, base, targets, item, "DUE_DATE_CHANGE",
                         "%s 전량을 %s에 받는다".formatted(head, need.format(MD)),
                         "request_due_date_change", m("po_id", po.id(), "new_due_date", need.toString()),
                         po.qty() * days * perUnitDay, metric, days));
             }
         }
 
-        options.addAll(excessOptions(whatif, st, judged, beforeKeys, items, names, metrics));
+        options.addAll(excessOptions(whatif, st, judged, base, items, names, metrics));
 
         // 결품 대안이 먼저 → 결품을 푸는 것 → 부작용 없는 것 → 위험 낮은 것 → 싼 것
         options.sort(Comparator
@@ -124,10 +130,13 @@ class OptionAnalysis {
     }
 
     /** 대안 하나를 실제로 적용해 다시 계산하고, 결과와 비용·위험을 붙인다. */
-    private Map<String, Object> option(List<Map<String, Object>> whatif, Set<String> beforeKeys, String item, String type,
+    /** 대안 적용 전 상태: 결품량(키 → 개수)과 생산계획 → 완제품 */
+    record Base(Map<String, Integer> shortageQty, Map<String, String> planProduct) {}
+
+    private Map<String, Object> option(List<Map<String, Object>> whatif, Base base, Set<String> targets, String item, String type,
                                        String summary, String tool, Map<String, Object> args, long cost,
                                        Map<String, Object> metric, long days) {
-        return option("INV-001", whatif, beforeKeys, item, type, summary, tool, args, cost, metric, days, null, "LOW");
+        return option("INV-001", whatif, base, targets, item, type, summary, tool, args, cost, metric, days, null, "LOW");
     }
 
     /**
@@ -137,7 +146,7 @@ class OptionAnalysis {
      *             결품은 "발주로 못 푸는 결품이 안 남음", 과잉은 "그 부품의 과잉이 안 남음".
      *             과잉 대안은 같은 부품에 새 결품이 생기는 것도 부작용이다 (줄이거나 취소하다 모자라게 되는 경우)
      */
-    private Map<String, Object> option(String rule, List<Map<String, Object>> whatif, Set<String> beforeKeys, String item,
+    private Map<String, Object> option(String rule, List<Map<String, Object>> whatif, Base base, Set<String> targets, String item,
                                        String type, String summary, String tool, Map<String, Object> args, long cost,
                                        Map<String, Object> metric, long days, Long saved, String fixedRisk) {
         List<Map<String, Object>> ops = new ArrayList<>(whatif);
@@ -153,11 +162,25 @@ class OptionAnalysis {
         boolean resolves = excess
                 ? excesses.stream().noneMatch(x -> item.equals(x.get("item_id")))
                 : after.stream().noneMatch(s -> item.equals(s.get("item_id")) && !(boolean) s.get("orderable"));
-        List<Map<String, Object>> sideEffects = after.stream()
-                .filter(s -> (excess || !item.equals(s.get("item_id"))) && !beforeKeys.contains(key(s)))
-                .map(s -> m("item_id", s.get("item_id"), "plan_id", s.get("plan_id"),
-                        "plan_date", s.get("plan_date"), "projected_stock", s.get("projected_stock")))
-                .toList();
+        // side_effects = 이 대안 때문에 "새로 생기거나 더 심해진" 결품 (명세: BOM_compare_options-side_effects계산명세)
+        //   NEW_SHORTAGE: 전에는 결품이 아니었다 / WORSENED_SHORTAGE: 전에도 결품이었는데 더 모자라졌다
+        // remaining_issues = 이 대안이 풀려던 결품 중 그대로 남은 것. 부작용이 아니라 "덜 풀렸다"는 뜻이라 따로 둔다
+        List<Map<String, Object>> sideEffects = new ArrayList<>(), remaining = new ArrayList<>();
+        for (Map<String, Object> s : after) {
+            String k = key(s);
+            int afterQty = -(int) s.get("projected_stock"), beforeQty = base.shortageQty().getOrDefault(k, 0);
+            Object product = base.planProduct().get(s.get("plan_id"));
+            if (targets.contains(k))
+                remaining.add(m("rule_id", "INV-001", "item_id", s.get("item_id"), "product_id", product,
+                        "plan_id", s.get("plan_id"), "plan_date", s.get("plan_date"), "shortage_qty", afterQty));
+            else if (afterQty > beforeQty)
+                sideEffects.add(m("type", beforeQty == 0 ? "NEW_SHORTAGE" : "WORSENED_SHORTAGE", "rule_id", "INV-001",
+                        "item_id", s.get("item_id"), "product_id", product, "plan_id", s.get("plan_id"), "plan_date", s.get("plan_date"),
+                        "before_shortage_qty", beforeQty, "after_shortage_qty", afterQty, "increase_qty", afterQty - beforeQty));
+        }
+        if (excess)   // 과잉 대안이 덜 푼 것 = 그 부품에 남은 과잉
+            excesses.stream().filter(x -> item.equals(x.get("item_id"))).forEach(x -> remaining.add(
+                    m("rule_id", "INV-003", "item_id", item, "date", x.get("date"), "excess_qty", x.get("qty"))));
         Map<String, Object> o = m("option_id", null, "type", type, "target_rule", rule, "item_id", item, "summary", summary,
                 "tool", tool, "args", args,
                 "added_cost", cost,
@@ -166,6 +189,7 @@ class OptionAnalysis {
                 "feasible", true,          // LT-001을 통과한 것만 남기므로 항상 true
                 "resolves", resolves,      // 이 대안만으로 대상 부품의 발주로 못 푸는 결품이 모두 풀리나
                 "side_effects", sideEffects,
+                "remaining_issues", remaining,
                 "recommended", false,      // 아래 compare에서 부품마다 하나만 true로 바꾼다
                 "evidence", List.of());    // backend는 근거 문서를 모른다. agent가 search_docs 결과로 채운다
         if (saved != null) o.put("saved_amount", saved);   // 과잉 대안: 줄인 만큼 덜 사는 금액 (원, 마스킹 대상)
@@ -185,7 +209,7 @@ class OptionAnalysis {
      * 비용은 0으로 둔다 — 취소·감량 수수료는 계약 조건 문서(근거)에 있고 지금 평가지표에는 칸이 없다. 대신 덜 사는 금액(saved_amount)을 보여 준다.
      */
     private List<Map<String, Object>> excessOptions(List<Map<String, Object>> whatif, ImpactAnalysis.State st,
-                                                    Map<String, Object> judged, Set<String> beforeKeys, Set<String> items,
+                                                    Map<String, Object> judged, Base base, Set<String> items,
                                                     Map<String, String> names, Map<String, Map<String, Object>> metrics) {
         @SuppressWarnings("unchecked") List<Map<String, Object>> excesses = (List<Map<String, Object>>) judged.get("excesses");
         Map<String, List<ImpactAnalysis.Use>> uses = impact.uses(st);
@@ -206,15 +230,15 @@ class OptionAnalysis {
                 String head = "%s(%s %,d개, %s 입고)".formatted(po.id(), names.get(item), po.qty(), po.due().format(MD));
                 int newQty = po.qty() - excess;
                 if (newQty >= moq.getOrDefault(item, 0) && newQty > 0)
-                    out.add(option("INV-003", whatif, beforeKeys, item, "CHANGE_QTY",
+                    out.add(option("INV-003", whatif, base, Set.of(), item, "CHANGE_QTY",
                             "%s을 %,d개로 줄인다 (%,d개 덜 산다)".formatted(head, newQty, excess),
                             "change_po_qty", m("po_id", po.id(), "new_qty", newQty), 0, metric, 0, excess * unitPrice, "LOW"));
                 else
-                    out.add(option("INV-003", whatif, beforeKeys, item, "CANCEL_PO",
+                    out.add(option("INV-003", whatif, base, Set.of(), item, "CANCEL_PO",
                             "%s을 취소한다".formatted(head),
                             "cancel_po", m("po_id", po.id()), 0, metric, 0, po.qty() * unitPrice, "LOW"));
                 if (nextUse.isPresent() && nextUse.get().isAfter(po.due()))
-                    out.add(option("INV-003", whatif, beforeKeys, item, "DUE_DATE_CHANGE",
+                    out.add(option("INV-003", whatif, base, Set.of(), item, "DUE_DATE_CHANGE",
                             "%s 입고를 다음 사용일 %s로 미룬다".formatted(head, nextUse.get().format(MD)),
                             "request_due_date_change", m("po_id", po.id(), "new_due_date", nextUse.get().toString()),
                             0, metric, 0, null, null));
