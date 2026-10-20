@@ -576,6 +576,18 @@ async def execute_change(state: AgentState) -> dict:
 # 노드: respond — 최종 답변과 결과 정리
 # ---------------------------------------------------------------------------
 
+def describe_execution(res: dict) -> str:
+    """변경 도구 응답(contracts 2.1)을 사람이 읽는 한 줄로. 모양을 모르면 그대로 보여 준다."""
+    if "new" in res and "original" in res:   # split_po
+        o, n = res["original"], res["new"]
+        return (f"실행 결과: {o['po_id']}는 {o['qty']:,}개 · {o['due_date']} 입고로 줄었고, "
+                f"새 발주 {n['po_id']}가 {n['qty']:,}개 · {n['due_date']} 입고로 생겼습니다.")
+    if "before" in res and "after" in res:   # request_due_date_change
+        return (f"실행 결과: {res.get('po_id')} 입고 예정일이 "
+                f"{res['before'].get('due_date')} → {res['after'].get('due_date')}로 바뀌었습니다.")
+    return f"실행 결과: {json.dumps(res, ensure_ascii=False)}"
+
+
 def _adjust_answer(state: AgentState) -> str:
     plans, impact = state.get("plans") or [], state.get("impact") or {}
     if not state.get("targets"):
@@ -589,8 +601,7 @@ def _adjust_answer(state: AgentState) -> str:
     opt, executed, decision = state.get("selected_option"), state.get("executed"), state.get("decision")
     if executed:
         if executed["ok"]:
-            return f"{head}\n\n승인된 해결안을 실행했습니다: {opt.get('summary')}\n실행 결과: " \
-                   f"{json.dumps(executed['result'], ensure_ascii=False)}"
+            return f"{head}\n\n승인된 해결안을 실행했습니다: {opt.get('summary')}\n{describe_execution(executed['result'])}"
         return f"{head}\n\n승인은 받았지만 실행에 실패했습니다: {executed['error']}"
     if decision and decision.get("decision") == "REJECTED":
         reasons = "; ".join(f"{r['option_id']}: {r['reason']}" for r in state.get("rejections") or [])
