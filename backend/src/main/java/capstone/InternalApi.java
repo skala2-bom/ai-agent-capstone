@@ -5,6 +5,7 @@ import java.util.*;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
  * <ul>
  *   <li>조회 4개 — seed DB(db/seed.sql)에서 읽는다</li>
  *   <li>계산 2개 — 실제 계산 ({@link ImpactAnalysis}, {@link OptionAnalysis})</li>
- *   <li>변경 2개 — DB에서 발주를 읽어 검사는 진짜로 하고, 저장은 아직 안 한다 (→ 승인 API와 함께)</li>
+ *   <li>변경 2개 — 팀장 승인과 도구·인자가 같을 때만 저장한다. 변경·이력·승인 상태를 한 트랜잭션으로 ({@link Approvals})</li>
  * </ul>
  * 모양은 계약대로 고정이다. 안쪽이 바뀌어도 AI·MCP 파트는 고칠 것이 없다.
  *
@@ -25,7 +26,7 @@ import org.springframework.web.bind.annotation.*;
  * contracts 2.2·2.3과 맞췄다. 수량 단위는 개, 금액은 원, 날짜는 YYYY-MM-DD
  * (날짜는 SQL에서 {@code ::text}로 바꿔 Jackson 날짜 설정에 휘둘리지 않게 했다).
  *
- * <p>아직 없는 것: 요청자 헤더({@code X-Role})를 읽은 금액 마스킹(SEC-001), 서비스 토큰 확인.
+ * <p>금액은 응답 직전에 {@code X-Role}대로 가린다 ({@link Masking}). 아직 없는 것: 서비스 토큰 확인 (9단계).
  */
 @RestController
 @RequestMapping("/internal")
@@ -37,11 +38,15 @@ class InternalApi {
     private final JdbcTemplate db;
     private final ImpactAnalysis impact;
     private final OptionAnalysis options;
+    private final Approvals approvals;
+    private final TransactionTemplate tx;
 
-    InternalApi(JdbcTemplate db, ImpactAnalysis impact, OptionAnalysis options) {
+    InternalApi(JdbcTemplate db, ImpactAnalysis impact, OptionAnalysis options, Approvals approvals, TransactionTemplate tx) {
         this.db = db;
         this.impact = impact;
         this.options = options;
+        this.approvals = approvals;
+        this.tx = tx;
     }
 
     // ------------------------------------------------------------------
@@ -148,68 +153,89 @@ class InternalApi {
     }
 
     // ------------------------------------------------------------------
-    // 변경 2개 — 승인 필요. 지금은 검사만 하고 저장하지 않는다
+    // 변경 2개 — 승인 필요. 승인 확인 → 검사 → 변경 + 이력 + 승인 EXECUTED를 한 트랜잭션으로
     // ------------------------------------------------------------------
 
-    /** request_due_date_change — 발주 입고일 변경. 검사: 승인 → OPEN → 리드타임. */
+    /** request_due_date_change — 발주 입고일 변경. 검사: 발주 있나 → 승인 → OPEN → 리드타임. */
     @PostMapping("/purchase-orders/{id}/due-date")
     Map<String, Object> changeDueDate(@PathVariable String id, @RequestBody Map<String, Object> body) {
-        Map<String, Object> po = openPoWithApproval(id, body);
-        LocalDate newDue = checkLeadTime(po, body.get("new_due_date"));
-        return m("po_id", id,
-                "before", m("due_date", po.get("due_date")),
-                "after", m("due_date", newDue.toString()),
-                "status", "OPEN");
+        return tx.execute(t -> {
+            Change c = begin(id, body, "request_due_date_change");
+            LocalDate newDue = checkLeadTime(c.po(), body.get("new_due_date"));
+            db.update("update purchase_order set due_date = ? where po_id = ?", newDue, id);
+            Map<String, Object> after = m("po_id", id, "qty", c.po().get("qty"), "due_date", newDue.toString());
+            approvals.executed(c.approvalId(), c.requester(), "request_due_date_change", id, c.before(), after);
+            return m("po_id", id,
+                    "before", m("due_date", c.po().get("due_date")),
+                    "after", m("due_date", newDue.toString()),
+                    "status", "OPEN");
+        });
     }
 
     /**
      * split_po — 발주를 둘로 나눠 떼어낸 쪽만 날짜를 옮긴다 (decisions.md 3절).
      *
      * <p>검사 순서는 decisions.md 3.3 그대로: OPEN → 수량 범위 → 리드타임 → 날짜가 같은지.
-     * MOQ는 다시 보지 않는다 (3.4). 새 발주 번호는 원 발주와 같은 달 번호의 다음 번호다.
+     * MOQ는 다시 보지 않는다 (3.4). 새 발주는 원 발주의 협력사·단가·발주일을 그대로 물려받는다 —
+     * 같은 물량을 나눠 받는 것이지 새로 주문하는 게 아니다.
      */
     @PostMapping("/purchase-orders/{id}/split")
     Map<String, Object> splitPo(@PathVariable String id, @RequestBody Map<String, Object> body) {
-        Map<String, Object> po = openPoWithApproval(id, body);
-        int qty = (int) po.get("qty");
-        int splitQty = body.get("split_qty") instanceof Number n ? n.intValue() : 0;
-        if (splitQty <= 0 || splitQty >= qty)
-            throw new ApiError("INVALID_SPLIT_QTY", "분할 수량이 범위를 벗어났습니다.",
-                    "split_qty는 1 ~ " + (qty - 1) + " 사이여야 합니다 (원 발주 " + qty + "개).");
-        LocalDate newDue = checkLeadTime(po, body.get("new_due_date"));
-        if (newDue.toString().equals(po.get("due_date")))
-            throw new ApiError("SPLIT_NOT_USEFUL", "분할 후 입고일이 원 발주와 같습니다.",
-                    "입고일이 같으면 나눌 이유가 없습니다. 다른 new_due_date를 주거나 분할하지 마세요.");
-        String prefix = id.substring(0, id.lastIndexOf('-') + 1);  // "PO-2609-"
-        Integer last = db.queryForObject(
-                "select max(split_part(po_id, '-', 3)::int) from purchase_order where po_id like ?",
-                Integer.class, prefix + "%");
-        return m("original", m("po_id", id, "qty", qty - splitQty, "due_date", po.get("due_date"), "status", "OPEN"),
-                "new", m("po_id", prefix + "%03d".formatted(last + 1), "qty", splitQty,
-                        "due_date", newDue.toString(), "status", "OPEN", "parent_po_id", id));
+        return tx.execute(t -> {
+            Change c = begin(id, body, "split_po");
+            Map<String, Object> po = c.po();
+            int qty = (int) po.get("qty");
+            int splitQty = body.get("split_qty") instanceof Number n ? n.intValue() : 0;
+            if (splitQty <= 0 || splitQty >= qty)
+                throw new ApiError("INVALID_SPLIT_QTY", "분할 수량이 범위를 벗어났습니다.",
+                        "split_qty는 1 ~ " + (qty - 1) + " 사이여야 합니다 (원 발주 " + qty + "개).");
+            LocalDate newDue = checkLeadTime(po, body.get("new_due_date"));
+            if (newDue.toString().equals(po.get("due_date")))
+                throw new ApiError("SPLIT_NOT_USEFUL", "분할 후 입고일이 원 발주와 같습니다.",
+                        "입고일이 같으면 나눌 이유가 없습니다. 다른 new_due_date를 주거나 분할하지 마세요.");
+
+            // 새 번호 = 원 발주와 같은 달(PO-YYMM-)의 다음 번호. 원 발주를 잠근 트랜잭션 안이라 같은 원 발주끼리는 겹치지 않는다
+            String prefix = id.substring(0, id.lastIndexOf('-') + 1);
+            Integer last = db.queryForObject(
+                    "select max(split_part(po_id, '-', 3)::int) from purchase_order where po_id like ?", Integer.class, prefix + "%");
+            String newId = prefix + "%03d".formatted(last + 1);
+            db.update("update purchase_order set qty = ? where po_id = ?", qty - splitQty, id);
+            db.update("""
+                    insert into purchase_order (po_id, item_id, supplier_id, qty, unit_price, order_date, due_date, status, parent_po_id)
+                    select ?, item_id, supplier_id, ?, unit_price, order_date, ?, 'OPEN', po_id from purchase_order where po_id = ?""",
+                    newId, splitQty, newDue, id);
+
+            Map<String, Object> original = m("po_id", id, "qty", qty - splitQty, "due_date", po.get("due_date"), "status", "OPEN");
+            Map<String, Object> created = m("po_id", newId, "qty", splitQty, "due_date", newDue.toString(), "status", "OPEN", "parent_po_id", id);
+            approvals.executed(c.approvalId(), c.requester(), "split_po", id, c.before(), List.of(original, created));
+            return m("original", original, "new", created);
+        });
     }
 
+    /** 변경 하나의 앞단에서 모은 것 */
+    record Change(Map<String, Object> po, Map<String, Object> before, String approvalId, String requester) {}
+
     /**
-     * 변경 도구 공통 앞단 검사: 발주가 있나 → 승인 ID가 있나 → OPEN인가.
+     * 변경 도구 공통 앞단: 발주를 잠그고 → 승인 확인 → OPEN 확인. 트랜잭션 안에서 부른다.
      *
      * <p>승인을 OPEN보다 먼저 보는 이유: 승인 없는 호출은 발주 상태와 상관없이 성립하지 않는다.
-     * 지금은 approval_id가 <b>있는지만</b> 본다. 승인 API가 생기면 APPROVED인지, 도구·인자가
-     * 승인 카드와 같은지까지 본다 (contracts.md 2.7).
+     * 승인은 APPROVED이고 도구·인자가 카드와 같아야 한다 ({@link Approvals#requireApproved}).
      */
-    private Map<String, Object> openPoWithApproval(String id, Map<String, Object> body) {
+    private Change begin(String id, Map<String, Object> body, String tool) {
         Map<String, Object> po = one("""
-                select po.po_id, po.qty, po.status, po.order_date::text as order_date, po.due_date::text as due_date,
+                select po.po_id, po.item_id, po.qty, po.status, po.order_date::text as order_date, po.due_date::text as due_date,
                        m.lead_time_days
                 from purchase_order po
                 join supplier_metric m on m.supplier_id = po.supplier_id and m.item_id = po.item_id
-                where po.po_id = ?""", id, "발주", "purchase_order", "po_id");
-        if (!(body.get("approval_id") instanceof String s) || s.isBlank())
-            throw new ApiError("APPROVAL_REQUIRED", "승인 없이 발주를 바꿀 수 없습니다.",
-                    "변경 도구는 승인 후에만 부를 수 있습니다. 승인 요청을 먼저 올리고 받은 approval_id를 넣으세요.");
+                where po.po_id = ? for update of po""", id, "발주", "purchase_order", "po_id");
+        Map<String, Object> actual = Approvals.withoutApprovalId(body);
+        actual.put("po_id", id);
+        String requester = approvals.requireApproved(body.get("approval_id"), tool, actual);
         if (!"OPEN".equals(po.get("status")))
             throw new ApiError("PO_NOT_OPEN", "열려 있는 발주가 아닙니다.",
                     "현재 상태는 " + po.get("status") + "입니다. OPEN 발주만 바꿀 수 있습니다.");
-        return po;
+        Map<String, Object> before = m("po_id", id, "item_id", po.get("item_id"), "qty", po.get("qty"), "due_date", po.get("due_date"));
+        return new Change(po, before, (String) body.get("approval_id"), requester);
     }
 
     /**

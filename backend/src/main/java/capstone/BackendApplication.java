@@ -58,8 +58,11 @@ public class BackendApplication {
     /** agent 호출용. compose 안에서는 서비스 이름이 그대로 주소가 된다 (http://agent:8000). */
     private final RestClient agent;
 
-    BackendApplication(@Value("${AGENT_URL:http://agent:8000}") String agentUrl) {
+    private final Approvals approvals;
+
+    BackendApplication(@Value("${AGENT_URL:http://agent:8000}") String agentUrl, Approvals approvals) {
         this.agent = RestClient.create(agentUrl);
+        this.approvals = approvals;
     }
 
     // ------------------------------------------------------------------
@@ -155,9 +158,62 @@ public class BackendApplication {
      * 밖에서도 부를 수 있다.
      */
     @PostMapping("/internal/tasks/{id}/events")
-    void receiveEvent(@PathVariable String id, @RequestBody Map<String, Object> event) {
-        find(id);  // 없는 작업이면 404
+    Map<String, Object> receiveEvent(@PathVariable String id, @RequestBody Map<String, Object> event) {
+        Task task = find(id);  // 없는 작업이면 404
+        if ("APPROVAL_REQUIRED".equals(event.get("type"))) return approvalRequired(task, event);
         addEvent(id, event);
+        return Map.of();
+    }
+
+    /**
+     * APPROVAL_REQUIRED: 승인 카드를 저장하고 approvalId를 붙여 화면에 보낸다 (contracts.md 3.3).
+     *
+     * <ul>
+     *   <li>요청자가 BUYER·APPROVER가 아니면 403 ROLE_NOT_ALLOWED — agent는 이걸 받고 안내로 끝낸다</li>
+     *   <li>agent가 같은 이벤트를 다시 보내면(전송 재시도) 같은 카드를 돌려주고 화면에는 다시 보내지 않는다</li>
+     *   <li>금액은 <b>질문한 사람의 역할</b>대로 가려서 보낸다. 이 스트림은 질문한 사람만 본다</li>
+     *   <li>응답 {@code {approvalId}}는 agent가 참고용으로 쓸 수 있다. 재개(resume) 때도 같은 값이 간다</li>
+     * </ul>
+     */
+    private Map<String, Object> approvalRequired(Task task, Map<String, Object> event) {
+        Map<String, Object> card = approvals.create(task.id(), task.userId(), task.role(), event);
+        if ((boolean) card.get("created")) {
+            Map<String, Object> e = new LinkedHashMap<>(event);
+            e.put("approvalId", card.get("approval_id"));
+            e.put("before", card.get("before"));   // 변경 전후 — 사람이 카드에서 한눈에 비교 (contracts.md 3.3)
+            e.put("after", card.get("after"));
+            Masking.mask(e, task.role());
+            addEvent(task.id(), e);
+        }
+        return Map.of("approvalId", card.get("approval_id"));
+    }
+
+    /**
+     * POST /api/ai/tasks/{id}/approval {@code {approvalId, decision, reason}} — 팀장의 승인·거절 (contracts.md 3.1·3.3).
+     *
+     * <p>결정을 저장한 뒤 agent에 재개를 요청하고 202를 바로 돌려준다. 승인이면 agent가 변경 도구를 부르고,
+     * 거절이면 사유를 반영해 다른 대안을 낸다 (최대 2회, contracts.md 3.4).
+     * 결정을 저장하는 것과 agent를 부르는 것을 묶지 않는다 — agent가 죽어 있어도 팀장의 결정은 남아야 한다.
+     */
+    @PostMapping("/api/ai/tasks/{id}/approval")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    Map<String, Object> decide(@PathVariable String id, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "APPROVER");
+        Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
+        CompletableFuture.runAsync(() -> {
+            try {
+                Map<String, Object> req = new HashMap<>();
+                req.put("threadId", id);   // threadId = taskId (createTask 참고)
+                req.put("approvalId", card.get("approval_id"));
+                req.put("decision", card.get("status"));
+                req.put("reason", card.get("reason"));
+                agent.post().uri("/agent/tasks/{id}/resume", id).body(req).retrieve().toBodilessEntity();
+            } catch (Exception e) {
+                if (tasks.containsKey(id))
+                    addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE", "message", "승인은 저장됐지만 AI 작업을 이어 가지 못했습니다: " + e.getMessage()));
+            }
+        });
+        return Map.of("approvalId", card.get("approval_id"), "status", card.get("status"));
     }
 
     // 업무 데이터용 /internal/** (business-mcp 도구 8개)는 InternalApi.java에 있다.

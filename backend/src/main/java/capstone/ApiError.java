@@ -28,8 +28,9 @@ class ApiError extends RuntimeException {
         // business-mcp는 상태가 아니라 error 코드로 분기한다. 상태를 나눈 건 로그에서 구분하려는 것
         this.status = switch (code) {
             case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
-            case "PO_NOT_OPEN" -> HttpStatus.CONFLICT;
-            case "APPROVAL_REQUIRED" -> HttpStatus.FORBIDDEN;
+            case "PO_NOT_OPEN", "PLAN_NOT_OPEN" -> HttpStatus.CONFLICT;
+            case "APPROVAL_REQUIRED", "ROLE_NOT_ALLOWED" -> HttpStatus.FORBIDDEN;
+            case "APPROVAL_NOT_PENDING" -> HttpStatus.CONFLICT;
             default -> HttpStatus.BAD_REQUEST;
         };
     }

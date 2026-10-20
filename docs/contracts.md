@@ -6,7 +6,7 @@
 >
 > **갱신**: 2026-10-20 저녁 — 아래 "최근 변경" 표 참고
 
-## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~저녁, B 파트)
+## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~밤, B 파트)
 
 > 맨 위에 두는 이유: 계약이 바뀐 줄이 문서 곳곳에 흩어져 있어서, 무엇이 바뀌었고 **누가 무엇을 해야 하는지**를 한 번에 보게 하려는 것이다. 다음 변경이 생기면 이 표를 새로 쓴다.
 
@@ -21,6 +21,14 @@
 | 7 | 오류 코드 `INVALID_ARGUMENT` 추가 | 2.5 | – | 없음 (그대로 전달) |
 | 8 | `analyze_impact` 응답에서 `evidence_uri` 제거, `compare_options`의 `evidence`는 빈 목록 | 2.2·2.3 | – | 근거는 `search_docs`로 |
 | 9 | 새 발주(추가 발주·대체 협력사 구매)는 **도구로 열지 않는다** (B 제안, 이견 있으면 뒤집기) | decisions 6.16 | – | – |
+| 10 | **승인 흐름이 실제로 동작한다**: 카드 저장·대기함·승인/거절·agent 재개 요청, 변경 도구는 승인과 도구·인자가 같을 때만 저장 | 3.1·3.3 | 승인 대기함·승인 카드 화면을 실제 API로 | 🔴 **`agent-draft`를 main에 합치기** — 지금 main의 agent엔 `/resume`이 없어 승인 후 FAILED가 난다 |
+| 11 | `APPROVAL_REQUIRED` 이벤트 응답이 `{approvalId}`, SSE 이벤트에 `before`·`after` 추가 | 3.2·3.3 | 승인 카드에 변경 전후 표시 | (참고) 같은 이벤트를 다시 보내도 카드는 하나 |
+| 12 | 화면 변경 API 2개 — **프론트가 정한 요청 모양 그대로**: `PUT /api/plans/{id} {date, qty}`, `PUT /api/purchase-orders/{id}/due-date {due_date, reason}` | 3.1 | API 모드에서 바로 쓸 수 있다 | – |
+| 13 | **로그인 요청 칸은 `user_id`** (프론트 잠정안은 `username`) | 3.1 | 🔴 **`services/api.ts`의 `username` → `user_id`** | – |
+| 14 | 조회 응답은 `{plans: [...]}`처럼 감싸져 있고 snake_case | 2.1 | 🔴 **`services/api.ts`에서 화면 타입으로 변환** (`plan_id`→`id`, `on_hand`→`stock` 등) | – |
+| 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
+| 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
+| 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
 
 
 ## 파트 구분
@@ -319,9 +327,12 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `INVALID_SPLIT_QTY` | 분할 수량이 범위 밖 | 가능한 범위 |
 | `SPLIT_NOT_USEFUL` | 분할 후 입고일이 원래와 같음 | 나눌 이유가 없음 |
 | `BOM_CYCLE` | 순환 BOM | 순환 경로 |
-| `APPROVAL_REQUIRED` | 승인 없이 변경 시도 | 승인 절차 안내 |
+| `APPROVAL_REQUIRED` | 승인 없이 변경 시도. 승인이 PENDING·REJECTED·EXECUTED이거나 **도구·인자가 승인 카드와 다를 때**도 | 승인 절차, 또는 승인된 호출 그대로의 인자 |
 | `UPSTREAM_TIMEOUT` | 백엔드 응답 지연 | 잠시 후 재시도 |
 | `INVALID_ARGUMENT` | 인자가 없거나 형식이 틀림 (날짜 형식, 모르는 `op`, 0 이하 수량) — **10/20 오후 추가** | 맞는 형식이나 가능한 값 목록 |
+| `ROLE_NOT_ALLOWED` | 이 역할로는 못 하는 일. agent에선 생산관리 담당자 작업의 승인 요청 (403) — **10/20 밤 추가** | 할 수 있는 역할 |
+| `APPROVAL_NOT_PENDING` | 이미 처리된 승인을 다시 결정 (409, 화면) — **10/20 밤 추가** | 현재 상태 |
+| `PLAN_NOT_OPEN` | 끝났거나 취소된 생산계획 변경 (409, 화면) — **10/20 밤 추가** | 현재 상태 |
 
 > **판정과 오류를 섞지 않는다.** 결품·경고·과잉은 정상 응답의 **결과**다. 오류는 **호출 자체가 성립하지 않을 때**만 쓴다.
 
@@ -376,14 +387,14 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
 | GET | `/api/ai/tasks/{id}` | `{status, answer, result, sources}` | 요청자 |
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
-| POST | `/api/ai/tasks/{id}/approval` | `202` | APPROVER |
+| POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
 | GET | `/api/ai/tasks?mine=true` | 목록 | 로그인 |
-| GET | `/api/approvals?status=PENDING` | 승인 대기함 | APPROVER |
+| GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3) | APPROVER |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` (응답 모양은 2.1 `/internal`과 같다) · ⬜ `/api/items/{id}/bom` | 조회 | 로그인 (금액 마스킹) |
-| PUT | `/api/plans/{id}` | 생산 일정 변경 | PLANNER |
-| PUT | `/api/purchase-orders/{id}/due-date` | 협력사 지연 입력 | BUYER |
+| PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
+| PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양). 사유 필수 | BUYER·APPROVER |
 
-✅ = 구현됨 (10/20 저녁). 나머지는 7·8단계.
+✅ = 구현됨 (10/20). 나머지(`GET /api/ai/tasks/{id}`, 작업 목록, BOM 조회)는 8·9단계. 화면 변경 2개의 요청 모양은 프론트 브랜치가 먼저 정한 것을 따랐다.
 
 **로그인과 토큰** (10/20 저녁 구현)
 - 요청 `POST /api/auth/login {"user_id": "buyer", "password": "1234"}` → `{"token": "eyJ…", "user_id": "buyer", "name": "박구매", "role": "BUYER", "expires_at": "…"}`
@@ -403,7 +414,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `TOKEN` | `text` | 답변 영역에 이어 붙임 |
 | `TOOL_START` | `tool`, `label` | 진행 상태 |
 | `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
-| `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence` | 승인 카드 |
+| `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence`, ✅ `before`, `after` | 승인 카드 |
 | `DONE` | `status`, `answer`, `result`, `sources` | 스트림 닫고 목록 갱신 |
 | `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
 
@@ -419,9 +430,31 @@ backend ──▶ 화면     위 + approvalId          (amount는 역할에 맞�
 backend ──▶ agent    { threadId, approvalId, decision, reason }
 ```
 
-- `approvalId`는 **backend가 만든다.** agent는 이벤트를 보낼 때 그 값을 알 수 없다.
+- `approvalId`는 **backend가 만든다.** agent는 이벤트를 보낼 때 그 값을 알 수 없다. (✅ 이벤트 응답 `{approvalId}`로 돌려주긴 한다)
 - 거절은 `reason` 필수.
 - 승인 카드에는 **변경 전후를 함께** 보여 준다. 도구 이름과 인자만으로는 사람이 판단할 수 없다.
+
+✅ **구현 (10/20 밤, `Approvals.java`)**
+
+승인 카드 (`GET /api/approvals`의 한 줄, `/api/approvals/{id}`):
+
+```jsonc
+{ "approval_id": "APR-8bd9fbd5", "task_id": "…", "tool": "split_po",
+  "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
+  "summary": "…", "amount": 390000, "evidence": [],
+  "before": { "po_id": "PO-2609-001", "item_id": "MCU", "qty": 500, "due_date": "2026-12-12" },
+  "after": [ { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-12-12" },
+             { "po_id": "(신규)", "qty": 100, "due_date": "2026-11-25" } ],   // 실행 후엔 실제 새 번호로 바뀐다
+  "status": "PENDING",                 // PENDING → APPROVED | REJECTED, APPROVED → EXECUTED
+  "requested_by": "buyer", "requested_at": "…", "decided_by": null, "decided_at": null,
+  "reason": null, "executed_at": null }
+```
+
+- 요청자 역할이 BUYER·APPROVER가 아니면 카드를 만들지 않는다 → agent에 `403 ROLE_NOT_ALLOWED`.
+- 같은 작업·도구·인자로 PENDING 카드가 있으면 새로 만들지 않고 그 `approvalId`를 준다 (agent 이벤트 재전송 대비). 화면에도 다시 보내지 않는다.
+- 변경 도구는 승인이 `APPROVED`이고 **도구·인자가 카드와 정확히 같을 때만** 실행한다. 실행되면 `EXECUTED` — 같은 승인으로 두 번 실행할 수 없다.
+- 변경 + 변경 이력 + 승인 `EXECUTED`는 **한 트랜잭션**이다 (AUD-001). 하나라도 실패하면 아무것도 안 바뀐다.
+- 팀장 결정은 agent 재개와 묶지 않는다. agent가 죽어 있어도 결정은 저장되고, 화면에 `FAILED`(`AGENT_UNAVAILABLE`)가 간다.
 
 ### 3.4 승인 정책
 

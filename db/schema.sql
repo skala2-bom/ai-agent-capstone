@@ -103,4 +103,42 @@ CREATE TABLE supplier_metric (
     PRIMARY KEY (supplier_id, item_id)
 );
 
+-- 승인 카드 (approval 모듈). 변경 도구는 금액과 무관하게 전부 여기를 거친다 (decisions.md 6.1).
+-- 상태: PENDING → APPROVED | REJECTED, APPROVED → EXECUTED. 만료 없음 (decisions.md 1.7)
+CREATE TABLE approval (
+    approval_id    text PRIMARY KEY,           -- backend가 만든다. agent는 이벤트를 보낼 때 이 값을 모른다 (contracts.md 3.3)
+    task_id        text NOT NULL,              -- 작업은 아직 메모리에 있어 FK를 걸지 않는다 (8단계에서 ai_task로)
+    tool           text NOT NULL,              -- 변경 도구 이름. 실행할 때 이것과
+    args           jsonb NOT NULL,             -- 이 인자가 그대로 와야만 실행한다 (contracts.md 2.7)
+    summary        text,
+    amount         bigint,                     -- 원. 화면에 보낼 때 역할대로 가린다
+    evidence       jsonb NOT NULL DEFAULT '[]',
+    before         jsonb,                      -- 변경 전후. 사람이 카드에서 한눈에 비교하게 (contracts.md 3.3)
+    after          jsonb,
+    status         text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXECUTED')),
+    requested_by   text NOT NULL REFERENCES app_user,
+    requested_at   timestamptz NOT NULL DEFAULT now(),
+    decided_by     text REFERENCES app_user,
+    decided_at     timestamptz,
+    reason         text,                       -- 거절 사유 (필수) 또는 승인 메모
+    executed_at    timestamptz,
+    CHECK (status <> 'REJECTED' OR coalesce(reason, '') <> '')
+);
+CREATE INDEX ON approval (status, requested_at);
+
+-- 변경 이력 (규칙 AUD-001). 발주·생산계획이 바뀔 때마다 한 줄. 변경과 같은 트랜잭션에서 쓴다
+CREATE TABLE change_history (
+    id          bigserial PRIMARY KEY,
+    target_type text NOT NULL CHECK (target_type IN ('PURCHASE_ORDER', 'PRODUCTION_PLAN')),
+    target_id   text NOT NULL,
+    action      text NOT NULL,                 -- 변경 도구 이름, 또는 화면 변경이면 update_plan · supplier_delay
+    before      jsonb,
+    after       jsonb,
+    reason      text,
+    changed_by  text NOT NULL REFERENCES app_user,
+    approval_id text REFERENCES approval,      -- 승인을 거친 변경이면 그 승인. 화면에서 직접 바꾼 사실 기록이면 null
+    changed_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON change_history (target_type, target_id);
+
 RESET ROLE;

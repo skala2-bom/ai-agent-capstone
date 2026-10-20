@@ -106,6 +106,23 @@ class Auth {
     }
 
     // ------------------------------------------------------------------
+    // 역할 검사
+    // ------------------------------------------------------------------
+
+    /** 팀장은 구매 담당자 권한을 모두 가진다 (decisions.md 1.4). 생산관리와 구매는 서로 겹치지 않는다. */
+    static boolean allows(String have, String need) {
+        return need.equals(have) || ("BUYER".equals(need) && "APPROVER".equals(have));
+    }
+
+    /** API 안에서 역할을 본다. @PreAuthorize 대신 쓰는 이유: 거부할 때도 같은 오류 형식(retry_hint 포함)으로 내려고 */
+    static void require(Jwt user, String need) {
+        String have = user.getClaimAsString("role");
+        if (!allows(have, need))
+            throw new ApiError("ROLE_NOT_ALLOWED", need + " 권한이 필요합니다 (지금 " + have + ").",
+                    "이 작업은 " + need + (need.equals("BUYER") ? " 또는 APPROVER" : "") + " 계정으로 해 주세요.");
+    }
+
+    // ------------------------------------------------------------------
     // 로그인
     // ------------------------------------------------------------------
 
