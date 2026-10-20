@@ -37,7 +37,12 @@ services:
       # 키가 비어 있으면 agent가 가짜 모델로 돈다. 키는 .env에만 두고 커밋하지 않는다
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-    depends_on: [business-mcp, rag-mcp]
+      # checkpointer: 승인 대기 상태를 agent 스키마에 저장 (agent 계정은 자기 스키마만, db/init.sql)
+      AGENT_DB_URL: postgresql://agent:agent@postgres:5432/bom
+    depends_on:
+      business-mcp: { condition: service_started }
+      rag-mcp: { condition: service_started }
+      postgres: { condition: service_healthy }
 
   business-mcp:
     build: ./business-mcp

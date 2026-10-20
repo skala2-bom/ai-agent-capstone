@@ -1,4 +1,4 @@
-"""business-mcp — Tool 계층 (아키텍처 3장, 8.1).
+"""business-mcp — Tool 계층 (아키텍처 3장, 8.1 · contracts.md 2.1).
 
 업무 기능을 AI가 부를 수 있는 **도구**로 공개한다.
 
@@ -8,19 +8,17 @@
     (아키텍처 1.1 "계산은 백엔드에" — 규칙이 두 곳에 생기면 화면 조회와
      AI 분석이 서로 다른 숫자를 내기 시작한다)
 
-이 서버가 실제로 하는 일은 셋뿐이다.
+이 서버가 실제로 하는 일은 넷뿐이다.
   1. 도구 이름·설명·인자 스키마를 모델에게 보여 준다 (docstring이 곧 설명)
   2. backend를 부른다
-  3. backend의 오류 응답을 ToolError 한 문장으로 바꿔 던진다
+  3. 요청자 헤더(X-Task-Id·X-User-Id·X-Role·X-Service-Token)를 해석하지 않고 그대로 넘긴다 (contracts 1.1)
+  4. backend의 오류 응답을 `[코드] 메시지 retry_hint` 한 문장의 ToolError로 바꿔 던진다 (contracts 2.5)
 
-지금은 도구가 `analyze_impact` 하나뿐이다. 아키텍처 8.1의 나머지 도구
-(get_item, explode_bom, where_used, list_plans, get_inventory, list_receipts,
- compare_options, get_supplier_metrics, 그리고 승인이 필요한 변경 도구 4개)는
-MCP 담당이 같은 모양으로 늘린다.
-  - split_po 절차·검사 규칙: docs/decisions.md 3절
-  - get_supplier_metrics가 읽는 평가지표: docs/decisions.md 2절
-  - 변경 도구에는 annotations의 destructive_hint = true를 붙인다. Harness는
-    도구 이름이 아니라 이 값을 보고 승인 앞에서 멈춘다 (아키텍처 8.1).
+도구 1차 8개 (contracts 2.1). 2차 5개(explode_bom, where_used, get_supplier_metrics,
+change_po_qty, cancel_po)는 backend API가 생기면 같은 모양으로 늘린다.
+
+변경 도구에는 annotations의 destructive_hint = true를 붙인다. agent의 Harness는
+도구 이름이 아니라 이 값을 보고 승인 앞에서 멈춘다 (아키텍처 8.1).
 """
 
 import os
@@ -28,35 +26,152 @@ import os
 import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_headers
+from mcp.types import ToolAnnotations
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8080")
+TIMEOUT_S = 5  # 아키텍처 4.2: business-mcp → backend 5초
 
 mcp = FastMCP("business-mcp")
 
+READ = ToolAnnotations(read_only_hint=True, destructive_hint=False)
+CHANGE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
-@mcp.tool
+
+def _forward_headers() -> dict:
+    """agent가 붙인 요청자 헤더를 그대로 backend로 넘긴다 (contracts 1.1).
+
+    역할을 도구 인자로 받지 않는 이유: 인자는 모델이 채우는 값이라 조작될 수 있다.
+    해석하지 않고 넘기기만 한다 — 금액 마스킹은 backend가 한다 (SEC-001).
+    """
+    headers = get_http_headers(include_all=True)
+    return {k: v for k, v in headers.items() if k.lower().startswith("x-")}
+
+
+def _call(method: str, path: str, *, json: dict | None = None, params: dict | None = None):
+    """backend `/internal/**` 호출. 오류는 contracts 2.5 형식의 ToolError로 바꾼다."""
+    try:
+        r = httpx.request(method, f"{BACKEND_URL}/internal{path}", json=json,
+                          params={k: v for k, v in (params or {}).items() if v is not None},
+                          headers=_forward_headers(), timeout=TIMEOUT_S)
+    except httpx.TimeoutException:
+        raise ToolError("[UPSTREAM_TIMEOUT] 백엔드 응답이 늦습니다. 잠시 후 다시 시도하세요.")
+    except httpx.HTTPError as e:
+        raise ToolError(f"[UPSTREAM_TIMEOUT] 백엔드에 연결하지 못했습니다. 잠시 후 다시 시도하세요. ({e})")
+    if r.is_error:
+        # backend는 업무 오류를 {error, message, retry_hint}로 준다. 상태 코드가 아니라 error 코드로 읽는다.
+        # retry_hint를 꼭 넣는 이유: ToolError는 모델에게 ToolMessage로 돌아가고,
+        # 모델은 그 힌트를 읽고 인자를 고쳐 **스스로 다시 부른다** (교재 2장).
+        try:
+            body = r.json()
+            message = f"[{body['error']}] {body['message']} {body.get('retry_hint') or ''}".strip()
+        except (ValueError, KeyError, TypeError):
+            message = f"[HTTP_{r.status_code}] {r.text[:300]}"
+        raise ToolError(message)
+    return r.json()
+
+
+# ---------------------------------------------------------------------------
+# 조회 4개
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=READ)
+def get_item(item_id: str) -> dict:
+    """품목 하나의 정보를 돌려준다. 완제품(FG-HUB 등)·부품(MCU 등) 모두 가능.
+
+    돌려주는 값: item_id, name(한글 이름), type(FG|ASSY|PART), unit, lead_time_days(일),
+    moq(개), safety_stock(개), high_value, unit_price(원, 역할에 따라 가려짐), supplier_id.
+    없는 ID면 비슷한 ID 목록과 함께 NOT_FOUND 오류.
+    """
+    return _call("GET", f"/items/{item_id}")
+
+
+@mcp.tool(annotations=READ)
+def get_inventory(type: str | None = None, item_id: str | None = None) -> dict:
+    """현재 재고(기준일 2026-11-02)를 돌려준다. type은 FG(완제품) 또는 PART(부품), 둘 다 선택.
+
+    돌려주는 값: as_of, items[{item_id, name, type, on_hand(개), safety_stock(개)}].
+    """
+    return _call("GET", "/inventory", params={"type": type, "item_id": item_id})
+
+
+@mcp.tool(annotations=READ)
+def list_plans(date_from: str | None = None, date_to: str | None = None) -> dict:
+    """생산 계획 목록. date_from·date_to는 YYYY-MM-DD, 양끝 포함, 둘 다 선택.
+
+    돌려주는 값: plans[{plan_id(PP-01 등), product_id(FG-HUB 등), plan_date, qty(대), status}].
+    """
+    return _call("GET", "/plans", params={"from": date_from, "to": date_to})
+
+
+@mcp.tool(annotations=READ)
+def list_receipts(item_id: str | None = None, date_from: str | None = None,
+                  date_to: str | None = None, status: str = "OPEN") -> dict:
+    """부품 입고 예정 발주 목록. 기본은 아직 안 들어온(OPEN) 발주. 날짜는 입고 예정일 기준 YYYY-MM-DD.
+
+    돌려주는 값: purchase_orders[{po_id, item_id, supplier_id, qty(개), unit_price(원), amount(원),
+    order_date, due_date(입고 예정일), status, parent_po_id}].
+    """
+    return _call("GET", "/purchase-orders",
+                 params={"status": status, "item_id": item_id, "from": date_from, "to": date_to})
+
+
+# ---------------------------------------------------------------------------
+# 계산 2개
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=READ)
 def analyze_impact(whatif: list[dict]) -> dict:
-    """가정 변경(whatif)을 적용했을 때 생기는 결품·과잉 목록을 돌려준다.
+    """가정 변경(whatif)을 적용했을 때 생기는 결품·경고·과잉 목록을 돌려준다 (contracts 2.2).
 
     whatif 예: [{"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25"}]
-    수량 단위는 개, 날짜는 YYYY-MM-DD. 계산은 백엔드가 하고 이 도구는 전달만 한다.
+    op: reschedule_plan · change_plan_qty · request_due_date_change · split_po · change_po_qty · cancel_po.
+    수량 단위는 개, 날짜는 YYYY-MM-DD. 빈 목록이면 지금 계획 그대로 판정한다.
+    돌려주는 값: shortages(projected_stock<0), warnings(0≤재고<안전재고), excesses(고가 부품만).
+    계산은 backend가 하고 이 도구는 전달만 한다.
     """
     # ↑ 이 docstring이 모델에게 그대로 도구 설명으로 전달된다.
     #   "받는 값 · 돌려주는 값 · 단위"를 반드시 적는다 (교재 2장).
-    #   단위를 빼면 모델이 100을 "개"인지 "박스"인지 모른 채 인자를 만든다.
-    try:
-        r = httpx.post(f"{BACKEND_URL}/internal/analysis/impact", json={"whatif": whatif}, timeout=5)
-    except httpx.HTTPError as e:
-        # 연결 자체가 안 될 때. 아키텍처 8.1의 UPSTREAM_TIMEOUT에 해당한다.
-        raise ToolError(f"[UPSTREAM_TIMEOUT] 백엔드에 연결하지 못했습니다. 잠시 후 다시 시도하세요. ({e})")
-    if r.is_error:
-        # backend는 업무 오류를 {error, message, retry_hint} 형태로 준다 (아키텍처 8.1).
-        # 실제 구현에서는 그 셋을 한 문장으로 합쳐 던진다. 예:
-        #   ToolError("[BELOW_MOQ] 최소 발주 수량 미만입니다. 최소 수량은 300개입니다. ...")
-        # retry_hint를 꼭 넣는 이유: ToolError는 모델에게 ToolMessage로 돌아가고,
-        # 모델은 그 힌트를 읽고 인자를 고쳐 **스스로 다시 부른다** (교재 2장).
-        raise ToolError(f"[HTTP_{r.status_code}] {r.text}")
-    return r.json()
+    return _call("POST", "/analysis/impact", json={"whatif": whatif})
+
+
+@mcp.tool(annotations=READ)
+def compare_options(issues: list[dict]) -> dict:
+    """결품(issues)을 푸는 해결 대안을 비교해 돌려준다 (contracts 2.3).
+
+    issues: analyze_impact의 shortages 항목을 그대로 넣는다.
+    돌려주는 값: options[{option_id, type(SPLIT_PO|DUE_DATE_CHANGE|REALLOCATE), summary,
+    tool, args(그대로 실행에 쓰는 인자), added_cost(원), risk(LOW|MID|HIGH), feasible,
+    side_effects, evidence}], recommended_option_id.
+    tool·args는 고치지 말고 그대로 쓴다. 모델이 인자를 다시 만들면 숫자가 틀어질 수 있다.
+    """
+    return _call("POST", "/analysis/options", json={"issues": issues})
+
+
+# ---------------------------------------------------------------------------
+# 변경 2개 — 승인 필요 (destructive_hint = true)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(annotations=CHANGE)
+def request_due_date_change(po_id: str, new_due_date: str, approval_id: str) -> dict:
+    """발주 하나의 입고 예정일을 바꾼다. 팀장 승인을 받은 approval_id가 있어야 한다.
+
+    new_due_date는 YYYY-MM-DD. 그 발주의 발주일 + 리드타임보다 이를 수 없다 (LEADTIME_INFEASIBLE,
+    retry_hint에 가장 빠른 가능일). 돌려주는 값: po_id, before{due_date}, after{due_date}, status.
+    """
+    return _call("POST", f"/purchase-orders/{po_id}/due-date",
+                 json={"new_due_date": new_due_date, "approval_id": approval_id})
+
+
+@mcp.tool(annotations=CHANGE)
+def split_po(po_id: str, split_qty: int, new_due_date: str, approval_id: str) -> dict:
+    """발주를 둘로 나눠 split_qty개(개 단위)만 new_due_date(YYYY-MM-DD)에 먼저 받는다.
+
+    원 발주는 수량만 줄고 입고일은 그대로다. 팀장 승인을 받은 approval_id가 있어야 한다.
+    돌려주는 값: original{po_id, qty, due_date}, new{po_id, qty, due_date, parent_po_id}.
+    """
+    return _call("POST", f"/purchase-orders/{po_id}/split",
+                 json={"split_qty": split_qty, "new_due_date": new_due_date, "approval_id": approval_id})
 
 
 if __name__ == "__main__":

@@ -1,231 +1,167 @@
-"""agent — AI Serving 계층 (아키텍처 3장, 5장).
+"""agent — AI Serving 계층 (아키텍처 3장, 5장 · contracts 2.6·2.7).
 
-이 서비스가 맡는 것
-  - LangGraph StateGraph로 모델을 감싸고, 모델이 고른 도구를 대신 실행한다
-  - MCP Client로 business-mcp · rag-mcp에 붙는다 (Streamable HTTP)
-  - 도구 실행 전후와 작업이 끝날 때 backend로 진행 이벤트를 보낸다
+이 파일이 맡는 것
+  - API 두 개: 작업 실행(POST /agent/tasks), 승인 후 재개(POST /agent/tasks/{id}/resume)
+  - checkpointer 연결: AGENT_DB_URL이 있으면 PostgreSQL(agent 스키마), 없으면 메모리
+  - Harness 바깥 틀: 작업 120초 제한, 끝 이벤트(DONE·FAILED·APPROVAL_REQUIRED) 보내기
+
+그래프(노드·분기·반복)는 graph.py, 가정 변경 형식·verify 판정은 whatif.py에 있다.
 
 금지 (교재 5장)
-  - DB 직접 쓰기. 결과는 전부 backend로 이벤트를 보내 저장하게 한다
-
-지금 그래프는 `agent ↔ tools` 반복 하나뿐이다. 아키텍처 5장의 실제 그래프
-(classify_intent → agent_impact/agent_adjust/agent_qa → verify → approval_gate …)는
-Agent 담당이 이 뼈대 위에 노드를 늘려 가며 만든다.
+  - 업무 DB 직접 쓰기. 결과는 전부 backend로 이벤트를 보내 저장하게 한다.
+    agent가 쓰는 DB는 checkpointer용 agent 스키마뿐이다 (db/init.sql 계정 분리).
 
 설계 배경: docs/walking-skeleton.md · 결정 근거: docs/decisions.md
 """
 
-import json
+import asyncio
 import os
-import time
+import uuid
+from contextlib import asynccontextmanager
+from typing import Literal
 
-import httpx
-from fastapi import BackgroundTasks, FastAPI
-from fastmcp import Client
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph.graph import END, START, MessagesState, StateGraph
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+from pydantic import BaseModel
 
-# compose 안에서는 서비스 이름이 그대로 주소가 된다.
-# MCP 주소 끝의 `/mcp`를 빼면 404가 난다 (교재 4장에서 가장 자주 나는 오류).
-BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8080")
-BUSINESS_MCP_URL = os.getenv("BUSINESS_MCP_URL", "http://business-mcp:9101/mcp")
-RAG_MCP_URL = os.getenv("RAG_MCP_URL", "http://rag-mcp:9102/mcp")
+import graph as G
 
+AGENT_DB_URL = os.getenv("AGENT_DB_URL")    # 예: postgresql://agent:agent@postgres:5432/bom
+TASK_TIMEOUT_S = 120                         # 작업 한 번 실행 (아키텍처 4.2, 승인 대기 시간 제외)
+RECURSION_LIMIT = 60                         # 그래프 단계 수 안전장치. 모델 호출 한도(8회)는 graph.py가 따로 센다
 
-# ---------------------------------------------------------------------------
-# Tools — MCP 기능을 LangChain 도구로 감싼다 (Harness의 Tools 요소)
-#
-# 모델에게는 이 함수들의 docstring이 그대로 도구 설명으로 전달된다.
-# 그래서 docstring에 "무엇을 받고 무엇을 돌려주는지 + 단위"를 적는다 (교재 2장).
-#
-# ponytail: 도구 호출마다 MCP Client를 새로 연결한다. 시작 순서를 신경 쓸 필요가
-#           없어 뼈대에 맞지만, 호출마다 연결 비용이 든다. 도구가 늘면 Client를
-#           한 번 만들어 재사용하도록 바꿀 것 (교재 4장 mcpServers 설정 방식).
-# ---------------------------------------------------------------------------
-
-@tool
-async def analyze_impact(whatif: list[dict]) -> dict:
-    """가정 변경(whatif)을 적용했을 때 생기는 결품·과잉 목록을 돌려준다.
-    whatif 예: [{"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25"}]"""
-    async with Client(BUSINESS_MCP_URL) as c:
-        return (await c.call_tool("analyze_impact", {"whatif": whatif})).data
+app_graph = None
 
 
-@tool
-async def read_doc(uri: str) -> str:
-    """근거 문서 조항 원문을 읽는다. uri 예: doc://ECN-2026-014/3.2"""
-    # 모델은 Tool만 부를 수 있다. 그래서 rag-mcp의 Resource를 이렇게 "가상 도구"로
-    # 감싸서 모델이 쓸 수 있게 만든다 (교재 3장 "LLM에 연결하기").
-    # Resource는 원래 앱(여기)이 고르는 것이고, 모델이 고르는 것은 Tool이다.
-    async with Client(RAG_MCP_URL) as c:
-        return (await c.read_resource(uri))[0].text
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """checkpointer를 붙여 그래프를 만든다.
 
-
-TOOLS = {t.name: t for t in (analyze_impact, read_doc)}
-
-
-# ---------------------------------------------------------------------------
-# Model — 키가 없으면 가짜 모델로 동작한다
-# ---------------------------------------------------------------------------
-
-def fake_model(messages):
-    """OPENAI_API_KEY 없이도 전체 흐름을 볼 수 있게 하는 가짜 모델.
-
-    지금까지 받은 도구 결과(ToolMessage) 개수만 보고 다음에 할 일을 정한다.
-      0개 → analyze_impact 호출
-      1개 → 그 결과 안의 evidence_uri로 read_doc 호출
-      2개 → 두 결과를 합쳐 답변하고 끝
-
-    단순히 순서만 박아 둔 게 아니라 **앞 도구의 결과를 읽어서 다음 도구의 인자를
-    만든다**. 진짜 모델이 하는 일("도구 결과를 보고 다음 도구를 고른다")과 같은
-    모양이라, 키 없이도 팀원이 흐름을 확인할 수 있다.
+    PostgreSQL에 저장하면 승인을 기다리는 동안 agent가 재시작돼도 작업이 사라지지 않는다.
+    테이블은 처음 실행할 때 LangGraph가 agent 스키마에 직접 만든다 (agent 계정 search_path = agent).
     """
-    results = [m for m in messages if isinstance(m, ToolMessage)]
-    if len(results) == 0:
-        # 아키텍처 4.3 시퀀스(SC1 "허브를 11/25로 당기면?")의 가정 변경을 그대로 쓴다
-        whatif = [{"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25"}]
-        return AIMessage("", tool_calls=[{"id": "call_1", "name": "analyze_impact", "args": {"whatif": whatif}}])
-    if len(results) == 1:
-        uri = json.loads(results[0].content).get("evidence_uri", "doc://ECN-2026-014/3.2")
-        return AIMessage("", tool_calls=[{"id": "call_2", "name": "read_doc", "args": {"uri": uri}}])
-    return AIMessage(f"[가짜 모델] 영향 분석 결과: {results[0].content}\n근거: {results[1].content}")
+    global app_graph
+    if AGENT_DB_URL:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        async with AsyncPostgresSaver.from_conn_string(AGENT_DB_URL) as saver:
+            await saver.setup()
+            app_graph = G.builder.compile(checkpointer=saver)
+            yield
+    else:
+        app_graph = G.builder.compile(checkpointer=InMemorySaver())
+        yield
 
 
-if os.getenv("OPENAI_API_KEY"):
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini")).bind_tools(list(TOOLS.values()))
-else:
-    llm = None
-
-# Harness의 Instructions 요소 (교재 6장).
-# 금지 목록은 팀원 판단 기준 설계안 v0.1의 "LLM이 하지 않을 것"을 그대로 옮겼다.
-# 이 프로젝트의 핵심은 "숫자는 규칙 엔진이 만들고 LLM은 설명한다"이므로,
-# 모델이 직접 계산하기 시작하면 주제 자체가 무너진다.
-# ponytail: 교재는 prompts/*.md로 빼서 버전 관리하라고 한다. 뼈대라 여기 두었다
-#           → Agent 담당이 agent/prompts/ 로 옮길 것.
-INSTRUCTIONS = """너는 BOM 영향 분석 도우미다.
-
-하는 일
-- 도구를 골라 부르고, 도구가 돌려준 숫자를 사람이 읽을 수 있게 설명한다.
-- 수량·날짜는 도구 결과에 있는 값만 인용한다.
-- 근거 문서는 read_doc으로 원문을 읽어 인용한다.
-- 경고에 rule_id가 있으면 그 규칙 ID를 근거로 함께 밝힌다.
-
-하지 않는 일
-- BOM 소요량이나 재고를 직접 계산하지 않는다. 계산은 도구가 한다.
-- 승인 없이 발주를 바꾸지 않는다.
-- 없는 조항 번호를 지어내지 않는다. 근거가 없으면 "규정 확인 필요"라고 말한다.
-- 공급사가 확약하지 않은 납기를 가능하다고 단정하지 않는다."""
+app = FastAPI(lifespan=lifespan)
 
 
-async def call_model(state: MessagesState):
-    """그래프의 `agent` 노드. 모델에게 다음에 할 일을 물어본다."""
-    if llm is None:
-        return {"messages": [fake_model(state["messages"])]}
-    return {"messages": [await llm.ainvoke([SystemMessage(INSTRUCTIONS), *state["messages"]])]}
+class TaskIn(BaseModel):
+    """contracts 2.6. backend가 아직 userId·role·whatif를 보내지 않아도 받을 수 있게 전부 선택값이다."""
+    taskId: str
+    threadId: str | None = None
+    userId: str | None = None
+    role: str | None = None
+    question: str = ""
+    whatif: list[dict] | None = None   # null이면 agent가 질문에서 뽑는다. 자동 작업이면 backend가 채운다
 
 
-# ---------------------------------------------------------------------------
-# Graph — agent ↔ tools 반복
-#
-#     START → agent ──(도구를 고름)──→ tools ──┐
-#                 ↑                            │
-#                 └────────────────────────────┘
-#                 └──(도구 안 고름)──→ END
-# ---------------------------------------------------------------------------
+class ResumeIn(BaseModel):
+    """contracts 2.7."""
+    threadId: str | None = None
+    approvalId: str
+    decision: Literal["APPROVED", "REJECTED"]
+    reason: str | None = None
 
-async def emit(task_id: str, event: dict):
-    """backend로 진행 이벤트를 보낸다 (아키텍처 9.2, 9.3).
 
-    실패해도 작업은 계속한다 (아키텍처 4.2: "3회 재시도, 실패해도 작업은 계속").
-    이벤트는 화면에 보여 주기 위한 것이라, 못 보냈다고 분석 자체를 멈출 이유가 없다.
-    seq·ts·taskId는 backend가 붙여 준다.
+def _config(thread_id: str) -> dict:
+    return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
+
+
+async def run(task_id: str, thread_id: str, graph_input, role: str | None, trace_id: str) -> None:
+    """그래프를 한 번 돌리고, 멈춘 이유에 맞는 끝 이벤트를 보낸다.
+
+    - 승인 대기로 멈춤 → APPROVAL_REQUIRED (approval_gate가 interrupt로 넘긴 값)
+    - 끝까지 감 → DONE
+    - 시간 초과·한도 초과·예외 → FAILED. 여기서 막지 않으면 화면이 영원히 기다린다
     """
+    config = _config(thread_id)
     try:
-        async with httpx.AsyncClient(timeout=2) as c:
-            await c.post(f"{BACKEND_URL}/internal/tasks/{task_id}/events", json=event)
-    except httpx.HTTPError:
-        pass
-
-
-async def run_tools(state: MessagesState, config):
-    """그래프의 `tools` 노드. 모델이 고른 도구를 실제로 실행한다.
-
-    모델은 "이 도구를 이 인자로 부르자"고 제안만 하고, 실행은 여기(Harness)가 한다
-    (교재 6장). 그래서 진행 이벤트도 도구 실패 처리도 전부 이 자리에 있다.
-    """
-    task_id = config["configurable"]["thread_id"]
-    out = []
-    for call in state["messages"][-1].tool_calls:
-        await emit(task_id, {"type": "TOOL_START", "tool": call["name"]})
-        started, ok = time.monotonic(), True
-        try:
-            result = await TOOLS[call["name"]].ainvoke(call["args"])
-            content = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            # 도구 오류로 작업을 죽이지 않는다. 오류 메시지를 모델에게 돌려주면
-            # 모델이 retry_hint를 읽고 인자를 고쳐 다시 부를 수 있다
-            # (교재 6장 "오류는 ToolMessage로 반환").
-            ok, content = False, f"도구 오류: {e}"
-        await emit(task_id, {"type": "TOOL_END", "tool": call["name"], "ok": ok,
-                             "ms": int((time.monotonic() - started) * 1000)})
-        out.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
-    return {"messages": out}
-
-
-def route(state: MessagesState):
-    """모델이 도구를 골랐으면 tools로, 답변을 냈으면 끝."""
-    return "tools" if state["messages"][-1].tool_calls else END
-
-
-builder = StateGraph(MessagesState)
-builder.add_node("agent", call_model)
-builder.add_node("tools", run_tools)
-builder.add_edge(START, "agent")
-builder.add_conditional_edges("agent", route)
-builder.add_edge("tools", "agent")
-# 아직 checkpointer를 붙이지 않았다. 승인 대기(interrupt) → 재개를 만들 때
-# compile(checkpointer=...)로 상태를 저장해야 같은 thread_id로 이어갈 수 있다.
-graph = builder.compile()
-
-
-# ---------------------------------------------------------------------------
-# API — backend만 부른다 (포트를 공개하지 않는다)
-# ---------------------------------------------------------------------------
-
-app = FastAPI()
-
-
-async def run_task(task_id: str, question: str):
-    """작업 하나를 끝까지 돌리고, 결과를 DONE 이벤트로 보낸다."""
-    try:
-        # recursion_limit 16 ≈ 최대 8턴 (agent·tools가 번갈아 도니 턴당 2).
-        # 교재 6장 Harness 권장값 "최대 8턴". 120초 제한과 "같은 도구 3회"는 아직 없다.
-        state = await graph.ainvoke({"messages": [HumanMessage(question)]},
-                                    {"configurable": {"thread_id": task_id}, "recursion_limit": 16})
-        # 근거 패널에 쓸 sources를 만든다 (아키텍처 8.2 형식).
-        # read_doc 결과(ToolMessage)에는 어떤 uri로 읽었는지가 없어서,
-        # 그 호출을 제안했던 AIMessage의 tool_calls에서 인자를 찾아 짝을 맞춘다.
-        args = {c["id"]: c["args"] for m in state["messages"] if isinstance(m, AIMessage) for c in m.tool_calls}
-        sources = [{"uri": args[m.tool_call_id]["uri"], "excerpt": m.content}
-                   for m in state["messages"] if isinstance(m, ToolMessage) and m.name == "read_doc"]
-        await emit(task_id, {"type": "DONE", "status": "DONE", "answer": state["messages"][-1].content,
-                             "sources": sources})
+        await asyncio.wait_for(app_graph.ainvoke(graph_input, config), TASK_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        await G.emit(task_id, {"type": "FAILED", "errorCode": "TIMEOUT", "traceId": trace_id,
+                               "message": f"작업이 {TASK_TIMEOUT_S}초 안에 끝나지 않았습니다."}, important=True)
+        return
+    except G.ToolUnavailable as e:
+        await G.emit(task_id, {"type": "FAILED", "errorCode": "TOOL_UNAVAILABLE", "traceId": trace_id,
+                               "message": str(e)}, important=True)
+        return
+    except G.LimitExceeded as e:
+        await G.emit(task_id, {"type": "FAILED", "errorCode": "LOOP_LIMIT", "traceId": trace_id,
+                               "message": str(e)}, important=True)
+        return
     except Exception as e:
-        # 여기서 막지 않으면 화면이 DONE도 FAILED도 못 받고 영원히 기다린다
-        await emit(task_id, {"type": "FAILED", "errorCode": type(e).__name__, "message": str(e)})
+        await G.emit(task_id, {"type": "FAILED", "errorCode": type(e).__name__, "traceId": trace_id,
+                               "message": str(e)}, important=True)
+        return
+
+    snapshot = await app_graph.aget_state(config)
+    pending = [i for t in snapshot.tasks for i in (t.interrupts or ())]
+    if pending:
+        await G.emit(task_id, {"type": "APPROVAL_REQUIRED", **pending[0].value}, important=True)
+        return
+    v = snapshot.values
+    await G.emit(task_id, {"type": "DONE", "status": "DONE", "answer": v.get("answer"),
+                           "result": G.mask(v.get("result"), role), "sources": v.get("evidence") or [],
+                           "next_actions": v.get("next_actions") or []}, important=True)
 
 
 @app.post("/agent/tasks", status_code=202)
-async def create_task(body: dict, background: BackgroundTasks):
-    """② backend → agent 작업 실행 (아키텍처 9.2).
+async def create_task(body: TaskIn, background: BackgroundTasks):
+    """② backend → agent 작업 실행 (contracts 2.6). 바로 202를 돌려주고 뒤에서 돌린다.
 
-    backend를 기다리게 하지 않으려고 바로 202를 돌려주고 뒤에서 돌린다.
-    진행 상황은 전부 이벤트로 backend에 간다.
-
-    아직 없는 것: /agent/tasks/{id}/resume (승인 후 재개), 서비스 토큰 확인.
+    같은 threadId로 다시 부르면 앞 대화의 State를 이어받는다. 예: 영향 분석 뒤
+    "해결 방법 찾아 줘"라고 하면 앞에서 뽑은 가정 변경을 그대로 쓴다.
     """
-    background.add_task(run_task, body["taskId"], body["question"])
+    thread_id = body.threadId or body.taskId
+    trace_id = uuid.uuid4().hex
+    graph_input = {
+        "messages": [HumanMessage(body.question)],
+        "task_id": body.taskId, "thread_id": thread_id, "trace_id": trace_id,
+        "user_id": body.userId, "role": body.role, "question": body.question,
+        "whatif_source": "backend" if body.whatif is not None else "agent",
+        # 이번 실행의 값은 비우고 시작한다 (같은 thread의 이전 실행 값이 섞이지 않게).
+        # whatif_ops는 backend가 줄 때만 넣는다 — 안 주면 이전 대화의 변경을 이어 쓸 수 있게 둔다.
+        "turn_count": 0, "tool_counts": {}, "impact": None, "targets": [], "options": [], "recommended": None,
+        "tried": [], "selected_option": None, "pick_reason": None, "verify": None, "verify_log": [],
+        "verify_count": 0, "reject_count": 0, "rejections": [], "decision": None, "executed": None,
+        "evidence": [], "clarify": None, "notice": None, "failure": None, "answer": None,
+        "next_actions": [], "result": None,
+    }
+    if body.whatif is not None:
+        graph_input["whatif_ops"] = body.whatif
+    background.add_task(run, body.taskId, thread_id, graph_input, body.role, trace_id)
     return {"accepted": True}
+
+
+@app.post("/agent/tasks/{task_id}/resume", status_code=202)
+async def resume(task_id: str, body: ResumeIn, background: BackgroundTasks):
+    """승인·거절 결과로 멈춘 자리부터 이어 간다 (contracts 2.7). 같은 threadId의 checkpointer 상태를 쓴다."""
+    thread_id = body.threadId or task_id
+    snapshot = await app_graph.aget_state(_config(thread_id))
+    if not any(t.interrupts for t in snapshot.tasks):
+        raise HTTPException(409, "승인을 기다리는 작업이 아닙니다.")
+    if body.decision == "REJECTED" and not (body.reason or "").strip():
+        raise HTTPException(422, "거절 사유가 필요합니다 (contracts 3.3).")
+    v = snapshot.values
+    background.add_task(run, task_id, thread_id, Command(resume=body.model_dump()),
+                        v.get("role"), v.get("trace_id") or uuid.uuid4().hex)
+    return {"accepted": True}
+
+
+@app.get("/health")
+async def health():
+    return {"ok": app_graph is not None, "checkpointer": "postgres" if AGENT_DB_URL else "memory",
+            "model": "openai" if G.llm is not None else "fake"}
