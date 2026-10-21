@@ -148,6 +148,8 @@ async def create_task(body: TaskIn, background: BackgroundTasks):
         "tried": [], "selected_option": None, "pick_reason": None, "verify": None, "verify_log": [],
         "verify_count": 0, "reject_count": 0, "rejections": [], "decision": None, "executed": None,
         "evidence": [], "clarify": None, "notice": None, "failure": None, "answer": None,
+        "current_impact": None, "current_ops": [], "scope": [], "active_target": None,
+        "blocked": {}, "executions": [], "search_hits": [], "qa_searched": False, "evidence_error": None,
         "next_actions": [], "result": None,
     }
     if body.whatif is not None:

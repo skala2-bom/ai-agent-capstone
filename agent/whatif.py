@@ -11,6 +11,7 @@ op 이름은 변경 도구 이름과 같다 (decisions 6.12). 그래서 verify�
 틀릴 여지가 없다 (decisions 6.3).
 """
 
+import json
 import re
 from datetime import date
 from typing import Literal
@@ -53,7 +54,9 @@ class Classification(BaseModel):
     """질문 분류 결과."""
     intent: Literal["IMPACT", "ADJUST", "QA"]
     whatif: list[WhatifOp] = Field(default_factory=list)
-    unclear: str | None = Field(None, description="계획·날짜를 하나로 정할 수 없을 때만, 무엇이 모호한지")
+    unclear: str | None = Field(
+        None, description="계획 ID·날짜·수량을 하나로 정할 수 없을 때만 부족한 정보. "
+                          "의도 선택 이유를 쓰지 않는다. 질문에 원래 생산일과 새 날짜가 있어 계획을 특정할 수 있으면 null.")
 
 
 def normalize(op: dict | BaseModel) -> dict:
@@ -103,7 +106,10 @@ def consistency_errors(question: str, ops: list[dict], plans: list[dict]) -> lis
     고른 plan_id가 그 날짜의 계획이어야 한다. 모델이 같은 제품의 다른 계획(PP-01)을 고르는
     실수를 실제로 했다 (평가셋 SC2). 형식 검사로는 안 잡혀서 따로 본다.
     """
-    mentioned = {infer_date(*map(int, m)) for m in MD.findall(question)}
+    try:
+        mentioned = {infer_date(*map(int, m)) for m in MD.findall(question)}
+    except ValueError:
+        return ["질문에 실제로 존재하지 않는 월/일이 있습니다."]
     by_id = {p["plan_id"]: p for p in plans}
     errors = []
     for op in ops:
@@ -132,6 +138,14 @@ PRODUCT_WORDS = {"허브": "FG-HUB", "스위치": "FG-SWITCH", "플러그": "FG-
 MD = re.compile(r"(\d{1,2})/(\d{1,2})")
 
 
+def explicit_adjust_request(question: str) -> bool:
+    """긴 가정 뒤의 명시적 해결 요청을 모델이 IMPACT로 놓치지 않게 보완한다.
+
+    '해결안 검수 규정' 같은 문서 질문에는 적용하지 않는다. 실행은 여전히 별도 승인을 요구한다.
+    """
+    return bool(re.search(r"해결\s*방법|해결해\s*줘|대안(?:을)?\s*(?:찾|만들|제안)|발주\s*조정", question))
+
+
 def infer_date(month: int, day: int) -> str:
     """연도 없는 날짜를 기준일 이후 가장 가까운 날짜로 바꾼다. 11/25 → 2026-11-25, 1/4 → 2027-01-04."""
     d = date(BASE_DATE.year, month, day)
@@ -148,6 +162,8 @@ def rule_classify(question: str, plans: list[dict]) -> Classification:
     else:
         intent = "IMPACT"
     ops: list[WhatifOp] = []
+    if intent == "QA":
+        return Classification(intent=intent)
     po = re.search(r"PO-\d{4}-\d{3}", q)
     if po and "입고" in q:
         dates = MD.findall(q)
@@ -159,15 +175,17 @@ def rule_classify(question: str, plans: list[dict]) -> Classification:
         product = next((pid for word, pid in PRODUCT_WORDS.items() if word in clause), None)
         if not product:
             continue
+        qty = re.search(r"(\d[\d,]*)\s*대", clause)
+        target = re.search(r"(\d{1,2})/(\d{1,2})\s*로", clause)
+        if not target and not (qty and re.search(r"늘|줄|대로", clause)):
+            continue  # "플러그 케이스 해결 방법"처럼 변경 없는 질문에서 생산 계획을 추측하지 않는다.
         candidates = [p for p in plans if p["product_id"] == product]
         mentioned = {infer_date(*map(int, m)) for m in MD.findall(clause)}
-        target = re.search(r"(\d{1,2})/(\d{1,2})\s*로", clause)
         new_date = infer_date(*map(int, target.groups())) if target else None
         by_date = [p for p in candidates if p["plan_date"] in mentioned - {new_date}]
         plan = by_date[0] if len(by_date) == 1 else candidates[0] if len(candidates) == 1 else None
         if plan is None:
             return Classification(intent=intent, unclear=f"{product} 계획이 여러 개라 어느 생산인지 모릅니다.")
-        qty = re.search(r"(\d[\d,]*)\s*대", clause)
         if qty and re.search(r"늘|줄|대로", clause):
             ops.append(WhatifOp(op="change_plan_qty", plan_id=plan["plan_id"], new_qty=int(qty.group(1).replace(",", ""))))
         elif new_date:
@@ -184,8 +202,34 @@ def shortage_key(s: dict) -> tuple:
 
 
 def actionable(impact: dict) -> list[dict]:
-    """해결안이 필요한 결품. orderable=true(지금 발주하면 됨)는 정상 안내라 빼고 넘긴다."""
-    return [s for s in impact.get("shortages", []) if not s.get("orderable")]
+    """긴급 결품과 과잉. 품목·규칙별로 처리하며 orderable 결품은 신규 발주 안내로 남긴다."""
+    return ([{**s, "rule_id": "INV-001"} for s in impact.get("shortages", []) if not s.get("orderable")]
+            + [{**s, "rule_id": "INV-003"} for s in impact.get("excesses", [])])
+
+
+def target_key(target: dict) -> str:
+    return f"{target.get('target_rule') or target.get('rule_id') or 'INV-001'}|{target['item_id']}"
+
+
+def option_key(option: dict) -> str:
+    """OPT-1은 재계산마다 달라지므로 거절·실패 중복 판정에는 실행 내용을 쓴다."""
+    return json.dumps(option_op(option), sort_keys=True, ensure_ascii=False)
+
+
+def remaining_ops(ops: list[dict], executed: dict) -> list[dict]:
+    """이미 DB에 실행한 변경을 다시 가정하지 않는다. 생산계획 가정은 유지한다.
+
+    같은 필드를 덮어쓴 기존 가정도 제거한다. SC4 입고 지연 가정을 실행 후 다시 얹으면
+    승인된 납기 당김이 가려진다. 분할 후에는 원 발주의 입고일 가정은 여전히 유효하다.
+    """
+    tool, po_id = executed["tool"], executed["args"].get("po_id")
+    overwritten = {
+        "request_due_date_change": {"request_due_date_change"},
+        "change_po_qty": {"change_po_qty"},
+        "split_po": {"split_po", "change_po_qty"},
+        "cancel_po": {"request_due_date_change", "change_po_qty", "split_po", "cancel_po"},
+    }.get(tool, set())
+    return [o for o in ops if not (o.get("po_id") == po_id and o.get("op") in overwritten)]
 
 
 def option_op(option: dict) -> dict:
@@ -196,18 +240,21 @@ def option_op(option: dict) -> dict:
 def judge(before: dict, after: dict, targets: list[dict]) -> dict:
     """대안을 적용하기 전(before)과 후(after)를 비교해 통과 여부를 정한다.
 
-    통과 = 대상 결품이 모두 사라졌고 **그리고** 새로 생기거나 더 커진 결품이 없다.
+    통과 = 대상 품목·규칙의 긴급 결품/과잉이 사라졌고 새로 생기거나 더 커진 결품이 없다.
     경고(안전재고 미달)는 통과를 막지 않는다 — 결품이 아니라 여유가 줄어든 상태다 (decisions 1.2).
     대신 결과에 남겨 승인 카드와 답변에서 보이게 한다.
     """
     before_by_key = {shortage_key(s): s for s in before.get("shortages", [])}
     after_by_key = {shortage_key(s): s for s in after.get("shortages", [])}
-    unresolved = [after_by_key[shortage_key(t)] for t in targets if shortage_key(t) in after_by_key]
-    target_keys = {shortage_key(t) for t in targets}
+    # 같은 품목의 긴급 결품 전체를 확인한다. 다른 대상 품목의 기존 결품은 다음 승인에서 처리한다.
+    groups = {target_key(t) for t in targets}
+    unresolved = [
+        s for s in after.get("shortages", [])
+        if f"INV-001|{s['item_id']}" in groups and not s.get("orderable")
+    ] + [s for s in after.get("excesses", []) if f"INV-003|{s['item_id']}" in groups]
     new_or_worse = [
         s for k, s in after_by_key.items()
-        if k not in target_keys and (k not in before_by_key
-                                     or s.get("projected_stock", 0) < before_by_key[k].get("projected_stock", 0))
+        if k not in before_by_key or s.get("projected_stock", 0) < before_by_key[k].get("projected_stock", 0)
     ]
     return {
         "passed": not unresolved and not new_or_worse,

@@ -6,9 +6,9 @@
 #
 # 시작 순서를 거의 신경 쓰지 않는 이유: 서비스끼리는 실제로 호출할 때 연결하기
 # 때문이다. agent가 먼저 떠도 MCP 서버가 준비되면 그때부터 정상 동작한다.
-# → 그래서 healthcheck가 아직 없다. (아키텍처 7장 표에는 서비스마다 있다)
+# postgres·rabbitmq는 healthcheck로 준비를 기다린다. 다른 서비스는 호출 시 연결한다.
 #
-# 아직 없는 것: indexer — 담당자가 추가
+# indexer는 수동 실행 프로필(indexing), rabbitmq는 상시 작업 대기열
 # 설계 배경: docs/walking-skeleton.md
 services:
   frontend:
@@ -69,6 +69,23 @@ services:
   rag-mcp:
     build: ./rag-mcp
     # 포트 없음 = 내부 전용
+    environment: &rag-environment
+      RAG_DB_URL: postgresql://rag:rag@postgres:5432/bom
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-1536}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  rag-index:
+    build: ./rag-mcp
+    profiles: [indexing]
+    environment: *rag-environment
+    volumes:
+      - ./data:/app/data:ro
+    command: ["python", "indexer.py"]
+    depends_on:
+      postgres: { condition: service_healthy }
 
   postgres:
     # pgvector가 들어 있는 이미지. 업무 DB와 벡터 DB를 하나로 쓴다 (contracts.md 5 "Vector DB")
