@@ -4,11 +4,11 @@
 
     START → classify_intent ─┬─ IMPACT → agent_impact ⇄ tools ───────────────┐
                              ├─ QA     → agent_qa ⇄ tools_rag ───────────────┤
-                             ├─ ADJUST → adjust_prepare → compare             │
-                             │            → agent_adjust → verify → collect_evidence → approval_gate
-                             │                 ↑ 실패/거절          │ 승인 → execute_change
-                             │                 └────────────────────┘          → refresh_impact → compare
-                             │            다음 대상이 없거나 모두 보류되면 → respond
+                             ├─ ADJUST → 품목별 compare → 선택 → 검증 → 근거 → save_proposal
+                             │            → check_batch → register_proposals → approval_gate
+                             │                 승인 → execute_change → record_execution → refresh_impact
+                             │                 거절 → 해당 대상만 compare → 재제안
+                             │            미결정/확인 필요 건이 없으면 → respond
                              └─ CLARIFY ─────────────────────────────────────────────────→ respond → END
 
 모델(LLM)이 판단하는 노드: classify_intent, agent_impact, agent_qa, agent_adjust
@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
@@ -51,6 +52,9 @@ TOOL_TIMEOUT_S = 10         # 도구 1회 (아키텍처 4.2)
 MAX_VERIFY_RETRIES = 2      # verify 실패 후 다른 대안으로 다시 (contracts 2.4)
 MAX_REJECTS = 2             # 팀장 거절 후 다시 제안 (contracts 3.4)
 MAX_ACTIONS = 10            # 한 작업에서 실제 실행할 수 있는 변경 수
+MAX_PROPOSALS = MAX_ACTIONS * (MAX_REJECTS + 1)
+MAX_ADJUST_TURNS = int(os.getenv("MAX_ADJUST_TURNS", "64"))
+execution_store = None      # lifespan injects the durable agent-only journal
 
 PROMPTS = Path(__file__).parent / "prompts"
 
@@ -94,8 +98,9 @@ class ToolUnavailable(Exception):
 
 def next_turn(state: dict) -> int:
     turns = state.get("turn_count", 0) + 1
-    if turns > MAX_TURNS:
-        raise LimitExceeded(f"모델 호출이 {MAX_TURNS}회를 넘었습니다.")
+    limit = MAX_ADJUST_TURNS if state.get("intent") == "ADJUST" else MAX_TURNS
+    if turns > limit:
+        raise LimitExceeded(f"모델 호출이 {limit}회를 넘었습니다.")
     return turns
 
 
@@ -147,6 +152,11 @@ class AgentState(TypedDict, total=False):
     answer: str | None
     next_actions: list[dict]
     result: dict | None
+    proposals: list[dict]                    # immutable option/verification + per-card lifecycle
+    active_proposal: str | None
+    replan_target: str | None
+    processed_commands: list[str]            # inbox replay after a checkpoint/worker crash
+    workflow_version: int
 
 
 # ---------------------------------------------------------------------------
@@ -558,27 +568,34 @@ def after_prepare(state: AgentState) -> str:
 
 
 async def compare(state: AgentState) -> dict:
-    """한 품목·규칙씩 처리한다. 다른 품목의 기존 문제는 다음 승인에서 처리한다."""
-    pending = [t for t in W.actionable(state["current_impact"])
-               if W.target_key(t) in state["scope"] and W.target_key(t) not in (state.get("blocked") or {})]
+    """모든 대상의 안을 먼저 준비한다. 아직 승인되지 않은 안을 DB 가정에 합치지 않는다."""
+    prepared = {p["target"] for p in state.get("proposals") or []}
+    replan = state.get("replan_target")
+    pending = [t for t in W.actionable(state.get("current_impact") or {})
+               if W.target_key(t) in state["scope"] and W.target_key(t) not in (state.get("blocked") or {})
+               and (W.target_key(t) == replan if replan else W.target_key(t) not in prepared)]
     if not pending:
-        return {"active_target": None, "targets": [], "selected_option": None}
-    if len(state.get("executions") or []) >= MAX_ACTIONS:
-        return {"failure": f"변경 {MAX_ACTIONS}건 한도에 도달했습니다. 남은 문제는 새 작업으로 확인하세요."}
+        return {"active_target": None, "targets": [], "selected_option": None, "replan_target": None}
     key = W.target_key(pending[0])
     targets = [t for t in pending if W.target_key(t) == key]
+    if (len(prepared) >= MAX_ACTIONS and not replan) or len(state.get("proposals") or []) >= MAX_PROPOSALS:
+        return {"active_target": key, "targets": targets, "options": [], "selected_option": None,
+                "evidence_error": "작업당 제안 한도에 도달했습니다. 남은 대상은 새 작업으로 요청하세요."}
     ok, res = await call_tool(state, "compare_options",
                               {"whatif": state["current_ops"], "issues": targets})
     if not ok:
-        return {"failure": res}
+        return {"active_target": key, "targets": targets, "options": [], "selected_option": None,
+                "evidence_error": "대안 조회 실패: " + str(res)}
     options = [o for o in res.get("options", []) if W.target_key(o) == key]
     return {"active_target": key, "targets": targets, "options": options,
             "recommended": next((o["option_id"] for o in options if o.get("recommended")), None),
-            "selected_option": None, "decision": None, "verify": None, "verify_count": 0, "reject_count": 0}
+            "selected_option": None, "decision": None, "verify": None, "verify_count": 0,
+            "evidence_error": None,
+            "reject_count": sum(p["target"] == key and p["status"] == "REJECTED" for p in state.get("proposals") or [])}
 
 
 def after_compare(state: AgentState) -> str:
-    return "respond" if state.get("failure") or not state.get("active_target") else "agent_adjust"
+    return "check_batch" if not state.get("active_target") else "agent_adjust"
 
 
 class Pick(BaseModel):
@@ -588,8 +605,12 @@ class Pick(BaseModel):
 
 def candidates(state: AgentState) -> list[dict]:
     tried = set(state.get("tried") or [])
+    # A shared PO cannot have two independently approved mutations in flight.
+    reserved = {p["option"]["args"].get("po_id") for p in state.get("proposals") or []
+                if p["status"] not in ("REJECTED", "BLOCKED", "EXECUTED")}
     return [o for o in state.get("options") or [] if o.get("feasible") and o.get("resolves")
-            and not o.get("side_effects") and W.option_key(o) not in tried]
+            and not o.get("side_effects") and W.option_key(o) not in tried
+            and o.get("args", {}).get("po_id") not in reserved]
 
 
 async def agent_adjust(state: AgentState) -> dict:
@@ -603,7 +624,10 @@ async def agent_adjust(state: AgentState) -> dict:
         pick = Pick(option_id=rec if rec in {o["option_id"] for o in cands} else cands[0]["option_id"],
                     reason="[가짜 모델] 계산 서비스의 추천안을 골랐습니다.")
     else:
-        turns = next_turn(state)
+        try:
+            turns = next_turn(state)
+        except LimitExceeded as e:
+            return {"selected_option": None, "evidence_error": str(e)}
         context = {
             "targets": state["targets"],
             "candidates": mask(cands, state.get("role")),
@@ -611,8 +635,11 @@ async def agent_adjust(state: AgentState) -> dict:
             "verify_failures": [v for v in state.get("verify_log") or [] if not v.get("passed")],
             "rejections": state.get("rejections") or [],
         }
-        pick = await llm.with_structured_output(Pick, method=STRUCTURED).ainvoke(
-            [SystemMessage(prompt("adjust")), HumanMessage(json.dumps(context, ensure_ascii=False))])
+        try:
+            pick = await llm.with_structured_output(Pick, method=STRUCTURED).ainvoke(
+                [SystemMessage(prompt("adjust")), HumanMessage(json.dumps(context, ensure_ascii=False))])
+        except Exception as e:
+            return {"selected_option": None, "turn_count": turns, "evidence_error": f"대안 선택 실패: {type(e).__name__}"}
     chosen = next((o for o in cands if o["option_id"] == pick.option_id), None)
     if chosen is None:  # 목록에 없는 ID를 내면 모델 값을 버리고 첫 후보로 (지어낸 대안을 실행하지 않는다)
         chosen, pick.reason = cands[0], f"모델이 목록에 없는 후보({pick.option_id})를 골라 첫 후보로 바꿨습니다."
@@ -662,7 +689,7 @@ async def collect_evidence(state: AgentState) -> dict:
 
 
 def after_evidence(state: AgentState) -> str:
-    return "skip_target" if state.get("evidence_error") else "approval_gate"
+    return "skip_target" if state.get("evidence_error") else "save_proposal"
 
 
 def skip_target(state: AgentState) -> dict:
@@ -680,41 +707,137 @@ def skip_target(state: AgentState) -> dict:
                 {"remaining_issues": opt.get("remaining_issues", []),
                  "side_effects": opt.get("side_effects", [])}, ensure_ascii=False)
     blocked[state["active_target"]] = reason
-    return {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None}
+    return {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None,
+            "replan_target": None}
+
+
+def save_proposal(state: AgentState) -> dict:
+    proposals = list(state.get("proposals") or [])
+    previous = [p for p in proposals if p["target"] == state["active_target"]]
+    revision = len(previous) + 1
+    proposal_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{state['task_id']}:{state['active_target']}:{revision}").hex
+    proposals.append({"proposal_id": proposal_id, "revision": revision, "target": state["active_target"],
+                      "replaces": previous[-1]["proposal_id"] if previous else None,
+                      "previous_approval_id": previous[-1].get("approval_id") if previous else None,
+                      "option": state["selected_option"], "targets": state["targets"],
+                      "verify": state["verify"], "pick_reason": state.get("pick_reason"),
+                      "status": "PREPARED", "approval_id": None})
+    return {"proposals": proposals, "replan_target": None}
+
+
+async def check_batch(state: AgentState) -> dict:
+    """각각 검증한 안들의 동시 적용도 검사한다. 부분 승인에는 실행 직전 검증을 별도로 적용한다."""
+    proposals = [dict(p) for p in state.get("proposals") or []]
+    new = [p for p in proposals if p["status"] == "PREPARED"]
+    if not new:
+        return {}
+    batch = [p for p in proposals if p["status"] in ("PREPARED", "PENDING")]
+    ok, after = await call_tool(state, "analyze_impact", {
+        "whatif": [*state["current_ops"], *(W.option_op(p["option"]) for p in batch)]}, label="여러 해결안 함께 검증 중")
+    verdict = W.judge(state["current_impact"], after, [t for p in batch for t in p["targets"]]) if ok else {"passed": False}
+    blocked = dict(state.get("blocked") or {})
+    if not verdict["passed"]:
+        for p in new:
+            p.update(status="BLOCKED", reason="해결안 조합 검증에 실패하여 승인 요청을 보류했습니다.")
+            blocked[p["target"]] = p["reason"]
+    return {"proposals": proposals, "blocked": blocked}
+
+
+def approval_payload(p: dict) -> dict:
+    opt = p["option"]
+    previous = f"[재제안 {p['revision']}차 · 이전 요청 {p['previous_approval_id']}] " if p.get("previous_approval_id") else ""
+    return {
+        "tool": opt["tool"], "args": opt["args"],
+        "summary": f"{previous}{opt.get('summary', '')} (실제 발주 변경입니다. 협력사 협의·확약 여부를 확인한 뒤 승인하세요.)",
+        "amount": opt.get("added_cost"), "evidence": opt.get("evidence") or [],
+        "option_id": opt["option_id"], "proposalId": p["proposal_id"], "revision": p["revision"],
+        "replaces": p.get("replaces"), "itemId": opt["item_id"],
+        "verify": {"passed": True, "warnings_after": p["verify"].get("warnings_after", [])},
+    }
+
+
+def proposal_event(p: dict, state: dict) -> dict:
+    return mask({"type": "PROPOSAL_PROGRESS", "proposalId": p["proposal_id"],
+                 "approvalId": p.get("approval_id"), "revision": p["revision"], "replaces": p.get("replaces"),
+                 "itemId": p["option"]["item_id"], "summary": p["option"].get("summary"),
+                 "proposalStatus": p["status"], "message": p.get("reason"),
+                 "round": len(state.get("processed_commands", []))}, state.get("role"))
+
+
+def register_proposals(state: AgentState) -> dict:
+    # Checkpoint all proposals BEFORE any registration HTTP request.
+    bindings = interrupt({"stage": "register", "proposals": [p for p in state["proposals"] if p["status"] == "PREPARED"]})
+    proposals = [{**p, **bindings[p["proposal_id"]]} if p["proposal_id"] in bindings else p for p in state["proposals"]]
+    return {"proposals": proposals}
+
+
+WAITING = {"PENDING", "REGISTRATION_UNKNOWN", "EXECUTION_UNKNOWN"}
+
+
+def after_batch(state: AgentState) -> str:
+    if any(p["status"] == "PREPARED" for p in state.get("proposals") or []):
+        return "register_proposals"
+    return after_registration(state)
+
+
+def after_registration(state: AgentState) -> str:
+    return "approval_gate" if any(p["status"] in WAITING for p in state.get("proposals") or []) else "respond"
 
 
 def approval_gate(state: AgentState) -> dict:
-    """변경 도구 앞에서 멈추고 팀장 결정을 기다린다 (Harness Guardrails, contracts 2.7·3.3).
-
-    interrupt는 그래프를 멈추면서 아래 값을 밖(run)으로 넘기고, 재개되면 팀장 결정을 돌려준다.
-    재개 때 이 노드는 **처음부터 다시** 실행되므로 interrupt 앞에서는 이벤트·저장 같은 일을 하지 않는다.
-    APPROVAL_REQUIRED 이벤트는 그래프가 멈춘 뒤 run이 보낸다. approvalId는 backend가 만든다.
-    """
-    opt = state["selected_option"]
-    decision = interrupt({
-        "tool": opt["tool"], "args": opt["args"],
-        "summary": f"{opt.get('summary', '')} (실제 발주 변경입니다. 협력사 협의·확약 여부를 확인한 뒤 승인하세요.)",
-        "amount": opt.get("added_cost"), "evidence": opt.get("evidence") or [],
-        "option_id": opt["option_id"],
-        "verify": {"passed": True, "warnings_after": state["verify"].get("warnings_after", [])},
-    })
+    """One persistent inbox wait; a decision identifies its own card, never list order."""
+    decision = interrupt({"stage": "decisions"})
+    proposals = [dict(p) for p in state["proposals"]]
+    p = next(p for p in proposals if p.get("approval_id") == decision["approvalId"] and p["status"] == "PENDING")
+    p.update(status="EXECUTING" if decision["decision"] == "APPROVED" else "REJECTED", reason=decision.get("reason"))
+    updates = {"proposals": proposals, "decision": decision, "active_proposal": p["proposal_id"],
+               "active_target": p["target"], "targets": p["targets"], "selected_option": p["option"],
+               "verify": p["verify"], "pick_reason": p.get("pick_reason"), "executed": None,
+               "processed_commands": [*state.get("processed_commands", []), decision["command_id"]]}
     if decision.get("decision") == "APPROVED":
-        return {"decision": decision}
-    return {"decision": decision, "reject_count": state.get("reject_count", 0) + 1,
-            "tried": list(state.get("tried") or []) + [W.option_key(opt)],
-            "rejections": list(state.get("rejections") or [])
-            + [{"option_id": opt["option_id"], "reason": decision.get("reason")}]}
+        return updates
+    updates.update({"reject_count": sum(x["target"] == p["target"] and x["status"] == "REJECTED" for x in proposals),
+                    "tried": [*state.get("tried", []), W.option_key(p["option"])],
+                    "rejections": [*state.get("rejections", []), {"proposal_id": p["proposal_id"],
+                                   "option_id": p["option"]["option_id"], "reason": decision.get("reason")}],
+                    "replan_target": p["target"]})
+    return updates
 
 
 def after_gate(state: AgentState) -> str:
     if state["decision"].get("decision") == "APPROVED":
         return "execute_change"
-    return "skip_target" if state.get("reject_count", 0) > MAX_REJECTS else "agent_adjust"
+    return "skip_target" if state.get("reject_count", 0) > MAX_REJECTS else "replan_prepare"
+
+
+async def replan_prepare(state: AgentState) -> dict:
+    ok, impact = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]})
+    if ok:
+        return {"current_impact": impact}
+    return {"blocked": {**state.get("blocked", {}), state["replan_target"]: "거절 후 최신 분석에 실패했습니다."}}
+
+
+def execution_updates(state, result):
+    opt, decision = state["selected_option"], state["decision"]
+    return {"executed": {"ok": True, "result": result, "error": None},
+            "executions": [*(e for e in state.get("executions", []) if e["approval_id"] != decision["approvalId"]),
+                           {"tool": opt["tool"], "args": opt["args"], "target_rule": opt["target_rule"],
+                            "item_id": opt["item_id"], "approval_id": decision["approvalId"], "result": result}],
+            "current_ops": W.remaining_ops(state["current_ops"], opt)}
 
 
 async def execute_change(state: AgentState) -> dict:
     """승인 후 최신 후보·영향을 다시 검사한다. 인자·비용이 바뀌면 기존 승인으로 실행하지 않는다."""
     opt, decision = state["selected_option"], state["decision"]
+    if execution_store:
+        p = next(p for p in state["proposals"] if p["proposal_id"] == state["active_proposal"])
+        await execution_store.event(state["task_id"], proposal_event(p, state))
+        old = await execution_store.attempt(decision["approvalId"])
+        if old:
+            if old["status"] == "SUCCEEDED":
+                return execution_updates(state, old["result"])
+            return {"executed": {"ok": False, "unknown": True,
+                                 "error": "이전 실행 응답을 확정할 수 없어 재실행하지 않았습니다. 발주·변경 이력을 확인해 주세요."}}
     ok_before, before = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]})
     ok_options, latest = await call_tool(state, "compare_options",
                                         {"whatif": state["current_ops"], "issues": state["targets"]})
@@ -727,21 +850,32 @@ async def execute_change(state: AgentState) -> dict:
                                       {"whatif": [*state["current_ops"], W.option_op(opt)]})
     if not ok_after or not W.judge(before, after, state["targets"])["passed"]:
         return {"executed": {"ok": False, "error": "승인 후 재검증에 실패하여 실행을 보류했습니다."}}
-    if opt["tool"] not in await destructive_tools(state):
+    try:
+        allowed_tools = await asyncio.wait_for(destructive_tools(state), TOOL_TIMEOUT_S)
+    except Exception:
+        return {"executed": {"ok": False, "error": "변경 도구의 승인 필요 표시를 확인하지 못해 실행을 보류했습니다."}}
+    if opt["tool"] not in allowed_tools:
         return {"executed": {"ok": False, "error": f"{opt['tool']}는 승인 대상 변경 도구가 아닙니다."}}
+    if execution_store and not await execution_store.begin_attempt(state["task_id"], state["active_proposal"], decision["approvalId"]):
+        return {"executed": {"ok": False, "unknown": True, "error": "이미 실행을 시도한 승인입니다. 이력을 확인해 주세요."}}
     ok, res = await call_tool(state, opt["tool"], {**opt["args"], "approval_id": decision.get("approvalId")})
-    record = {"ok": ok, "result": res if ok else None, "error": None if ok else res}
+    if execution_store:
+        await execution_store.finish_attempt(decision["approvalId"], ok, res)
     if not ok:
-        return {"executed": record}
-    return {"executed": record,
-            "executions": [*(state.get("executions") or []), {"tool": opt["tool"], "args": opt["args"],
-                           "target_rule": opt["target_rule"], "item_id": opt["item_id"],
-                           "approval_id": decision["approvalId"], "result": res}],
-            "current_ops": W.remaining_ops(state["current_ops"], opt)}
+        return {"executed": {"ok": False, "unknown": True, "error": str(res)}}
+    return execution_updates(state, res)
 
 
-def after_execution(state: AgentState) -> str:
-    return "refresh_impact" if state["executed"]["ok"] else "respond"
+def record_execution(state: AgentState) -> dict:
+    proposals = [dict(p) for p in state["proposals"]]
+    p = next(p for p in proposals if p["proposal_id"] == state["active_proposal"])
+    execution = state["executed"]
+    p.update(status="EXECUTED" if execution["ok"] else "EXECUTION_UNKNOWN" if execution.get("unknown") else "BLOCKED",
+             execution=execution, reason=execution.get("error"))
+    blocked = dict(state.get("blocked") or {})
+    if not execution["ok"]:
+        blocked[p["target"]] = execution["error"]
+    return {"proposals": proposals, "blocked": blocked}
 
 
 async def refresh_impact(state: AgentState) -> dict:
@@ -749,12 +883,12 @@ async def refresh_impact(state: AgentState) -> dict:
     ok, impact = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]},
                                 label="실행 후 남은 문제 확인 중")
     if not ok:
-        return {"failure": "변경은 실행됐지만 실행 후 분석을 확인하지 못했습니다: " + str(impact)}
-    return {"current_impact": impact}
+        return {"current_impact": None, "notice": "실행 후 분석을 확인하지 못했습니다: " + str(impact)}
+    return {"current_impact": impact, "notice": None}
 
 
 def after_refresh(state: AgentState) -> str:
-    return "respond" if state.get("failure") else "compare"
+    return after_registration(state)
 
 
 # ---------------------------------------------------------------------------
@@ -778,7 +912,7 @@ def describe_execution(res: dict) -> str:
 
 
 def _adjust_answer(state: AgentState) -> str:
-    plans, impact = state.get("plans") or [], state.get("current_impact") or state.get("impact") or {}
+    plans, impact = state.get("plans") or [], state.get("current_impact")
     executions = state.get("executions") or []
     lines = [f"승인된 변경 {len(executions)}건을 실행했습니다." if executions else "현재 분석 결과입니다."]
     lines += [describe_execution(e["result"]) for e in executions]
@@ -786,12 +920,18 @@ def _adjust_answer(state: AgentState) -> str:
         lines.append("실행 보류/실패: " + str(state["executed"]["error"]))
     for key, reason in (state.get("blocked") or {}).items():
         lines.append(f"- {key}: {reason}")
+    for p in state.get("proposals") or []:
+        if p["status"] == "BLOCKED" and p["target"] not in (state.get("blocked") or {}):
+            lines.append(f"- {p['target']}: {p.get('reason', '보류')}")
     for rejection in state.get("rejections") or []:
         lines.append(f"- 거절 사유: {rejection.get('reason')}")
     if state.get("whatif_ops"):
         lines.append("생산계획 등 사용자 가정은 자동 저장하지 않았습니다. 아래는 현재 DB와 남은 가정을 함께 분석한 결과입니다.")
-    lines.append(describe_impact(impact, plans))
-    if any(s.get("orderable") for s in impact.get("shortages", [])):
+    if impact is not None:
+        lines.append(describe_impact(impact, plans))
+    else:
+        lines.append("최신 영향 결과를 확인하지 못했습니다. 최초 분석을 실행 후 결과로 사용하지 않습니다.")
+    if any(s.get("orderable") for s in (impact or {}).get("shortages", [])):
         lines.append("새 발주 가능 부족분은 안내만 했으며, 신규 발주는 생성하지 않았습니다.")
     return "\n".join(lines)
 
@@ -835,7 +975,10 @@ def respond(state: AgentState) -> dict:
         result.update({"executions": state.get("executions") or [],
                        "post_execution_impact": state.get("current_impact"),
                        "remaining_whatif": state.get("current_ops") or [],
-                       "blocked_targets": state.get("blocked") or {}})
+                       "blocked_targets": state.get("blocked") or {},
+                       "proposals": state.get("proposals") or [],
+                       "approval_summary": {s: sum(p["status"] == s for p in state.get("proposals") or [])
+                                            for s in ("EXECUTED", "REJECTED", "BLOCKED")}})
     return {"answer": answer, "next_actions": next_actions, "result": result}
 
 
@@ -848,7 +991,10 @@ for name, fn in [("classify_intent", classify_intent), ("agent_impact", agent_im
                  ("agent_qa", agent_qa), ("tools_rag", tools_rag), ("adjust_prepare", adjust_prepare),
                  ("compare", compare), ("agent_adjust", agent_adjust), ("verify", verify),
                  ("collect_evidence", collect_evidence), ("skip_target", skip_target),
+                 ("save_proposal", save_proposal), ("check_batch", check_batch),
+                 ("register_proposals", register_proposals), ("replan_prepare", replan_prepare),
                  ("approval_gate", approval_gate), ("execute_change", execute_change),
+                 ("record_execution", record_execution),
                  ("refresh_impact", refresh_impact), ("respond", respond)]:
     builder.add_node(name, fn)
 builder.add_edge(START, "classify_intent")
@@ -859,12 +1005,17 @@ builder.add_edge("tools", "agent_impact")
 builder.add_conditional_edges("agent_qa", after_agent, ["tools_rag", "respond"])
 builder.add_edge("tools_rag", "agent_qa")
 builder.add_conditional_edges("adjust_prepare", after_prepare, ["compare", "respond"])
-builder.add_conditional_edges("compare", after_compare, ["agent_adjust", "respond"])
+builder.add_conditional_edges("compare", after_compare, ["agent_adjust", "check_batch"])
 builder.add_conditional_edges("agent_adjust", after_adjust, ["verify", "skip_target"])
 builder.add_conditional_edges("verify", after_verify, ["collect_evidence", "agent_adjust", "skip_target"])
-builder.add_conditional_edges("collect_evidence", after_evidence, ["approval_gate", "skip_target"])
+builder.add_conditional_edges("collect_evidence", after_evidence, ["save_proposal", "skip_target"])
+builder.add_edge("save_proposal", "compare")
+builder.add_conditional_edges("check_batch", after_batch, ["register_proposals", "approval_gate", "respond"])
+builder.add_conditional_edges("register_proposals", after_registration, ["approval_gate", "respond"])
 builder.add_edge("skip_target", "compare")
-builder.add_conditional_edges("approval_gate", after_gate, ["execute_change", "agent_adjust", "skip_target"])
-builder.add_conditional_edges("execute_change", after_execution, ["refresh_impact", "respond"])
-builder.add_conditional_edges("refresh_impact", after_refresh, ["compare", "respond"])
+builder.add_conditional_edges("approval_gate", after_gate, ["execute_change", "replan_prepare", "skip_target"])
+builder.add_edge("replan_prepare", "compare")
+builder.add_edge("execute_change", "record_execution")
+builder.add_edge("record_execution", "refresh_impact")
+builder.add_conditional_edges("refresh_impact", after_refresh, ["approval_gate", "respond"])
 builder.add_edge("respond", END)

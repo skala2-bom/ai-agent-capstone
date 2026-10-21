@@ -88,6 +88,7 @@ export interface Approval {
   reason?: string;
   beforeQty?: number;
   beforeDate?: string;
+  evidence?: { title?: string; version?: string; clause_no?: string; uri?: string; content?: string; excerpt?: string }[];
 }
 export interface History {
   id: string;
@@ -96,6 +97,8 @@ export interface History {
   target: string;
   status: string;
   detail: string;
+  userId?: string;
+  trigger?: string;
 }
 export interface Metric {
   supplierId?: string; // API 모드에서 저장할 때 쓰는 ID (화면에는 이름을 보여 준다)
@@ -124,6 +127,7 @@ export interface Session {
   role: Role;
   name: string;
   token?: string;
+  userId?: string;
 }
 export type Command =
   | { type: "plan"; id: string; date: string; qty: number }
@@ -146,6 +150,8 @@ export interface AgentEvent {
     | "TOOL_START"
     | "TOOL_END"
     | "APPROVAL_REQUIRED"
+    | "PROPOSAL_PROGRESS"
+    | "WORKFLOW_NOTICE"
     | "DONE"
     | "FAILED";
   taskId: string;
@@ -162,4 +168,11 @@ export interface AgentEvent {
   traceId?: string;
   result?: unknown;
   sources?: unknown;
+  proposalId?: string;
+  proposalStatus?: string;
+  revision?: number;
+  version?: number;
+  eventId?: string;
+  replaces?: string;
+  itemId?: string;
 }

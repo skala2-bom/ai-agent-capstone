@@ -6,4 +6,5 @@ RUN pip install --no-cache-dir fastmcp==4.1.1 httpx fastapi uvicorn langgraph==1
     langgraph-checkpoint-postgres==3.2.0 "psycopg[binary]==3.3.6" psycopg-pool==3.3.3
 COPY *.py ./
 COPY prompts ./prompts
+COPY sql ./sql
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

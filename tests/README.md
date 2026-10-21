@@ -11,15 +11,29 @@
 ```bash
 docker compose -p capstone-ai-test -f tests/compose.yml up -d --build
 docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -m unittest -v test_ai_rag
+docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -m unittest -v test_approval_runner
 docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests
 ```
 
 - `test_ai_rag.py`: 순수 판정·실행 보호·출처 검증, 실제 pgvector의 색인/갱신/검색/트랜잭션/권한.
 - `integration_scenarios.py`: 매 시나리오 시드를 초기화하고 로그인 → 질문 → MCP → RAG → 개별 승인 → 실행 → DB 이력 → SSE를 검사한다.
 - SC1~4 분석·실행, 거절 후 재제안, SC4 지연 입력의 SYSTEM 자동 분석, 문서 QA를 포함한다.
+- SC2는 승인 전 카드 3개, SC3은 2개가 먼저 만들어지는지 검사하고 등록 역순으로 승인한다. `mixed`는 1건만 승인해 먼저 실행 → 나머지 동시 승인/거절 → 거절된 품목만 재승인 → 중복 resume 전달을 검사한다.
+- `test_approval_runner.py`: 별도의 `agent-test-db` 컨테이너에서 실제 agent PostgreSQL 체크포인트/접수함을 사용한다. 응답 저장 전후 중단, 카드 등록 응답 유실, 승인 중 데이터 변경, 역순 결정, thread 잠금, 중복 접수를 검사한다. MCP와 이벤트 HTTP만 대역을 쓴다.
+- RAG 단위 검사는 색인을 바꾸므로 통합 검사·실제 모델 검사와 동시에 실행하지 않는다.
 - `rag_fixture.py`의 결정적 벡터는 **연결·저장 계약용 테스트 대역**이다. 검색 품질이나 실제 모델 성공을 증명하지 않는다. 운영 이미지의 서버는 이 모듈을 사용하지 않는다.
 
 통합 검사 일부만 실행하려면 `run --rm tests python -u integration_scenarios.py --only SC2 SC3`처럼 지정한다.
+
+실제 컨테이너 재시작 복구 검사는 아래 순서로 실행한다. `recovery-finish`는 시드를 초기화하지 않는다.
+
+```bash
+docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -u integration_scenarios.py --only recovery-prepare
+docker compose -p capstone-ai-test -f tests/compose.yml restart agent
+docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -u integration_scenarios.py --only recovery-finish
+```
+
+프론트 검사는 `frontend/`에서 `npm ci`, `npm test`, `npm run build`로 실행한다. 카드별 동시 결정, 오래된 조회의 상태 덮어쓰기, 로그아웃 뒤 응답, 진행 이벤트 중복/역순 수신도 포함한다.
 
 ## 실제 모델 검사
 

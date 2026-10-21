@@ -134,7 +134,8 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
     const id = String(c.approval_id);
     const args = (c.args ?? {}) as Row;
     const before = (c.before ?? {}) as Row;
-    const split = c.tool === "split_po";
+    const action: Option["action"] = ({ split_po: "split", request_due_date_change: "due-date",
+      change_po_qty: "qty", cancel_po: "cancel" } as Record<string, Option["action"]>)[String(c.tool)] ?? "reallocate";
     approvalTasks.set(id, String(c.task_id));
     approvals.push({
       id,
@@ -144,23 +145,26 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       at: String(c.requested_at),
       status: c.status as Workspace["approvals"][number]["status"],
       reason: (c.reason as string) ?? undefined,
-      beforeQty: Number(before.qty),
-      beforeDate: String(before.due_date),
+      beforeQty: before.qty == null ? undefined : Number(before.qty),
+      beforeDate: before.due_date == null ? undefined : String(before.due_date),
+      evidence: (c.evidence as Workspace["approvals"][number]["evidence"]) ?? [],
     });
     options.push({
-      action: split ? "split" : "due-date",
+      action,
       id,
       revision: 1,
       name: String(c.summary ?? c.tool),
       item: names.get(String(before.item_id)) ?? String(before.item_id),
       po: String(args.po_id),
-      qty: split ? Number(args.split_qty) : Number(before.qty),
-      date: String(args.new_due_date),
+      qty: Number(args.split_qty ?? args.new_qty ?? before.qty ?? 0),
+      date: String(args.new_due_date ?? before.due_date ?? ""),
       resolves: true,
       verification: "VERIFIED",
-      impact: split ? "" : `입고 예정일 ${before.due_date} → ${args.new_due_date}`,
+      impact: action === "qty" ? `발주 수량 ${before.qty} → ${args.new_qty}개`
+        : action === "cancel" ? "발주 취소 (CANCELLED)"
+        : action === "due-date" ? `입고 예정일 ${before.due_date} → ${args.new_due_date}` : "분할 납품",
       risk: "",
-      confirmed: true,
+      confirmed: false,
       review: "확정",
       reason: String(c.summary ?? ""),
       role: "APPROVER",
@@ -188,6 +192,8 @@ export function toHistory(tasks: Row[]): Workspace["history"] {
     target: t.trigger === "SYSTEM" ? "자동 분석" : `AI 질문 · ${userNames[String(t.userId)] ?? t.userId}`,
     status: TASK_STATUS[String(t.status)] ?? String(t.status),
     detail: String(t.answer ?? ""),
+    userId: String(t.userId ?? ""),
+    trigger: String(t.trigger ?? ""),
   }));
 }
 /** 협력사 평가지표(GET /api/suppliers/metrics) → 화면 평가지표 표 */
@@ -374,6 +380,16 @@ const api: Gateway = {
   reset() {},
 };
 export const gateway = mode === "mock" ? mock : api;
+/** Approval polling does not trigger workspace-wide impact/option recomputation. */
+export async function fetchApprovals(s: Session, items: Workspace["items"]) {
+  const cards = await request<Row[]>("/approvals", s.token);
+  return toApprovals(cards, new Map(items.map((i) => [i.id, i.name])));
+}
+export async function decideApproval(s: Session, taskId: string, id: string,
+  decision: "APPROVED" | "REJECTED", reason: string) {
+  await request(`/ai/tasks/${encodeURIComponent(taskId)}/approval`, s.token, "POST",
+    { approvalId: id, decision, reason: reason || null });
+}
 export async function login(
   username: string,
   password: string,
@@ -387,5 +403,5 @@ export async function login(
   );
   if (!r.token || !["PLANNER", "BUYER", "APPROVER"].includes(r.role))
     throw new Error("로그인 응답 DTO 계약을 확인해주세요.");
-  return r;
+  return { ...r, userId: username };
 }

@@ -4,6 +4,8 @@ export class EventAccumulator {
   answer = "";
   events: AgentEvent[] = [];
   approvals: AgentEvent[] = [];
+  proposals: Record<string, AgentEvent> = {};
+  eventIds = new Set<string>();
   status = "접수";
   terminal = false;
   constructor(public taskId: string) {}
@@ -12,10 +14,11 @@ export class EventAccumulator {
       e.taskId !== this.taskId ||
       !Number.isInteger(e.seq) ||
       this.seen.has(e.seq) ||
-      this.terminal
+      this.terminal || (e.eventId !== undefined && this.eventIds.has(e.eventId))
     )
       return false;
     this.seen.add(e.seq);
+    if (e.eventId) this.eventIds.add(e.eventId);
     this.events.push(e);
     if (e.type === "TOKEN") this.answer += e.text ?? "";
     if (e.type === "TOOL_START")
@@ -32,6 +35,14 @@ export class EventAccumulator {
       if (!this.approvals.some((a) => a.approvalId === e.approvalId))
         this.approvals.push(e);
     }
+    if (e.type === "PROPOSAL_PROGRESS" && e.proposalId) {
+      const previous = this.proposals[e.proposalId];
+      if (!previous || (e.version ?? e.seq) > (previous.version ?? previous.seq))
+        this.proposals[e.proposalId] = e;
+      const values = Object.values(this.proposals);
+      this.status = `실행 완료 ${values.filter(x => x.proposalStatus === 'EXECUTED').length}건 · 승인 대기 ${values.filter(x => x.proposalStatus === 'PENDING').length}건`;
+    }
+    if (e.type === "WORKFLOW_NOTICE") this.status = "확인 필요";
     if (e.type === "DONE") {
       this.answer = e.answer ?? this.answer;
       this.status = "완료";
@@ -58,6 +69,8 @@ export function parseFrame(frame: string): AgentEvent | null {
       "TOOL_START",
       "TOOL_END",
       "APPROVAL_REQUIRED",
+      "PROPOSAL_PROGRESS",
+      "WORKFLOW_NOTICE",
       "DONE",
       "FAILED",
     ].includes(e.type) ||
