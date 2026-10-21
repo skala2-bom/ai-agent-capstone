@@ -90,6 +90,14 @@ def planner_expected(value):
     return value
 
 
+def submit_drafts(task_id, role="buyer"):
+    """구매 요청 카드는 초안(DRAFT)으로 온다 (decisions 6.33). 요청자가 문제 정의를 확인해 보내야 팀장이 결정할 수 있다."""
+    for c in request("GET", "/api/approvals?status=DRAFT", role):
+        if c["task_id"] == task_id:
+            assert c["problem"], "AI가 문제 정의를 미리 채워야 합니다."
+            request("POST", f"/api/approvals/{c['approval_id']}/submit", role, json={"problem": c["problem"], "memo": "테스트 메모"})
+
+
 def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, timeout=240):
     decided = set()
     deadline = time.monotonic() + timeout
@@ -106,6 +114,8 @@ def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, 
             assert events[-1]["type"] == "DONE", events[-1]
             assert events[-1]["result"] == task["result"]
             return task, decided
+        if approve:
+            submit_drafts(task_id)
         cards = [c for c in request("GET", "/api/approvals?status=PENDING", "approver") if c["task_id"] == task_id]
         if not decided and len(cards) < initial_cards:
             time.sleep(0.2)
@@ -202,6 +212,7 @@ def rejection():
 
 def wait_cards(task_id, count, status=None):
     for _ in range(600):
+        submit_drafts(task_id)
         cards = [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id]
         selected = [c for c in cards if status is None or c["status"] == status]
         if len(selected) >= count:
@@ -234,7 +245,7 @@ def mixed_approvals():
     revised = wait_cards(task_id, 1, "PENDING")
     assert len(revised) == 1 and revised[0]["tool"] == "request_due_date_change"
     task, _ = finish_task(task_id, approve=True)
-    assert task["result"]["approval_summary"] == {"EXECUTED": 3, "REJECTED": 1, "BLOCKED": 0}
+    assert task["result"]["approval_summary"] == {"EXECUTED": 3, "REJECTED": 1, "BLOCKED": 0, "WITHDRAWN": 0}
     assert len(task["result"]["executions"]) == 3
     assert any(p.get("replaces") for p in task["result"]["proposals"])
     # Backend delivery retries an identical decision after it has already executed.
@@ -248,6 +259,34 @@ def mixed_approvals():
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == count == 3
     print("PASS 3건 선등록 → 1건만 승인·실행 → 동시 승인/거절 → 해당 품목만 재제안 → 중복 재개 무시", flush=True)
+
+
+def draft_review():
+    """구매가 초안을 검토: 1건은 보내지 않고 2건은 메모를 달아 보낸다 → 팀장은 보낸 2건만 보고 승인 (decisions 6.33)"""
+    reset_seed()
+    case = next(c for c in CASES if c["id"] == "SC2")
+    task_id = start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘.")
+    for _ in range(600):
+        drafts = [c for c in request("GET", "/api/approvals?status=DRAFT", "buyer") if c["task_id"] == task_id]
+        if len(drafts) >= 3:
+            break
+        time.sleep(0.2)
+    assert len(drafts) == 3, drafts
+    assert not [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id], "팀장에게 초안이 보이면 안 됩니다."
+    assert all(c["problem"] for c in drafts), "문제 정의 초안이 비었습니다."
+    keep, *send = sorted(drafts, key=lambda c: c["args"]["po_id"])
+    request("POST", f"/api/approvals/{keep['approval_id']}/withdraw", "buyer", json={"memo": "협력사 협의 불가"})
+    for c in send:
+        request("POST", f"/api/approvals/{c['approval_id']}/submit", "buyer",
+                json={"problem": c["problem"] + " (구매 확인)", "memo": "협력사 구두 확인"})
+    pending = [c for c in request("GET", "/api/approvals?status=PENDING", "approver") if c["task_id"] == task_id]
+    assert len(pending) == 2 and all(c["memo"] == "협력사 구두 확인" and c["problem"].endswith("(구매 확인)") for c in pending)
+    for c in pending:
+        decide_card(task_id, c, "APPROVED")
+    task, _ = finish_task(task_id)
+    assert task["result"]["approval_summary"] == {"EXECUTED": 2, "REJECTED": 0, "BLOCKED": 0, "WITHDRAWN": 1}, task["result"]["approval_summary"]
+    assert "보내지 않았습니다" in task["answer"], task["answer"]
+    print("PASS 초안 3건 → 1건 보내지 않음·2건 메모 달아 요청 → 팀장은 2건만 보고 승인·실행", flush=True)
 
 
 def recovery_prepare():
@@ -296,7 +335,7 @@ def qa():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "system", "qa", "recovery-prepare", "recovery-finish"])
+    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "recovery-prepare", "recovery-finish"])
     args = parser.parse_args()
     for _ in range(60):
         try:
@@ -306,7 +345,7 @@ def main():
             pass
         time.sleep(1)
     checks = {"golden": golden_read_only, **{s: lambda s=s: scenario(s) for s in ("SC1", "SC2", "SC3", "SC4")},
-              "reject": rejection, "mixed": mixed_approvals, "system": system_delay, "qa": qa,
+              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa,
               "recovery-prepare": recovery_prepare, "recovery-finish": recovery_finish}
     for name in args.only or [k for k in checks if not k.startswith("recovery-")]:
         checks[name]()

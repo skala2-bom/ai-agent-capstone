@@ -63,7 +63,7 @@ class TaskIn(BaseModel):
 class ResumeIn(BaseModel):
     threadId: str | None = None
     approvalId: str
-    decision: Literal["APPROVED", "REJECTED"]
+    decision: Literal["APPROVED", "REJECTED", "WITHDRAWN"]   # WITHDRAWN = 요청자가 보내지 않음 (decisions 6.33)
     reason: str | None = None
 
 

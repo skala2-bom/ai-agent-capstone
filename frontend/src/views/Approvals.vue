@@ -8,6 +8,9 @@ import type { Approval } from "../types";
 const w = useWorkspace();
 const selectedId = ref<string>();
 const reason = ref("");
+// 요청자의 초안 검토 입력 (decisions 6.33). 카드를 열 때 AI가 채운 문제 정의로 시작한다
+const problem = ref("");
+const memo = ref("");
 const filter = ref("");
 const pollError = ref("");
 // 거절 뒤 AI 재검토 결과 (decisions 6.30): approvalId → {code, item_name, message, next_action, detail}
@@ -104,10 +107,12 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
   <div class="toolbar">
     <select v-model="filter" aria-label="승인 상태 필터">
       <option value="">모든 상태</option>
+      <option value="DRAFT">검토 전 (초안)</option>
       <option value="PENDING">승인 대기</option>
       <option value="APPROVED">실행 대기</option>
       <option value="REJECTED">거절</option>
       <option value="EXECUTED">실행 완료</option>
+      <option value="WITHDRAWN">보내지 않음</option>
     </select>
   </div>
   <p v-if="pollError" class="error">승인 상태 갱신 실패: {{ pollError }}</p>
@@ -126,7 +131,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
         <template v-for="group in groups" :key="group.taskId">
         <tr class="approval-group"><td colspan="5">
           <b>{{ group.title }}</b>
-          <p class="caption">{{ group.all.length }}건 · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
+          <p class="caption">{{ group.all.length }}건<template v-if="group.all.some(a => a.status === 'DRAFT')"> · 검토 전 {{ group.all.filter(a => a.status === 'DRAFT').length }}건</template> · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
           <button v-if="mode === 'api'" @click="w.openTask(group.taskId)">작업 결과</button>
         </td></tr>
         <template v-for="a in group.rows" :key="a.id">
@@ -149,6 +154,8 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
               @click="
                 selectedId = a.id;
                 reason = '';
+                problem = a.problem ?? '';
+                memo = a.memo ?? '';
               "
             >
               승인 상세
@@ -212,6 +219,14 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
         <dd>{{ option.addedCost.toLocaleString() }}원</dd></template
       >
     </dl>
+    <!-- 요청자가 쓴 문제 정의·메모 (초안이 아니면 팀장·요청자 모두 본다) -->
+    <div v-if="selected.status !== 'DRAFT' && (selected.problem || selected.memo)" class="card request-note">
+      <h3>요청자 검토</h3>
+      <dl>
+        <template v-if="selected.problem"><dt>문제 정의</dt><dd>{{ selected.problem }}</dd></template>
+        <template v-if="selected.memo"><dt>메모</dt><dd>{{ selected.memo }}</dd></template>
+      </dl>
+    </div>
     <h3>변경 전후</h3>
     <template v-if="option.action === 'split'"
       ><div class="split-original">
@@ -252,6 +267,26 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       <p v-if="option.role !== 'PLANNER' && option.costEvidence">{{ option.costEvidence }}</p>
     </details>
     <p v-else class="caption">시연용 승인 카드입니다.</p>
+    <!-- 초안: 요청자가 문제 정의·메모를 달아 팀장에게 보낼지 정한다 (decisions 6.33). 초안은 요청자에게만 보인다 -->
+    <form v-if="selected.status === 'DRAFT'" class="draft-review" @submit.prevent="w.review(selected.id, true, problem, memo)">
+      <p class="caption">아직 팀장에게 가지 않은 해결안입니다. 문제를 확인하고 메모를 달아 승인 요청을 보낼지 정하세요.</p>
+      <label
+        >문제 정의 · 필수 (AI가 계산 결과로 채움, 고쳐 써도 됩니다)<textarea v-model="problem" rows="3"
+      /></label>
+      <label
+        >메모 · 내 판단 (협력사 확인 여부, 우려 사항 등)<textarea
+          v-model="memo"
+          rows="3"
+          placeholder="예: 세미온 담당자와 구두로 분할 납품 가능 확인함"
+      /></label>
+      <div class="action-row">
+        <button type="button" :disabled="w.deciding[selected.id]" @click="w.review(selected.id, false, problem, memo)">
+          보내지 않음</button
+        ><button class="primary" :disabled="w.deciding[selected.id] || !problem.trim()">
+          {{ w.deciding[selected.id] ? "보내는 중…" : "팀장에게 승인 요청" }}
+        </button>
+      </div>
+    </form>
     <form
       v-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER'"
       @submit.prevent="decide('REJECTED')"

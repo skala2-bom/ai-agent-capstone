@@ -84,7 +84,11 @@ export interface Approval {
   optionId: string;
   requester: string;
   at: string;
-  status: "PENDING" | "APPROVED" | "REJECTED" | "EXECUTED";
+  /** DRAFT = 요청자 검토 전, WITHDRAWN = 요청자가 보내지 않음 (decisions 6.33) */
+  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "EXECUTED" | "WITHDRAWN";
+  /** 문제 정의 (AI가 미리 채우고 요청자가 고침) · 요청자 메모 */
+  problem?: string;
+  memo?: string;
   reason?: string;
   beforeQty?: number;
   beforeDate?: string;
@@ -171,6 +175,8 @@ export interface AgentEvent {
   sources?: unknown;
   proposalId?: string;
   proposalStatus?: string;
+  /** APPROVAL_REQUIRED: AI가 계산 결과로 채운 문제 정의 (decisions 6.33) */
+  problem?: string;
   revision?: number;
   version?: number;
   eventId?: string;

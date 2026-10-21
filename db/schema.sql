@@ -144,7 +144,12 @@ CREATE TABLE approval (
     evidence       jsonb NOT NULL DEFAULT '[]',
     before         jsonb,                      -- 변경 전후. 사람이 카드에서 한눈에 비교하게 (contracts.md 3.3)
     after          jsonb,
-    status         text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXECUTED')),
+    -- DRAFT = 구매 담당자가 메모를 달고 보낼지 정하기 전 (decisions 6.33). 팀장이 요청한 카드는 바로 PENDING.
+    -- WITHDRAWN = 요청자가 보내지 않기로 함. 팀장 대기함에는 DRAFT가 보이지 않는다
+    status         text NOT NULL DEFAULT 'PENDING'
+                   CHECK (status IN ('DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'EXECUTED', 'WITHDRAWN')),
+    problem        text,                       -- 문제 정의. AI가 계산 결과로 미리 채우고 요청자가 고친다
+    memo           text,                       -- 요청자 메모 (개인 판단). 팀장이 카드에서 함께 본다
     requested_by   text NOT NULL REFERENCES app_user,
     requested_at   timestamptz NOT NULL DEFAULT now(),
     decided_by     text REFERENCES app_user,

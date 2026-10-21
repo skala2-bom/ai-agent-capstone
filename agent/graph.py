@@ -738,6 +738,7 @@ OUTCOMES = {
     "REVIEW_FAILED": ("다른 대안을 검토하는 중 오류가 나서 결론을 내지 못했습니다. 대안이 없다는 뜻은 아닙니다.",
                       "잠시 뒤 같은 요청을 다시 해 주세요. 계속되면 시스템 담당자에게 알려 주세요."),
     "LIMIT": ("재제안 한도에 도달해 더 제안하지 않습니다.", "담당자가 조건을 정해 새로 요청해 주세요."),
+    "WITHDRAWN": ("요청자가 승인 요청을 보내지 않았습니다.", "필요하면 조건을 바꿔 새로 요청해 주세요."),
 }
 
 
@@ -827,6 +828,20 @@ async def check_batch(state: AgentState) -> dict:
     return {"proposals": proposals, "blocked": blocked}
 
 
+def problem_text(targets: list[dict]) -> str:
+    """승인 카드의 "문제 정의" 초안 (decisions 6.33). 계산 결과에서 그대로 만든다 — 요청자가 고쳐 쓴다"""
+    lines = []
+    for t in targets:
+        name = t.get("item_name") or t.get("item_id")
+        if t.get("rule_id") == "INV-003":
+            lines.append(f"{name} {t.get('qty', 0):,}개 과잉 ({t.get('date')} 기준, 앞으로 {t.get('window_days', 30)}일 쓸 양보다 많음)")
+        else:
+            when = "지금 발주하면 제때 도착" if t.get("orderable") else "새 발주로는 늦어 기존 발주 조정 필요"
+            lines.append(f"{t.get('product_name') or t.get('plan_id')} 생산({t.get('plan_date')}, {t.get('plan_id')})에 "
+                         f"{name} {t.get('qty', abs(t.get('projected_stock', 0))):,}개 부족 · {when}")
+    return "; ".join(lines)
+
+
 def approval_payload(p: dict) -> dict:
     opt = p["option"]
     previous = f"[재제안 {p['revision']}차 · 이전 요청 {p['previous_approval_id']}] " if p.get("previous_approval_id") else ""
@@ -834,6 +849,7 @@ def approval_payload(p: dict) -> dict:
         "tool": opt["tool"], "args": opt["args"],
         "summary": f"{previous}{opt.get('summary', '')} (실제 발주 변경입니다. 협력사 협의·확약 여부를 확인한 뒤 승인하세요.)",
         "amount": opt.get("added_cost"), "evidence": opt.get("evidence") or [],
+        "problem": problem_text(p.get("targets") or []),
         "option_id": opt["option_id"], "proposalId": p["proposal_id"], "revision": p["revision"],
         "replaces": p.get("replaces"), "itemId": opt["item_id"],
         "verify": {"passed": True, "warnings_after": p["verify"].get("warnings_after", [])},
@@ -873,6 +889,14 @@ def approval_gate(state: AgentState) -> dict:
     decision = interrupt({"stage": "decisions"})
     proposals = [dict(p) for p in state["proposals"]]
     p = next(p for p in proposals if p.get("approval_id") == decision["approvalId"] and p["status"] == "PENDING")
+    if decision["decision"] == "WITHDRAWN":
+        # 요청자가 보내지 않음 (decisions 6.33): 재제안하지 않고 그 품목만 끝낸다. 다른 카드는 계속 기다린다
+        p.update(status="WITHDRAWN", reason=decision.get("reason"))
+        message, next_action = OUTCOMES["WITHDRAWN"]
+        p["outcome"] = {"code": "WITHDRAWN", "item_name": target_name(state, p["target"]),
+                        "message": message, "next_action": next_action, "detail": None}
+        return {"proposals": proposals, "decision": decision,
+                "processed_commands": [*state.get("processed_commands", []), decision["command_id"]]}
     p.update(status="EXECUTING" if decision["decision"] == "APPROVED" else "REJECTED", reason=decision.get("reason"))
     updates = {"proposals": proposals, "decision": decision, "active_proposal": p["proposal_id"],
                "active_target": p["target"], "targets": p["targets"], "selected_option": p["option"],
@@ -889,6 +913,8 @@ def approval_gate(state: AgentState) -> dict:
 
 
 def after_gate(state: AgentState) -> str:
+    if state["decision"].get("decision") == "WITHDRAWN":
+        return after_registration(state)
     if state["decision"].get("decision") == "APPROVED":
         return "execute_change"
     return "skip_target" if state.get("reject_count", 0) > MAX_REJECTS else "replan_prepare"
@@ -1019,7 +1045,7 @@ def _adjust_answer(state: AgentState) -> str:
         o = p["outcome"]
         line = f"{o['item_name']}: {o['message']}"
         if p.get("reason"):
-            line += f" (거절 사유: {p['reason']})"
+            line += f" ({'메모' if o['code'] == 'WITHDRAWN' else '거절 사유'}: {p['reason']})"
         held.append(line + f" · {o['next_action']}")
     held += [f"{target_name(state, key)}: {reason}" for key, reason in blocked.items() if key not in reviewed_targets]
     # 여러 품목을 먼저 준비하는 흐름(decisions 6.29)에서 보류된 제안
@@ -1087,7 +1113,7 @@ def respond(state: AgentState) -> dict:
                        "blocked_targets": state.get("blocked") or {},
                        "proposals": state.get("proposals") or [],
                        "approval_summary": {s: sum(p["status"] == s for p in state.get("proposals") or [])
-                                            for s in ("EXECUTED", "REJECTED", "BLOCKED")}})
+                                            for s in ("EXECUTED", "REJECTED", "BLOCKED", "WITHDRAWN")}})
     return {"answer": answer, "next_actions": next_actions, "result": result}
 
 
@@ -1122,7 +1148,8 @@ builder.add_edge("save_proposal", "compare")
 builder.add_conditional_edges("check_batch", after_batch, ["register_proposals", "approval_gate", "respond"])
 builder.add_conditional_edges("register_proposals", after_registration, ["approval_gate", "respond"])
 builder.add_edge("skip_target", "compare")
-builder.add_conditional_edges("approval_gate", after_gate, ["execute_change", "replan_prepare", "skip_target"])
+builder.add_conditional_edges("approval_gate", after_gate,
+                              ["execute_change", "replan_prepare", "skip_target", "approval_gate", "respond"])
 builder.add_edge("replan_prepare", "compare")
 builder.add_edge("execute_change", "record_execution")
 builder.add_edge("record_execution", "refresh_impact")

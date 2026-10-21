@@ -1,7 +1,9 @@
 <script setup lang="ts">
 defineProps<{ text: string }>();
 const labels: Record<string, string> = {
+  DRAFT: "검토 전 (초안)",
   PENDING: "승인 대기",
+  WITHDRAWN: "보내지 않음",
   APPROVED: "승인 접수 · 실행 대기",
   REJECTED: "거절",
   EXECUTED: "실행 완료",
@@ -21,6 +23,7 @@ const labels: Record<string, string> = {
         '보완 요청',
         'PENDING',
         '승인 대기',
+        'DRAFT',
       ].includes(text),
       success: ['확정', '완료', 'EXECUTED', '추가발주', '결품 해소'].includes(
         text,

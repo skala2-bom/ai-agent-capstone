@@ -186,11 +186,7 @@ class Tasks {
         Auth.require(user, "APPROVER");
         find(id);
         Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
-        // 카드가 여러 장이면(decisions 6.29) 하나를 결정해도 나머지가 팀장을 기다린다. 그때는 "승인 대기"를 유지한다.
-        // 마지막 카드를 결정했을 때만 AI 차례(RUNNING)로 넘긴다 (decisions 6.31)
-        db.update("""
-                update ai_task set status = 'RUNNING' where task_id = ? and status = 'WAITING_APPROVAL'
-                and not exists (select 1 from approval where task_id = ? and status = 'PENDING')""", id, id);
+        runningIfNoneWaiting(id);
         Map<String, Object> req = new HashMap<>();
         req.put("threadId", id);
         req.put("approvalId", card.get("approval_id"));
@@ -198,6 +194,43 @@ class Tasks {
         req.put("reason", card.get("reason"));
         enqueue(id, "resume", req);
         return Map.of("approvalId", card.get("approval_id"), "status", card.get("status"));
+    }
+
+    /**
+     * POST /api/approvals/{id}/submit {@code {problem, memo}} — 요청자가 초안을 팀장에게 보낸다 (decisions 6.33).
+     * AI는 이미 이 카드의 결정을 기다리고 있으므로 따로 알리지 않는다.
+     */
+    @PostMapping("/api/approvals/{approvalId}/submit")
+    Map<String, Object> submit(@PathVariable String approvalId, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
+        return approvals.review(approvalId, user.getSubject(), true, body.get("problem"), body.get("memo"));
+    }
+
+    /**
+     * POST /api/approvals/{id}/withdraw {@code {memo}} — 요청자가 보내지 않기로 한다. AI가 그 품목을 "보내지 않음"으로 끝내도록
+     * 결정과 같은 경로(대기열 → resume)로 알린다. 남은 카드가 없으면 작업이 AI 차례가 된다.
+     */
+    @PostMapping("/api/approvals/{approvalId}/withdraw")
+    Map<String, Object> withdraw(@PathVariable String approvalId, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
+        Map<String, Object> card = approvals.review(approvalId, user.getSubject(), false, null, body.get("memo"));
+        String id = (String) card.get("task_id");
+        runningIfNoneWaiting(id);
+        Map<String, Object> req = new HashMap<>();
+        req.put("threadId", id);
+        req.put("approvalId", approvalId);
+        req.put("decision", "WITHDRAWN");
+        req.put("reason", card.get("memo"));
+        enqueue(id, "resume", req);
+        return card;
+    }
+
+    /**
+     * 카드가 여러 장이면(decisions 6.29) 하나를 결정해도 나머지가 사람을 기다린다 — 팀장의 결정(PENDING)이든
+     * 요청자의 검토(DRAFT)든. 그때는 "승인 대기"를 유지하고, 기다리는 카드가 없을 때만 AI 차례(RUNNING)로 넘긴다 (6.31·6.33)
+     */
+    private void runningIfNoneWaiting(String id) {
+        db.update("""
+                update ai_task set status = 'RUNNING' where task_id = ? and status = 'WAITING_APPROVAL'
+                and not exists (select 1 from approval where task_id = ? and status in ('DRAFT', 'PENDING'))""", id, id);
     }
 
     // ------------------------------------------------------------------

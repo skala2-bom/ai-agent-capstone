@@ -58,11 +58,11 @@ class ApprovalFlowTest {
 
     @Test
     void SC1_추천안이_승인을_거쳐_실제로_실행되고_결품이_풀린다() {
-        // ① agent가 APPROVAL_REQUIRED를 보낸다 → PENDING 카드
+        // ① agent가 APPROVAL_REQUIRED를 보낸다 → 구매 요청이라 초안(DRAFT) 카드 (decisions 6.33)
         var card = approvals.create("T-1", "buyer", "BUYER",
                 m("type", "APPROVAL_REQUIRED", "tool", "split_po", "args", SPLIT, "summary", "MCU 100개 먼저", "amount", 390_000));
         String id = (String) card.get("approval_id");
-        assertThat(card).containsEntry("status", "PENDING").containsEntry("created", true);
+        assertThat(card).containsEntry("status", "DRAFT").containsEntry("created", true);
         assertThat(card.get("before").toString()).contains("qty=500", "due_date=2026-12-12");
         assertThat(card.get("after").toString()).contains("qty=400", "qty=100", "2026-11-25");
 
@@ -78,6 +78,13 @@ class ApprovalFlowTest {
         assertCode(() -> internal.splitPo("PO-2609-001", call(SPLIT, id)), "APPROVAL_REQUIRED");
 
         // ⑤ 거절은 사유 필수 → 승인
+        // 구매 담당자의 요청은 초안이다. 보내기 전에는 팀장이 결정할 수 없다 (decisions 6.33)
+        assertThat(approvals.card(id)).containsEntry("status", "DRAFT");
+        assertCode(() -> approvals.decide("T-1", id, "APPROVED", null, "approver"), "APPROVAL_NOT_PENDING");
+        assertCode(() -> approvals.review(id, "approver", true, "p", null), "ROLE_NOT_ALLOWED");   // 남이 대신 못 보낸다
+        assertCode(() -> approvals.review(id, "buyer", true, " ", null), "INVALID_ARGUMENT");      // 문제 정의 필수
+        assertThat(approvals.review(id, "buyer", true, "MCU 11/25 100개 부족", "협력사 구두 확인함"))
+                .containsEntry("status", "PENDING").containsEntry("memo", "협력사 구두 확인함");
         assertCode(() -> approvals.decide("T-1", id, "REJECTED", " ", "approver"), "INVALID_ARGUMENT");
         assertThat(approvals.decide("T-1", id, "APPROVED", null, "approver")).containsEntry("status", "APPROVED");
         assertCode(() -> approvals.decide("T-1", id, "APPROVED", null, "approver"), "APPROVAL_NOT_PENDING");
@@ -150,10 +157,12 @@ class ApprovalFlowTest {
         // SC2 해결: 플러그 케이스 11/27분 800 → 500
         Map<String, Object> qtyArgs = m("po_id", "PO-2610-115", "new_qty", 500);
         String q = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", qtyArgs)).get("approval_id");
+        approvals.review(q, "buyer", true, "테스트", null);
         approvals.decide("T-3", q, "APPROVED", null, "approver");
         // MOQ(300) 미만으로 바꾸려는 호출은 승인과 인자가 달라서 먼저 막히므로, MOQ 검사는 별도 승인으로 본다
         Map<String, Object> tooSmall = m("po_id", "PO-2610-115", "new_qty", 100);
         String small = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", tooSmall)).get("approval_id");
+        approvals.review(small, "buyer", true, "테스트", null);
         approvals.decide("T-3", small, "APPROVED", null, "approver");
         assertCode(() -> internal.changePoQty("PO-2610-115", call(tooSmall, small)), "BELOW_MOQ");
         assertThat(internal.changePoQty("PO-2610-115", call(qtyArgs, q)).toString()).contains("before={qty=800}", "after={qty=500}");
@@ -162,6 +171,7 @@ class ApprovalFlowTest {
         Map<String, Object> cancelArgs = m("po_id", "PO-2610-110");
         String c = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "cancel_po", "args", cancelArgs)).get("approval_id");
         assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");   // 승인 전
+        approvals.review(c, "buyer", true, "테스트", null);
         approvals.decide("T-3", c, "APPROVED", null, "approver");
         assertThat(internal.cancelPo("PO-2610-110", call(cancelArgs, c))).containsEntry("after", Map.of("status", "CANCELLED"));
         assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");  // 같은 승인 두 번
@@ -179,6 +189,9 @@ class ApprovalFlowTest {
 
         assertThat(approvals.list(null, buyer)).extracting(c -> c.get("requested_by")).containsOnly("buyer").isNotEmpty();
         assertThat(approvals.list(null, planner)).isEmpty();
+        assertThat(approvals.list(null, approver)).extracting(c -> c.get("approval_id")).contains(boss).doesNotContain(mine);
+        assertCode(() -> approvals.get(mine, approver), "ROLE_NOT_ALLOWED");   // 초안은 요청자만
+        approvals.review(mine, "buyer", true, "테스트", null);
         assertThat(approvals.list(null, approver)).extracting(c -> c.get("approval_id")).contains(mine, boss);
         assertThat(approvals.get(mine, buyer)).containsEntry("approval_id", mine);
         assertCode(() -> approvals.get(boss, buyer), "ROLE_NOT_ALLOWED");

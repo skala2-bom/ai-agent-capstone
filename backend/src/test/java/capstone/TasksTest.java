@@ -120,11 +120,31 @@ class TasksTest {
         String b = (String) tasks.receiveEvent(id, m("type", "APPROVAL_REQUIRED", "tool", "request_due_date_change",
                 "args", m("po_id", "PO-2609-002", "new_due_date", "2026-12-10"))).get("approvalId");
         assertThat(tasks.find(id).status()).isEqualTo("WAITING_APPROVAL");
+        tasks.submit(a, Map.of("problem", "테스트"), BUYER);
+        tasks.submit(b, Map.of("problem", "테스트"), BUYER);
 
         tasks.decide(id, Map.of("approvalId", a, "decision", "APPROVED"), APPROVER);
         assertThat(tasks.find(id).status()).isEqualTo("WAITING_APPROVAL");   // b가 아직 팀장을 기다린다
         tasks.decide(id, Map.of("approvalId", b, "decision", "REJECTED", "reason", "다른 방법으로"), APPROVER);
         assertThat(tasks.find(id).status()).isEqualTo("RUNNING");            // 이제 AI 차례
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 보내지_않으면_WITHDRAWN이고_AI에_알린다_마지막_카드면_AI_차례() {
+        String id = insertTask("buyer", "BUYER");
+        String a = (String) tasks.receiveEvent(id, m("type", "APPROVAL_REQUIRED", "tool", "request_due_date_change",
+                "args", m("po_id", "PO-2609-001", "new_due_date", "2026-12-09"), "problem", "MCU 부족")).get("approvalId");
+        assertThat(tasks.find(id).status()).isEqualTo("WAITING_APPROVAL");
+        reset(queue);
+        assertThat(tasks.withdraw(a, Map.of("memo", "협력사 협의 불가"), BUYER))
+                .containsEntry("status", "WITHDRAWN").containsEntry("problem", "MCU 부족").containsEntry("memo", "협력사 협의 불가");
+        Map<String, Object> msg = sent(TaskQueue.TASKS);
+        assertThat(msg).containsEntry("kind", "resume");
+        assertThat((Map<String, Object>) msg.get("body")).containsEntry("decision", "WITHDRAWN").containsEntry("approvalId", a);
+        assertThat(tasks.find(id).status()).isEqualTo("RUNNING");
+        assertThatThrownBy(() -> tasks.withdraw(a, Map.of(), BUYER))
+                .isInstanceOfSatisfying(ApiError.class, e -> assertThat(e.code).isEqualTo("APPROVAL_NOT_PENDING"));
     }
 
     @Test

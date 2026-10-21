@@ -149,6 +149,8 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       beforeQty: before.qty == null ? undefined : Number(before.qty),
       beforeDate: before.due_date == null ? undefined : String(before.due_date),
       evidence: sourceCards(c.evidence),
+      problem: (c.problem as string) ?? undefined,
+      memo: (c.memo as string) ?? undefined,
     });
     options.push({
       action,
@@ -390,6 +392,11 @@ export async function decideApproval(s: Session, taskId: string, id: string,
   decision: "APPROVED" | "REJECTED", reason: string) {
   await request(`/ai/tasks/${encodeURIComponent(taskId)}/approval`, s.token, "POST",
     { approvalId: id, decision, reason: reason || null });
+}
+/** 요청자의 초안 검토: 보내기(문제 정의·메모와 함께) 또는 보내지 않기 (decisions 6.33) */
+export async function reviewApproval(s: Session, id: string, send: boolean, problem: string, memo: string) {
+  await request(`/approvals/${encodeURIComponent(id)}/${send ? "submit" : "withdraw"}`, s.token, "POST",
+    { problem, memo: memo || null });
 }
 export async function login(
   username: string,

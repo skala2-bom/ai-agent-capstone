@@ -2795,3 +2795,38 @@ select.context {
 .outcome.danger b { color: #be4b47; }
 .outcome.success { border-color: #247a62; background: #eaf5ef; }
 .outcome.success b { color: #247a62; }
+
+/* 요청자 검토 (decisions 6.33) */
+.request-note {
+  padding: 13px 16px;
+  margin: 12px 0;
+  border-left: 3px solid #e0b25c;
+}
+.request-note h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.draft-review {
+  margin-top: 14px;
+  padding: 14px;
+  background: #fff7e8;
+  border-radius: 8px;
+}
+.draft-review label {
+  display: block;
+  margin-top: 8px;
+}
+
+/* 보낸 질문 말풍선 (decisions 6.35) */
+.chat-question {
+  margin: 4px 0 12px auto;
+  max-width: 88%;
+  width: fit-content;
+  padding: 9px 12px;
+  background: #e8f1ef;
+  color: #14243a;
+  border-radius: 12px 12px 3px 12px;
+  white-space: pre-line;
+  line-height: 1.6;
+  font-size: 12.5px;
+}

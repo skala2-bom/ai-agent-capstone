@@ -67,7 +67,7 @@ class Approvals {
         String argsJson = write(args);
 
         List<String> same = db.queryForList(
-                "select approval_id from approval where task_id = ? and tool = ? and args = ?::jsonb and status = 'PENDING'",
+                "select approval_id from approval where task_id = ? and tool = ? and args = ?::jsonb and status in ('DRAFT', 'PENDING')",
                 String.class, taskId, tool, argsJson);
         if (!same.isEmpty()) return withCreated(card(same.getFirst()), false);
 
@@ -75,12 +75,15 @@ class Approvals {
         String id = "APR-" + UUID.randomUUID().toString().substring(0, 8);
         Object amount = event.get("amount");
         db.update("""
-                insert into approval (approval_id, task_id, tool, args, summary, amount, evidence, before, after, requested_by)
-                values (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?)""",
+                insert into approval (approval_id, task_id, tool, args, summary, amount, evidence, before, after, requested_by, status, problem)
+                values (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?)""",
                 id, taskId, tool, argsJson, event.get("summary"),
                 amount instanceof Number n ? n.longValue() : null,
                 write(event.get("evidence") == null ? List.of() : event.get("evidence")),
-                write(preview.get("before")), write(preview.get("after")), userId);
+                write(preview.get("before")), write(preview.get("after")), userId,
+                // 구매 담당자의 요청은 초안으로 시작한다 — 메모를 달고 직접 보낸다 (decisions 6.33). 팀장은 바로 대기함으로
+                "APPROVER".equals(role) ? "PENDING" : "DRAFT",
+                event.get("problem") instanceof String p ? p : null);
         return withCreated(card(id), true);
     }
 
@@ -119,18 +122,21 @@ class Approvals {
     @GetMapping("/api/approvals")
     List<Map<String, Object>> list(@RequestParam(required = false) String status, @AuthenticationPrincipal Jwt user) {
         boolean all = Auth.allows(user.getClaimAsString("role"), "APPROVER");
+        // 남의 초안(DRAFT)은 팀장에게도 안 보인다 — 요청자가 보내기 전이다 (decisions 6.33)
         return db.queryForList("""
                 select approval_id from approval
-                where (cast(? as text) is null or status = ?) and (? or requested_by = ?)
+                where (cast(? as text) is null or status = ?)
+                  and (requested_by = ? or (? and status <> 'DRAFT'))
                 order by requested_at""",
-                String.class, status, status, all, user.getSubject()).stream().map(this::card).toList();
+                String.class, status, status, user.getSubject(), all).stream().map(this::card).toList();
     }
 
     /** GET /api/approvals/{id} — 카드 하나. 팀장이 아니면 자기가 요청한 카드만 */
     @GetMapping("/api/approvals/{id}")
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Map<String, Object> c = card(id);
-        if (!Auth.allows(user.getClaimAsString("role"), "APPROVER") && !user.getSubject().equals(c.get("requested_by")))
+        boolean mine = user.getSubject().equals(c.get("requested_by"));
+        if (!mine && (!Auth.allows(user.getClaimAsString("role"), "APPROVER") || "DRAFT".equals(c.get("status"))))
             throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "자기가 요청한 승인만 볼 수 있습니다. 전체는 구매팀장 계정으로 보세요.");
         return c;
     }
@@ -157,6 +163,25 @@ class Approvals {
         return card(approvalId);
     }
 
+    /**
+     * 요청자의 검토 (decisions 6.33): 초안(DRAFT)에 문제 정의·메모를 달아 팀장에게 보내거나(PENDING) 보내지 않는다(WITHDRAWN).
+     * 요청한 사람만 할 수 있다. 화면 API는 {@link Tasks}가 연다 — 보내지 않으면 AI에 알려야 해서.
+     */
+    Map<String, Object> review(String approvalId, String requester, boolean send, String problem, String memo) {
+        if (send && (problem == null || problem.isBlank()))
+            throw ApiError.invalid("문제 정의가 없습니다.", "무엇이 문제인지 한 줄이라도 적어 주세요. AI가 미리 채운 문장을 고쳐 써도 됩니다.");
+        Map<String, Object> c = card(approvalId);   // 없으면 NOT_FOUND
+        if (!requester.equals(c.get("requested_by")))
+            throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "승인 요청은 요청한 본인만 보낼 수 있습니다.");
+        int n = db.update("""
+                update approval set status = ?, problem = coalesce(?, problem), memo = ?
+                where approval_id = ? and status = 'DRAFT'""",
+                send ? "PENDING" : "WITHDRAWN", problem, memo, approvalId);
+        if (n == 0)
+            throw new ApiError("APPROVAL_NOT_PENDING", "이미 보낸 요청입니다.", "현재 상태는 " + c.get("status") + "입니다.");
+        return card(approvalId);
+    }
+
     // ------------------------------------------------------------------
     // 실행 (변경 도구에서, 트랜잭션 안)
     // ------------------------------------------------------------------
@@ -180,7 +205,8 @@ class Approvals {
         if (!"APPROVED".equals(a.get("status")))
             throw new ApiError("APPROVAL_REQUIRED", "실행할 수 있는 승인이 아닙니다 (현재 " + a.get("status") + ").",
                     "EXECUTED".equals(a.get("status")) ? "이미 실행된 승인입니다. 같은 승인으로 두 번 실행할 수 없습니다."
-                            : "PENDING".equals(a.get("status")) ? "팀장 승인을 기다린 뒤 다시 부르세요." : "거절된 승인입니다. 다른 대안을 내세요.");
+                            : List.of("DRAFT", "PENDING").contains(a.get("status")) ? "승인을 기다린 뒤 다시 부르세요."
+                            : "거절되었거나 요청자가 보내지 않은 승인입니다. 다른 대안을 내세요.");
         Map<String, Object> approved = read((String) a.get("args"));
         if (!tool.equals(a.get("tool")) || !sameArgs(approved, actual))
             throw new ApiError("APPROVAL_REQUIRED", "승인된 내용과 다른 호출입니다.",
@@ -211,7 +237,7 @@ class Approvals {
     /** 카드 하나. JSON 칸은 객체로 풀어서 낸다. 금액은 응답 직전에 {@link Masking}이 역할대로 가린다 */
     Map<String, Object> card(String id) {
         List<Map<String, Object>> rows = db.queryForList("""
-                select approval_id, task_id, tool, args::text as args, summary, amount, evidence::text as evidence,
+                select approval_id, task_id, tool, args::text as args, summary, problem, memo, amount, evidence::text as evidence,
                        before::text as before, after::text as after, status, requested_by, requested_at::text as requested_at,
                        decided_by, decided_at::text as decided_at, reason, executed_at::text as executed_at
                 from approval where approval_id = ?""", id);

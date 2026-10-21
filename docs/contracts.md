@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 37 | **구매 담당자 검토 단계** — 구매 요청 카드는 `DRAFT`(초안)로 시작. 요청자가 문제 정의(AI가 채움)·메모를 달아 `submit`하면 팀장에게, `withdraw`하면 보내지 않음. 반려 뒤 재제안도 다시 초안으로. `APPROVAL_REQUIRED`에 `problem` 추가, resume `decision`에 `WITHDRAWN` 추가 | 2.7·3.1·3.3, decisions 6.33 | ✅ B가 반영함: **AI 채팅창 카드**와 승인 대기함 양쪽에서 초안에 문제 정의·메모를 달아 보내기/보내지 않기(6.34), 팀장 화면의 요청자 검토 표시, 구매 할 일 "승인 요청 보내기 (초안)" | ✅ B가 반영함: `problem_text`, `approval_gate`의 WITHDRAWN 처리, `approval_summary.WITHDRAWN`. 통합 테스트는 초안을 먼저 보내고 결정, 새 시나리오 `draft` |
 | 36 | **카드가 남아 있으면 작업 상태는 `WAITING_APPROVAL`** — 여러 장 중 하나를 결정해도 "승인 대기" 유지, 마지막 결정 뒤에만 `RUNNING` | 3.1, decisions 6.31 | 없음 (작업 이력·필터가 그대로 맞게 나온다) | 없음 |
 | 35 | **거절 뒤 재검토 결과 안내** — 거절한 제안에 `outcome`(재제안 생성 / 대안 없음 / 검토 실패 / 재제안 한도 + 안내 + 다음 행동). `GET /api/ai/tasks/{id}`에 `progress`(제안별 최신 진행) 추가. 부분 해결안(줄이기만)은 내지 않는다 | 3.1, decisions 6.30 | ✅ B가 반영함 (사용자 지시): 승인 대기함의 거절 카드 바로 아래에 결과 표시 (팀장·요청자 모두) | ✅ B가 반영함 (사용자 지시): `graph.py`의 `skip_target`·`save_proposal`·`replan_prepare`가 결과를 붙이고 `PROPOSAL_PROGRESS`·`DONE.result.proposals`에 실린다. `blocked_targets`는 그대로. 확인 부탁 |
 | 34 | 해결안을 모두 준비한 뒤 개별 카드 등록, 독립 승인·실행. AI의 영구 접수함과 실행 기록 추가 | 2.7, 3.2, decisions 6.29, [검증 기록](ai-rag-integration-changes.md) | 작업별 승인 그룹·개별 접수·3초 갱신·진행 이벤트·기존 작업 다시 열기 구현 | 체크포인트와 카드 연결 보존, 최신 상태 재검증, 모호한 응답은 자동 재실행 금지 |
@@ -466,7 +467,9 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
 | GET | `/api/ai/tasks/{id}` | ✅ 작업 한 건 (아래) | 요청자, 구매·팀장 (생산관리는 자기 것만) |
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
-| POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
+| POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` — `PENDING` 카드만 (초안은 `APPROVAL_NOT_PENDING`) | APPROVER |
+| POST | `/api/approvals/{id}/submit` `{problem, memo}` | ✅ 초안을 팀장에게 보냄 `DRAFT → PENDING`. 문제 정의 필수 (decisions 6.33) | 요청자 본인 |
+| POST | `/api/approvals/{id}/withdraw` `{memo}` | ✅ 보내지 않음 `DRAFT → WITHDRAWN`, AI에 `decision: WITHDRAWN`으로 알림 | 요청자 본인 |
 | GET | `/api/ai/tasks?mine=true` | ✅ 작업 목록, 최근 50개. 생산관리는 항상 자기 것만, 구매·팀장은 `mine`을 빼면 전체 | 로그인 |
 | GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3). **APPROVER는 전부, 다른 역할은 자기가 요청한 카드만** (남의 카드 하나를 열면 403 `ROLE_NOT_ALLOWED`, decisions 6.28) | 전부 (요청자 기준으로 거름) |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` · `/api/suppliers/metrics` (응답 모양은 2.1 `/internal`과 같다) | 조회 | 로그인 (금액 마스킹) |
@@ -572,10 +575,13 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 { "approval_id": "APR-8bd9fbd5", "task_id": "…", "tool": "split_po",
   "args": { "po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25" },
   "summary": "…", "amount": 390000, "evidence": [],
+  "problem": "스마트 벽스위치 생산(2026-11-23, PP-03)에 릴레이 400개 부족 · …",   // 문제 정의: AI가 채우고 요청자가 고침
+  "memo": "파워링크 담당자와 통화: 400개 선납 가능",                             // 요청자 메모 (6.33)
   "before": { "po_id": "PO-2609-001", "item_id": "MCU", "qty": 500, "due_date": "2026-12-12" },
   "after": [ { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-12-12" },
              { "po_id": "(신규)", "qty": 100, "due_date": "2026-11-25" } ],   // 실행 후엔 실제 새 번호로 바뀐다
-  "status": "PENDING",                 // PENDING → APPROVED | REJECTED, APPROVED → EXECUTED
+  "status": "PENDING",                 // DRAFT → PENDING | WITHDRAWN, PENDING → APPROVED | REJECTED, APPROVED → EXECUTED.
+                                       // 구매 요청은 DRAFT로 시작, 팀장 요청은 바로 PENDING. 남의 DRAFT는 팀장에게도 안 보인다
   "requested_by": "buyer", "requested_at": "…", "decided_by": null, "decided_at": null,
   "reason": null, "executed_at": null }
 ```

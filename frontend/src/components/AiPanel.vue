@@ -10,6 +10,9 @@ import type { AgentEvent } from "../types";
 import { Sparkles, ArrowUp, PanelRightClose } from "lucide-vue-next";
 const w = useWorkspace();
 const question = ref("");
+// 보낸 질문 (말풍선). 입력칸은 보내면 비운다 — 일반 채팅처럼 (decisions 6.35)
+const asked = ref("");
+const sending = ref(false);
 const answer = ref("");
 const status = ref("분석 준비");
 const err = ref("");
@@ -31,7 +34,7 @@ const sc = computed(() => scenarios.find((s) => s.id === w.scenario)!);
 const displayedImpact = computed(() => result.value?.intent === "ADJUST"
   && "post_execution_impact" in result.value ? result.value.post_execution_impact : result.value?.impact);
 const labels: Record<string, string> = { PREPARED: "검증 완료", PENDING: "승인 대기", EXECUTING: "실행 중",
-  EXECUTED: "실행 완료", REJECTED: "거절", BLOCKED: "실행 보류", REGISTRATION_UNKNOWN: "승인 등록 확인 필요", EXECUTION_UNKNOWN: "실행 결과 확인 필요" };
+  EXECUTED: "실행 완료", REJECTED: "거절", WITHDRAWN: "보내지 않음", BLOCKED: "실행 보류", REGISTRATION_UNKNOWN: "승인 등록 확인 필요", EXECUTION_UNKNOWN: "실행 결과 확인 필요" };
 function progress(e: AgentEvent) {
   return Object.values(proposals.value).find((p) => p.approvalId === e.approvalId);
 }
@@ -39,6 +42,26 @@ function cardStatus(e: AgentEvent) {
   const p = progress(e);
   if (p && p.proposalStatus !== "PENDING") return labels[p.proposalStatus!] ?? p.proposalStatus;
   return approvalStates.value[e.approvalId!] ?? "승인 대기";
+}
+// 요청자 검토를 채팅창에서 (decisions 6.34): 카드마다 문제 정의·메모를 적어 보내거나 보내지 않는다.
+// 승인 대기함과 같은 API(w.review)라 어느 쪽에서 해도 상태가 같다
+const draftProblem = ref<Record<string, string>>({});
+const draftMemo = ref<Record<string, string>>({});
+/** backend 카드 상태. 아직 목록에 없으면 요청자 기준으로 짐작한다 — 구매 요청은 초안, 팀장 요청은 승인 대기 */
+function cardState(e: AgentEvent) {
+  return w.data?.approvals.find((a) => a.id === e.approvalId)?.status
+    ?? (w.session?.role === "APPROVER" ? "PENDING" : "DRAFT");
+}
+function cardLabel(e: AgentEvent) {
+  const s = cardState(e);
+  if (w.session?.role !== "APPROVER" && (s === "DRAFT" || s === "PENDING" || s === "WITHDRAWN"))
+    return { DRAFT: "검토 전 · 보낼지 정하세요", PENDING: "팀장 승인 대기", WITHDRAWN: "보내지 않음" }[s];
+  return cardStatus(e);
+}
+async function reviewCard(e: AgentEvent, send: boolean) {
+  const id = e.approvalId!;
+  if (!w.data?.approvals.some((a) => a.id === id)) await w.refreshApprovals();
+  await w.review(id, send, draftProblem.value[id] ?? e.problem ?? "", draftMemo.value[id] ?? "");
 }
 async function decide(e: AgentEvent, decision: "APPROVED" | "REJECTED") {
   const id = e.approvalId!;
@@ -63,7 +86,7 @@ function clear() {
   approvalReasons.value = {}; approvalStates.value = {}; submitting.value = {}; proposals.value = {};
   running.value = false; readOnlyTask.value = false;
   answer.value = ""; result.value = undefined; sources.value = undefined; events.value = [];
-  status.value = "분석 준비"; err.value = "";
+  status.value = "분석 준비"; err.value = ""; asked.value = "";
 }
 // 업무를 바꾸면 이전 답변은 지운다. 입력 중이던 질문 글은 남긴다 — 질문을 쓰고 나서 업무를 고를 수도 있다
 watch(() => w.context, () => { clear(); w.activeTask = undefined; });
@@ -92,11 +115,15 @@ function subscribe(taskId: string, g: number) {
     events.value = [...acc.events]; proposals.value = { ...acc.proposals };
     answer.value = acc.answer; status.value = acc.status;
     if (e.type === "DONE") { result.value = e.result as Record<string, unknown>; sources.value = e.sources; }
+    if (e.type === "APPROVAL_REQUIRED" && e.approvalId) {
+      draftProblem.value[e.approvalId] ??= e.problem ?? "";
+      void w.refreshApprovals().catch(() => {});   // 카드 상태(초안 여부)를 바로 알도록
+    }
     if (e.type === "FAILED" || e.type === "WORKFLOW_NOTICE") err.value = e.message ?? "처리 상태를 확인해 주세요.";
     if (acc.terminal) { running.value = false; stop(); }
   }, (m) => { if (g === generation) err.value = m; });
 }
-interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string;
+interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string; question?: string;
   result?: Record<string, unknown>; sources?: unknown; }
 async function openExisting(taskId: string) {
   clear();
@@ -107,6 +134,7 @@ async function openExisting(taskId: string) {
       const task = await request<TaskDetail>(`/ai/tasks/${encodeURIComponent(taskId)}`, w.session?.token);
       if (g !== generation) return;
       answer.value = task.answer ?? ""; result.value = task.result; sources.value = task.sources;
+      asked.value = task.question ?? "";
       if (task.userId === w.session?.userId || task.trigger === "SYSTEM") {
         subscribe(taskId, g); // Full SSE replay restores every proposal without a new task.
         return;
@@ -122,20 +150,32 @@ async function openExisting(taskId: string) {
   await fetchDetail();
 }
 watch(() => w.activeTask, (id) => { if (id && mode === "api") void openExisting(id); }, { immediate: true });
+/** Enter = 전송, Shift+Enter = 줄바꿈. 한글 조합 중 Enter는 글자 확정이라 보내지 않는다 (안 그러면 끝 글자가 잘리거나 두 번 간다) */
+function onEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229 || e.shiftKey) return;
+  e.preventDefault();
+  void ask();
+}
 async function ask() {
-  if (!question.value.trim()) return;
+  const text = question.value.trim();
+  if (!text || sending.value) return;
   clear();
   const g = generation;
+  asked.value = w.context ? `${w.context}\n${text}` : text;
+  question.value = "";
   if (mode === "mock") {
     answer.value = "자유 질문은 실제 분석 API가 필요합니다. 업무 화면에서 준비된 시연 결과를 확인하세요.";
     status.value = "시연 안내"; return;
   }
-  running.value = true; status.value = "접수 중";
+  running.value = true; status.value = "접수 중"; sending.value = true;
   try {
-    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: w.context ? `${w.context}\n${question.value}` : question.value });
+    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: asked.value });
     if (g === generation) w.activeTask = taskId;
   } catch (e) {
-    if (g === generation) { err.value = (e as Error).message; running.value = false; }
+    // 접수에 실패하면 쓴 글을 돌려놓는다 — 다시 쓰지 않아도 되게
+    if (g === generation) { err.value = (e as Error).message; running.value = false; question.value = text; }
+  } finally {
+    sending.value = false;
   }
 }
 </script>
@@ -196,6 +236,7 @@ async function ask() {
           </p>
         </details></template
       >
+      <div v-if="asked" class="chat-question">{{ asked }}</div>
       <div v-if="status !== '분석 준비'" class="progress" role="status">
         {{ status }}
       </div>
@@ -249,10 +290,38 @@ async function ask() {
         :key="e.approvalId"
         class="card"
       >
-        <b>{{ cardStatus(e) }} · {{ e.itemId ?? e.approvalId }}</b>
+        <b>{{ cardLabel(e) }} · {{ e.itemId ?? e.approvalId }}</b>
         <p>{{ e.summary }}</p>
         <p v-if="progress(e)?.message">{{ progress(e)?.message }}</p>
-        <template v-if="cardStatus(e) === '승인 대기' && w.session?.role === 'APPROVER'"
+        <!-- 요청자 검토 (decisions 6.33·6.34): 채팅창에서 바로 문제 정의·메모를 달아 팀장에게 보낼지 정한다 -->
+        <form
+          v-if="w.session?.role !== 'APPROVER' && cardState(e) === 'DRAFT'"
+          class="draft-review"
+          @submit.prevent="reviewCard(e, true)"
+        >
+          <label
+            >문제 정의 · 필수<textarea
+              :value="draftProblem[e.approvalId!] ?? e.problem ?? ''"
+              rows="2"
+              @input="draftProblem[e.approvalId!] = ($event.target as HTMLTextAreaElement).value"
+          /></label>
+          <label
+            >메모 · 내 판단<textarea
+              v-model="draftMemo[e.approvalId!]"
+              rows="2"
+              placeholder="예: 협력사와 구두로 선납 가능 확인함"
+          /></label>
+          <div class="action-row">
+            <button type="button" :disabled="w.deciding[e.approvalId!]" @click="reviewCard(e, false)">보내지 않음</button
+            ><button class="primary" :disabled="w.deciding[e.approvalId!] || !(draftProblem[e.approvalId!] ?? e.problem ?? '').trim()">
+              {{ w.deciding[e.approvalId!] ? "보내는 중…" : "팀장에게 승인 요청" }}
+            </button>
+          </div>
+        </form>
+        <p v-else-if="w.session?.role !== 'APPROVER' && cardState(e) !== 'DRAFT'" class="caption">
+          {{ w.data?.approvals.find((a) => a.id === e.approvalId)?.memo ? "보낸 메모: " + w.data?.approvals.find((a) => a.id === e.approvalId)?.memo : "" }}
+        </p>
+        <template v-if="cardStatus(e) === '승인 대기' && w.session?.role === 'APPROVER' && cardState(e) === 'PENDING'"
           ><label
             >거절 사유<textarea
               v-model="approvalReasons[e.approvalId!]"
@@ -274,7 +343,8 @@ async function ask() {
       ><textarea
         id="question"
         v-model="question"
-        placeholder="선택한 업무의 영향과 근거를 확인해줘."
+        placeholder="선택한 업무의 영향과 근거를 확인해줘. (Enter 전송 · Shift+Enter 줄바꿈)"
+        @keydown.enter="onEnter"
         rows="3"
       />
       <div>
@@ -283,7 +353,7 @@ async function ask() {
         }}</small
         ><button
           class="primary icon-button"
-          :disabled="running || !question.trim()"
+          :disabled="sending || !question.trim()"
           aria-label="분석 요청"
         >
           <ArrowUp :size="18" />
