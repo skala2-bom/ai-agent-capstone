@@ -87,11 +87,11 @@ cp .env.example .env   # 최초 설정 때만. 이미 있는 .env는 덮어쓰�
 ```
 
 ```bash
-env -u OPENAI_API_KEY docker compose --env-file .env up -d --build
+env -u OPENAI_API_KEY docker compose --env-file .env up -d --build --wait
 env -u OPENAI_API_KEY docker compose --env-file .env --profile indexing run --rm --build rag-index
 ```
 
-`.env`에 키를 입력한 뒤 실행한다. `env -u OPENAI_API_KEY`는 터미널에 남은 옛 키가 `.env`보다 우선하는 것을 막는다. 색인은 `rag` 스키마에만 테이블을 만들므로 업무 DB 초기화가 필요 없다. 자세한 재색인 방법은 [data/README.md](data/README.md).
+`.env`에 키를 입력한 뒤 실행한다. `--wait`는 모든 서비스가 healthy가 될 때까지 기다린다(1분 안팎, `docker compose ps`의 STATUS로도 보인다). `env -u OPENAI_API_KEY`는 터미널에 남은 옛 키가 `.env`보다 우선하는 것을 막는다. 색인은 `rag` 스키마에만 테이블을 만들므로 업무 DB 초기화가 필요 없다. 자세한 재색인 방법은 [data/README.md](data/README.md).
 
 http://localhost:3000 이 화면이다. 시연 계정 `planner`·`buyer`·`approver`(비밀번호 `1234`)로 로그인하면 실제 backend 데이터가 보인다. 구매 계정으로 "허브를 12/14에서 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘"라고 물으면 승인 요청까지 가고, 팀장 계정의 승인 대기함에서 승인하면 발주가 실제로 나뉜다. 여러 부품 요청은 작업별로 묶어 각각 승인·거절하며, 상태가 자동 갱신된다([변경·검증 기록](docs/ai-rag-integration-changes.md)). 목데이터 화면만 보려면 `.env`에 `VITE_DATA_MODE=mock`.
 
@@ -139,5 +139,5 @@ cd backend && mvn test
 
 ## 일부러 뺀 것
 
-- `TOKEN` 스트리밍, 서비스별 healthcheck(postgres·rabbitmq만 있음)
+- `TOKEN` 스트리밍
 - 작업 대기열(RabbitMQ)은 backend가 넣고 backend가 꺼내 agent에 보낸다. agent가 꺼져 있으면 30초·2분 뒤 다시 보낸다 ([decisions 6.24](docs/decisions.md)).

@@ -105,6 +105,16 @@ class DocumentStore:
         except EmbeddingError as e:
             raise RagError(str(e)) from None
 
+    def health(self) -> dict:
+        """DB에 붙는지와 색인이 있는지. 색인 전에도 ok다 — rag-index는 서비스가 뜬 다음에 돈다"""
+        try:
+            with self.connect() as conn:
+                row = conn.execute("select to_regclass('rag.doc_chunk') is not null as ready").fetchone()
+                indexed = bool(row["ready"]) and conn.execute("select exists(select 1 from rag.doc_chunk) as e").fetchone()["e"]
+                return {"ok": True, "indexed": indexed}
+        except psycopg.Error:
+            return {"ok": False, "error": "RAG_DB_UNAVAILABLE"}
+
     def read(self, doc_id: str, clause_no: str | None = None) -> str:
         if not DOC_ID.fullmatch(doc_id):
             raise RagError("[NOT_FOUND] 검색 결과의 문서 ID를 사용하세요.")

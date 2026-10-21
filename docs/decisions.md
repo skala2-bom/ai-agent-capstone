@@ -725,3 +725,23 @@ PO-2609-001 (MCU 500개, 12/12)
 - SDK 재시도는 끄고 429/503을 애플리케이션에서 최대 2회 재시도한다. 도구/구조화 출력별로 주·대체 모델을 각각 구성한다. 응답 불확실한 승인 등록/발주 변경의 자동 재실행 금지 정책은 유지한다.
 - 실제 LangSmith 합성 추적 및 정상/실패 작업 링크를 확인했다. 모델 품질·실제 공급자 장애·실제 사용량/과금·임베딩 품질은 예산상 미검증이다.
 - 상세 명세·테스트 결과·재현법: [harness-validation.md](harness-validation.md). 기존 개발 컨테이너와 업무 DB는 교체·초기화하지 않았다.
+
+### 6.41 서비스마다 healthcheck, 앞 서비스가 healthy일 때 뜬다 (2026-10-21, healthcheck 브랜치)
+
+- **무엇**: postgres·rabbitmq만 있던 healthcheck를 5개 서비스에 더했다. 확인 명령은 각 **Dockerfile의 `HEALTHCHECK`** 에 둔다 — 개발 compose와 `tests/compose.yml`이 같은 Dockerfile로 빌드하니 한 곳만 고치면 된다. compose는 `depends_on` 조건만 바꿨다.
+
+  | 서비스 | 주소 | 무엇을 보나 | 실패 |
+  |---|---|---|---|
+  | backend | `/actuator/health` | Spring Boot가 DB·RabbitMQ 연결을 자동으로 본다 | 503 `{"status":"DOWN"}` |
+  | agent | `/health` | 그래프·checkpointer 준비 + 접수함·checkpointer 두 연결 풀에 `select 1` | 503 (본문은 그대로) |
+  | rag-mcp | `/health` | 문서 DB에 붙는지. 색인 여부는 `indexed`로 알리기만 | 503 `RAG_DB_UNAVAILABLE` |
+  | business-mcp | `/health` | 프로세스가 요청을 받는지만 | – |
+  | frontend | `/healthz` | nginx가 직접 `ok` | – |
+
+- **자기 것만 본다**: 다른 서비스까지 보면 하나가 죽을 때 전부 unhealthy로 번진다. 그래서 business-mcp는 backend를 보지 않고(도구를 부를 때 연결, 실패는 ToolError), frontend는 backend를 보지 않는다. LLM·임베딩 API도 보지 않는다 — 키가 없는 fake 모드에서도 healthy여야 하고, 확인마다 비용이 나면 안 된다. 색인 전에도 rag-mcp는 healthy다 — `rag-index`는 서비스가 뜬 다음에 돈다.
+- **시작 순서**: postgres·rabbitmq → backend → frontend, postgres → rag-mcp, business-mcp·rag-mcp·postgres → agent. backend는 agent를 기다리지 않는다(대기열 재시도가 맡는다, 6.24) — 순환이 없다. `docker compose up -d --build --wait`로 모두 준비될 때까지 기다릴 수 있다.
+- **공개 포트 보안**: Spring Boot 3 기본값이 actuator 중 health만 열고 상세를 숨긴다. 설정 파일 없이 의존성만 더했다. `Auth.java`는 `/actuator/health` 한 경로만 연다. `/actuator`, `/actuator/env`, `/actuator/health/db` 등은 그대로 막힌다(401).
+- **찾은 문제와 고친 것 — checkpointer 연결**: 시험으로 postgres를 껐다 켰더니 agent의 checkpointer가 끊긴 연결 하나(`AsyncPostgresSaver.from_conn_string`)를 계속 써서 승인 재개가 영원히 실패했고, 쉬지 않고 다시 시도하며 TRACE 이벤트가 1,155개 쌓였다. 이때 health는 다른 풀(접수함)만 보고 healthy라고 거짓으로 답했다. checkpointer를 `AsyncConnectionPool`(`check_connection`으로 꺼낼 때마다 확인, 연결 옵션은 from_conn_string과 같다)로 바꾸고, health가 두 풀을 다 보게 했다. 고친 뒤 postgres 재시작 10초 만에 전부 healthy로 돌아오고, 바로 이어 돌린 통합 시나리오가 모두 통과했다.
+  - 남은 것: 승인 처리 반복(`ApprovalRunner`)은 인프라 오류 때 기다리지 않고 바로 다시 시도한다. 연결이 돌아오면 문제가 없지만, 오래 끊긴 채면 로그가 많이 쌓인다. 이번 범위 밖이라 두었다.
+- **바뀐 계약**: agent `/health`가 준비 전 200 → 503. 저장소 안에서 이 주소를 부르는 코드는 healthcheck뿐이다.
+- **검증** (격리 프로젝트 `capstone-health-check`, 개발 DB·컨테이너는 건드리지 않음): `up --wait`로 6개 healthy(frontend는 같은 망에서 따로 확인), postgres 정지 → backend·rag-mcp·agent만 unhealthy·business-mcp는 healthy → 재시작 후 회복. 통합 시나리오 전부, Python 54+4, backend 30 테스트 통과.

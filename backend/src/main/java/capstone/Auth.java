@@ -60,6 +60,7 @@ class Auth {
      * 경로별 규칙.
      * <ul>
      *   <li>{@code /api/auth/login} — 누구나</li>
+     *   <li>{@code /actuator/health} — 누구나. docker healthcheck가 부른다. 상태 한 줄만 나가고, 다른 actuator 경로는 막힌 채다</li>
      *   <li>{@code /api/**} — JWT 필수. 역할별 세부 권한은 각 API가 본다 (승인은 APPROVER 등)</li>
      *   <li>{@code /internal/**} — JWT를 안 쓴다. 사람이 아니라 서비스가 부르는 곳이라 서비스 토큰으로 막는다 (9단계).
      *       요청자 역할은 {@code X-Role} 헤더로 받는다 ({@link Masking})</li>
@@ -78,6 +79,7 @@ class Auth {
                         // 첫 요청에서 이미 검사했으므로 재진입은 통과시킨다
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/login").permitAll()
+                        .requestMatchers("/actuator/health").permitAll()
                         // ponytail: /internal은 아직 누구나 부를 수 있다. 서비스 토큰(X-Service-Token)은 9단계
                         .requestMatchers("/internal/**").permitAll()
                         .requestMatchers("/api/**").authenticated()

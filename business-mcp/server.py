@@ -28,11 +28,25 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8080")
 TIMEOUT_S = 5  # 아키텍처 4.2: business-mcp → backend 5초
 
 mcp = FastMCP("business-mcp")
+
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """docker healthcheck용. 프로세스가 요청을 받는지만 본다.
+
+    backend는 보지 않는다 — 도구를 부를 때 연결하고, 실패는 그 도구의 ToolError가 된다.
+    backend까지 보면 backend 하나가 죽을 때 이 서버와 agent까지 unhealthy로 번진다 (decisions 6.41).
+    """
+    return JSONResponse({"ok": True})
+
 
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False)
 CHANGE = ToolAnnotations(read_only_hint=False, destructive_hint=True)

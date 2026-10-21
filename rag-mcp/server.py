@@ -1,10 +1,13 @@
 """문서 검색 Tool과 원문 Resource. 업무 DB에는 접근하지 않는다."""
 
+import asyncio
 from functools import lru_cache
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from docstore import DocumentStore, RagError
 from embeddings import EmbeddingError, Embeddings
@@ -15,6 +18,16 @@ mcp = FastMCP("rag-mcp")
 @lru_cache
 def store() -> DocumentStore:
     return DocumentStore.from_env()
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """docker healthcheck용. 문서 DB에 붙으면 200, 못 붙으면 503. 색인 여부는 indexed로만 알린다"""
+    try:
+        status = await asyncio.to_thread(store().health)
+    except RagError as e:   # RAG_DB_URL 미설정
+        status = {"ok": False, "error": str(e)}
+    return JSONResponse(status, status_code=200 if status["ok"] else 503)
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False))

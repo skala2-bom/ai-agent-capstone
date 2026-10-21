@@ -505,16 +505,17 @@ flowchart LR
 | 서비스 | 기술 | 포트 | 공개 | 먼저 떠 있어야 하는 것 | healthcheck |
 |---|---|---|:-:|---|---|
 | postgres | PostgreSQL 16 + pgvector | 5432 | ❌ | – | `pg_isready` |
-| backend | Spring Boot 3 | 8080 | ✅ | postgres | `/actuator/health` |
-| business-mcp | FastMCP | 9101 | ❌ | backend | `/health` |
-| rag-mcp | FastMCP | 9102 | ❌ | postgres | `/health` |
-| agent | FastAPI + LangGraph | 8000 | ❌ | business-mcp, rag-mcp, postgres | `/health` |
-| frontend | Vue 3 + nginx | 80 | ✅ | backend | `/` |
-| indexer | Python (일회성) | – | ❌ | postgres | 실행 후 종료 |
+| backend | Spring Boot 3 | 8080 | ✅ | postgres, rabbitmq | `/actuator/health` (DB·RabbitMQ 포함) |
+| business-mcp | FastMCP | 9101 | ❌ | – (도구를 부를 때 backend에 연결) | `/health` |
+| rag-mcp | FastMCP | 9102 | ❌ | postgres | `/health` (문서 DB) |
+| agent | FastAPI + LangGraph | 8000 | ❌ | business-mcp, rag-mcp, postgres | `/health` (그래프·checkpointer·DB) |
+| frontend | Vue 3 + nginx | 80 | ✅ | backend | `/healthz` |
+| indexer | Python (일회성) | – | ❌ | postgres | 실행 후 종료 (healthcheck 끔) |
 | rabbitmq (P2) | RabbitMQ | 5672 | ❌ | – | `rabbitmq-diagnostics ping` |
 
 - compose 안에서는 **서비스 이름을 주소로** 쓴다 (예: `http://backend:8080/internal/...`).
 - backend → agent 호출은 실행 중에만 일어나므로, 시작 순서에서 backend가 agent를 기다리지 않는다.
+- "먼저 떠 있어야 하는 것"은 `depends_on: condition: service_healthy`로 기다린다. 확인 명령은 각 Dockerfile의 `HEALTHCHECK`에 있고, 자기 프로세스와 직접 쓰는 저장소만 본다 (decisions 6.41).
 - 비밀값(LLM 키, DB 비밀번호, JWT 비밀키, 데모 비밀번호)은 **`.env`에만** 둔다. 저장소에는 `.env.example`만 올린다.
 - 제출 기준: 깨끗한 clone → `.env` 채우기 → `docker compose up` 한 번으로 시연.
 
