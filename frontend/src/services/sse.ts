@@ -70,6 +70,7 @@ export function parseFrame(frame: string): AgentEvent | null {
       "TOOL_END",
       "APPROVAL_REQUIRED",
       "PROPOSAL_PROGRESS",
+      "TASK_REVIEW_READY",
       "WORKFLOW_NOTICE",
       "TRACE",
       "DONE",

@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -35,6 +37,7 @@ import static capstone.InternalApi.m;
  */
 // ponytail: seq를 매기는 자물쇠가 프로세스 안에만 있다. backend를 여러 대 띄우면 DB 시퀀스나 행 잠금으로 바꾼다
 @RestController
+@EnableScheduling
 class Tasks {
 
     /** 작업 하나를 다시 볼 때 필요한 것. 이벤트는 DB에서 따로 읽는다 */
@@ -126,6 +129,7 @@ class Tasks {
                 select distinct on (payload->>'proposalId') payload::text from task_event
                 where task_id = ? and type = 'PROPOSAL_PROGRESS'
                 order by payload->>'proposalId', seq desc""", String.class, id).stream().map(this::read).toList());
+        if (user.getSubject().equals(t.get("userId"))) t.put("reviewReady", approvals.reviewReady(id));
         t.put("traces", db.queryForList("""
                 select payload::text from (
                     select distinct on (payload->>'traceId') payload, seq from task_event
@@ -203,31 +207,52 @@ class Tasks {
         return Map.of("approvalId", card.get("approval_id"), "status", card.get("status"));
     }
 
-    /**
-     * POST /api/approvals/{id}/submit {@code {problem, memo}} — 요청자가 초안을 팀장에게 보낸다 (decisions 6.33).
-     * AI는 이미 이 카드의 결정을 기다리고 있으므로 따로 알리지 않는다.
-     */
-    @PostMapping("/api/approvals/{approvalId}/submit")
-    Map<String, Object> submit(@PathVariable String approvalId, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
-        return approvals.review(approvalId, user.getSubject(), true, body.get("problem"), body.get("memo"));
+    /** 구매 담당자의 작업 단위 검토. 과거 카드별 API로 일부만 보내는 것은 허용하지 않는다. */
+    @PostMapping({"/api/approvals/{approvalId}/submit", "/api/approvals/{approvalId}/withdraw"})
+    Map<String, Object> obsoleteReview(@PathVariable String approvalId) {
+        throw ApiError.invalid("이제 작업 단위로 검토합니다.", "최신 화면에서 작업 전체를 보내거나 보내지 않음으로 처리하세요.");
     }
 
-    /**
-     * POST /api/approvals/{id}/withdraw {@code {memo}} — 요청자가 보내지 않기로 한다. AI가 그 품목을 "보내지 않음"으로 끝내도록
-     * 결정과 같은 경로(대기열 → resume)로 알린다. 남은 카드가 없으면 작업이 AI 차례가 된다.
-     */
-    @PostMapping("/api/approvals/{approvalId}/withdraw")
-    Map<String, Object> withdraw(@PathVariable String approvalId, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
-        Map<String, Object> card = approvals.review(approvalId, user.getSubject(), false, null, body.get("memo"));
-        String id = (String) card.get("task_id");
+    @PostMapping("/api/ai/tasks/{id}/review/submit")
+    Map<String, Object> submit(@PathVariable String id, @RequestBody Approvals.TaskReview body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "BUYER");
+        return Map.of("cards", approvals.reviewTask(id, user.getSubject(), true, body));
+    }
+
+    @PostMapping("/api/ai/tasks/{id}/review/withdraw")
+    Map<String, Object> withdraw(@PathVariable String id, @RequestBody Approvals.TaskReview body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "BUYER");
+        List<Map<String, Object>> cards = approvals.reviewTask(id, user.getSubject(), false, body);
         runningIfNoneWaiting(id);
-        Map<String, Object> req = new HashMap<>();
-        req.put("threadId", id);
-        req.put("approvalId", approvalId);
-        req.put("decision", "WITHDRAWN");
-        req.put("reason", card.get("memo"));
-        enqueue(id, "resume", req);
-        return card;
+        for (Map<String, Object> card : cards) notifyWithdrawal(card);
+        return Map.of("cards", cards);
+    }
+
+    private void notifyWithdrawal(Map<String, Object> card) {
+        String id = (String) card.get("task_id");
+        try {
+            queue.convertAndSend(TaskQueue.TASKS, m("kind", "resume", "taskId", id, "attempt", 1,
+                    "body", m("threadId", id, "approvalId", card.get("approval_id"), "decision", "WITHDRAWN", "reason", card.get("memo"))));
+        } catch (Exception ignored) {
+            // WITHDRAWN은 이미 DB에 영속화됐다. 아래 스캔이 재전송하므로 FAILED로 만들지 않는다.
+        }
+    }
+
+    /** 새 테이블 없이 WITHDRAWN 기록을 복구 기준으로 삼는다. agent가 진행 확인을 보내면 재전송을 멈춘다. */
+    @Scheduled(fixedDelay = 10000)
+    void recoverWithdrawals() {
+        List<String> ids = db.queryForList("""
+                select a.approval_id from approval a join ai_task t on t.task_id = a.task_id
+                where a.status = 'WITHDRAWN' and t.status not in ('DONE', 'FAILED')
+                  and not exists (select 1 from task_event e where e.task_id = a.task_id
+                    and e.type = 'PROPOSAL_PROGRESS' and e.payload->>'approvalId' = a.approval_id
+                    and e.payload->>'proposalStatus' = 'WITHDRAWN')
+                order by a.requested_at limit 100""", String.class);
+        for (String id : ids) {
+            Map<String, Object> card = approvals.card(id);
+            runningIfNoneWaiting((String) card.get("task_id"));
+            notifyWithdrawal(card);
+        }
     }
 
     /**
@@ -279,6 +304,8 @@ class Tasks {
                 queue.convertAndSend(TaskQueue.RETRIES.get(attempt - 1), next);
                 return;
             }
+            if (msg.get("body") instanceof Map<?, ?> body && "WITHDRAWN".equals(body.get("decision")))
+                return; // DB에 남은 보내지 않음 기록을 정기 스캔이 재전송한다.
             queue.convertAndSend(TaskQueue.DLQ, next);  // 사람이 원인을 볼 수 있게 마지막 오류와 함께 남긴다
             addEvent(id, Map.of("type", "FAILED", "errorCode", "AGENT_UNAVAILABLE",
                     "message", (resume ? "승인은 저장됐지만 " : "") + "AI 서버에 " + attempt + "번 보냈지만 닿지 않았습니다: " + e.getMessage()));

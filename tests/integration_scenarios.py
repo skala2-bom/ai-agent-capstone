@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -90,12 +91,24 @@ def planner_expected(value):
     return value
 
 
+def review_body(task_id, drafts):
+    ready = request("GET", f"/api/ai/tasks/{task_id}").get("reviewReady")
+    if not ready or not set(c["approval_id"] for c in drafts).issubset(ready["approvalIds"]):
+        return None
+    return {"requestId": str(uuid.uuid4()), "reviewId": ready["reviewId"],
+            "taskProblem": "생산 일정 변경으로 생긴 결품과 과잉을 함께 해결해야 합니다.",
+            "memos": {c["approval_id"]: "협력사 구두 확인 " + c["approval_id"] for c in drafts}}
+
+
 def submit_drafts(task_id, role="buyer"):
-    """구매 요청 카드는 초안(DRAFT)으로 온다 (decisions 6.33). 요청자가 문제 정의를 확인해 보내야 팀장이 결정할 수 있다."""
-    for c in request("GET", "/api/approvals?status=DRAFT", role):
-        if c["task_id"] == task_id:
-            assert c["problem"], "AI가 문제 정의를 미리 채워야 합니다."
-            request("POST", f"/api/approvals/{c['approval_id']}/submit", role, json={"problem": c["problem"], "memo": "테스트 메모"})
+    drafts = [c for c in request("GET", "/api/approvals?status=DRAFT", role) if c["task_id"] == task_id]
+    if not drafts:
+        return
+    assert not any(c.get("previousApprovalId") or c.get("summary", "").startswith("[재제안 ") for c in drafts), "재제안은 구매 검토로 돌아오면 안 됩니다."
+    body = review_body(task_id, drafts)
+    if body:
+        assert all(c["problem"] for c in drafts)
+        request("POST", f"/api/ai/tasks/{task_id}/review/submit", role, json=body)
 
 
 def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, timeout=240):
@@ -200,14 +213,30 @@ def rejection():
     reset_seed()
     with psycopg.connect(DSN) as conn:
         original_count = conn.execute("select count(*) from purchase_order").fetchone()[0]
-    task, decisions = finish_task(start("허브를 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘"),
-                                  approve=True, reject_first=True)
-    assert len(decisions) == 2
+    task_id = start("허브를 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘")
+    initial = wait_cards(task_id, 1, "PENDING")[0] # 최초 한 번만 구매가 전송한다.
+    decide_card(task_id, initial, "REJECTED")
+    revised = None
+    for _ in range(600):
+        # 구매 화면·토큰·전송 API를 사용하지 않고 팀장 목록만 확인한다.
+        cards = [c for c in request("GET", "/api/approvals?status=PENDING", "approver") if c["task_id"] == task_id]
+        if cards:
+            assert len(cards) == 1
+            revised = cards[0]
+            break
+        time.sleep(0.2)
+    assert revised, "구매 재검토 없이 재제안이 팀장에게 전달되어야 합니다."
+    assert revised["previousApprovalId"] == initial["approval_id"]
+    assert revised["taskProblem"] == initial["taskProblem"] and revised["memo"] == initial["memo"]
+    assert revised["tool"] == "request_due_date_change"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
+    decide_card(task_id, revised, "APPROVED")
+    task, _ = finish_task(task_id)
     assert [e["tool"] for e in task["result"]["executions"]] == ["request_due_date_change"], task["answer"]
-    assert "거절 사유" in task["answer"]
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from purchase_order").fetchone()[0] == original_count
-    print("PASS 거절 후 다른 대안 재승인 (거절한 분할 실행 없음)", flush=True)
+    print("PASS 구매 최초 전송 → 팀장 거절 → 구매 없이 재제안 직접 수신 → 팀장 승인 후 실행", flush=True)
 
 
 def wait_cards(task_id, count, status=None):
@@ -262,31 +291,46 @@ def mixed_approvals():
 
 
 def draft_review():
-    """구매가 초안을 검토: 1건은 보내지 않고 2건은 메모를 달아 보낸다 → 팀장은 보낸 2건만 보고 승인 (decisions 6.33)"""
-    reset_seed()
-    case = next(c for c in CASES if c["id"] == "SC2")
-    task_id = start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘.")
-    for _ in range(600):
-        drafts = [c for c in request("GET", "/api/approvals?status=DRAFT", "buyer") if c["task_id"] == task_id]
-        if len(drafts) >= 3:
-            break
-        time.sleep(0.2)
-    assert len(drafts) == 3, drafts
-    assert not [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id], "팀장에게 초안이 보이면 안 됩니다."
-    assert all(c["problem"] for c in drafts), "문제 정의 초안이 비었습니다."
-    keep, *send = sorted(drafts, key=lambda c: c["args"]["po_id"])
-    request("POST", f"/api/approvals/{keep['approval_id']}/withdraw", "buyer", json={"memo": "협력사 협의 불가"})
-    for c in send:
-        request("POST", f"/api/approvals/{c['approval_id']}/submit", "buyer",
-                json={"problem": c["problem"] + " (구매 확인)", "memo": "협력사 구두 확인"})
-    pending = [c for c in request("GET", "/api/approvals?status=PENDING", "approver") if c["task_id"] == task_id]
-    assert len(pending) == 2 and all(c["memo"] == "협력사 구두 확인" and c["problem"].endswith("(구매 확인)") for c in pending)
-    for c in pending:
-        decide_card(task_id, c, "APPROVED")
-    task, _ = finish_task(task_id)
-    assert task["result"]["approval_summary"] == {"EXECUTED": 2, "REJECTED": 0, "BLOCKED": 0, "WITHDRAWN": 1}, task["result"]["approval_summary"]
-    assert "보내지 않았습니다" in task["answer"], task["answer"]
-    print("PASS 초안 3건 → 1건 보내지 않음·2건 메모 달아 요청 → 팀장은 2건만 보고 승인·실행", flush=True)
+    """작업 전체 전송/철회, 고정 문제·메모 유지, 팀장 비노출 및 중복 요청을 검증한다."""
+    for send in (False, True):
+        reset_seed()
+        case = next(c for c in CASES if c["id"] == "SC2")
+        task_id = start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘.")
+        body = None
+        for _ in range(600):
+            drafts = [c for c in request("GET", "/api/approvals?status=DRAFT") if c["task_id"] == task_id]
+            if len(drafts) == 3:
+                body = review_body(task_id, drafts)
+                if body:
+                    break
+            time.sleep(0.2)
+        assert body and len(drafts) == 3
+        assert not [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id]
+        url = f"/api/ai/tasks/{task_id}/review/" + ("submit" if send else "withdraw")
+        # 일부 카드만 보내는 요청은 거부되며 아무 카드도 바뀌지 않는다.
+        partial = {**body, "memos": {drafts[0]["approval_id"]: "부분 요청"}}
+        response = HTTP.post(BASE + url, headers={"Authorization": "Bearer " + TOKENS["buyer"]}, json=partial)
+        assert response.status_code == 409, response.text
+        saved = request("POST", url, json=body)["cards"]
+        replay = request("POST", url, json=body)["cards"]
+        assert {c["approval_id"] for c in saved} == {c["approval_id"] for c in replay}
+        assert all(c["taskProblem"] == body["taskProblem"] and c["memo"] == body["memos"][c["approval_id"]] for c in saved)
+        original = {c["approval_id"]: c["problem"] for c in drafts}
+        assert all(c["problem"] == original[c["approval_id"]] for c in saved)
+        manager = [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id]
+        assert len(manager) == (3 if send else 0)
+        if send:
+            for c in manager:
+                decide_card(task_id, c, "APPROVED")
+        else:
+            for c in saved:
+                response = HTTP.get(BASE + f"/api/approvals/{c['approval_id']}", headers={"Authorization": "Bearer " + TOKENS["approver"]})
+                assert response.status_code == 403
+        task, _ = finish_task(task_id)
+        assert task["result"]["approval_summary"] == {"EXECUTED": 3 if send else 0, "REJECTED": 0, "BLOCKED": 0, "WITHDRAWN": 0 if send else 3}
+        with psycopg.connect(DSN) as conn:
+            assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == (3 if send else 0)
+        print("PASS 작업 전체 " + ("전송 → 팀장 개별 승인·실행" if send else "보내지 않음 → 팀장 비노출·실행 없음"), flush=True)
 
 
 def recovery_prepare():

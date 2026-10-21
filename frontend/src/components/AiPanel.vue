@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch, nextTick } from "vue";
+import TaskReview from "./TaskReview.vue";
 import ServerResult from "./ServerResult.vue";
 import AnswerBlocks from "./AnswerBlocks.vue";
 import { sourceCards } from "../services/answer";
@@ -26,7 +27,10 @@ function archive() {
 function reopen(i: number) {
   const t = history.value[i];
   history.value = history.value.filter((_, j) => j !== i);
-  if (t.taskId) void openExisting(t.taskId);
+  if (t.taskId) {
+    if (t.taskId === w.activeTask) void openExisting(t.taskId);
+    else w.openTask(t.taskId);
+  }
 }
 function resetAll() {
   clear(); history.value = []; currentTask = undefined;
@@ -86,10 +90,9 @@ function cardStatus(e: AgentEvent) {
   if (p && p.proposalStatus !== "PENDING") return labels[p.proposalStatus!] ?? p.proposalStatus;
   return approvalStates.value[e.approvalId!] ?? "승인 대기";
 }
-// 요청자 검토를 채팅창에서 (decisions 6.34): 카드마다 문제 정의·메모를 적어 보내거나 보내지 않는다.
-// 승인 대기함과 같은 API(w.review)라 어느 쪽에서 해도 상태가 같다
-const draftProblem = ref<Record<string, string>>({});
-const draftMemo = ref<Record<string, string>>({});
+const taskProblem = computed(() => [...(w.data?.approvals ?? [])].reverse()
+  .find(a => a.taskId === w.activeTask && a.taskProblem)?.taskProblem);
+const hasDrafts = computed(() => w.data?.approvals.some(a => a.taskId === w.activeTask && a.status === "DRAFT"));
 /** backend 카드 상태. 아직 목록에 없으면 요청자 기준으로 짐작한다 — 구매 요청은 초안, 팀장 요청은 승인 대기 */
 function cardState(e: AgentEvent) {
   return w.data?.approvals.find((a) => a.id === e.approvalId)?.status
@@ -100,11 +103,6 @@ function cardLabel(e: AgentEvent) {
   if (w.session?.role !== "APPROVER" && (s === "DRAFT" || s === "PENDING" || s === "WITHDRAWN"))
     return { DRAFT: "검토 전 · 보낼지 정하세요", PENDING: "팀장 승인 대기", WITHDRAWN: "보내지 않음" }[s];
   return cardStatus(e);
-}
-async function reviewCard(e: AgentEvent, send: boolean) {
-  const id = e.approvalId!;
-  if (!w.data?.approvals.some((a) => a.id === id)) await w.refreshApprovals();
-  await w.review(id, send, draftProblem.value[id] ?? e.problem ?? "", draftMemo.value[id] ?? "");
 }
 async function decide(e: AgentEvent, decision: "APPROVED" | "REJECTED") {
   const id = e.approvalId!;
@@ -198,8 +196,11 @@ function subscribe(taskId: string, g: number) {
     answer.value = acc.answer; status.value = acc.status;
     if (e.type === "DONE") { result.value = e.result as Record<string, unknown>; sources.value = e.sources; }
     if (e.type === "APPROVAL_REQUIRED" && e.approvalId) {
-      draftProblem.value[e.approvalId] ??= e.problem ?? "";
       void w.refreshApprovals().catch(() => {});   // 카드 상태(초안 여부)를 바로 알도록
+    }
+    if (e.type === "TASK_REVIEW_READY") {
+      void w.loadTaskReview(taskId).catch(() => {});
+      void w.refreshApprovals().catch(() => {});
     }
     if (e.type === "FAILED" || e.type === "WORKFLOW_NOTICE") err.value = e.message ?? "처리 상태를 확인해 주세요.";
     if (acc.terminal) { running.value = false; stop(); }
@@ -246,6 +247,7 @@ async function ask() {
   archive();
   currentTask = undefined;
   clear();
+  w.activeTask = undefined;
   const g = generation;
   asked.value = w.context ? `${w.context}\n${text}` : text;
   question.value = "";
@@ -399,41 +401,19 @@ async function ask() {
           <code>{{ d.uri }}</code>
         </article>
       </details>
+      <p v-if="taskProblem" class="task-problem"><strong>전체 문제 설명</strong><br />{{ taskProblem }}</p>
+      <TaskReview v-if="w.activeTask && w.session?.role === 'BUYER' && (hasDrafts || w.taskReviews[w.activeTask]?.attempt)" :key="w.activeTask" :task-id="w.activeTask" />
       <article
-        v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED')"
+        v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED' && cardState(x) !== 'DRAFT' && (w.session?.role !== 'APPROVER' || cardState(x) !== 'WITHDRAWN'))"
         :key="e.approvalId"
         class="card"
       >
         <b>{{ cardLabel(e) }} · {{ e.itemId ?? e.approvalId }}</b>
         <p>{{ e.summary }}</p>
         <p v-if="progress(e)?.message">{{ progress(e)?.message }}</p>
-        <!-- 요청자 검토 (decisions 6.33·6.34): 채팅창에서 바로 문제 정의·메모를 달아 팀장에게 보낼지 정한다 -->
-        <form
-          v-if="w.session?.role !== 'APPROVER' && cardState(e) === 'DRAFT'"
-          class="draft-review"
-          @submit.prevent="reviewCard(e, true)"
-        >
-          <label
-            >문제 정의 · 필수<textarea
-              :value="draftProblem[e.approvalId!] ?? e.problem ?? ''"
-              rows="2"
-              @input="draftProblem[e.approvalId!] = ($event.target as HTMLTextAreaElement).value"
-          /></label>
-          <label
-            >메모 · 내 판단<textarea
-              v-model="draftMemo[e.approvalId!]"
-              rows="2"
-              placeholder="예: 협력사와 구두로 선납 가능 확인함"
-          /></label>
-          <div class="action-row">
-            <button type="button" :disabled="w.deciding[e.approvalId!]" @click="reviewCard(e, false)">보내지 않음</button
-            ><button class="primary" :disabled="w.deciding[e.approvalId!] || !(draftProblem[e.approvalId!] ?? e.problem ?? '').trim()">
-              {{ w.deciding[e.approvalId!] ? "보내는 중…" : "팀장에게 승인 요청" }}
-            </button>
-          </div>
-        </form>
-        <p v-else-if="w.session?.role !== 'APPROVER' && cardState(e) !== 'DRAFT'" class="caption">
-          {{ w.data?.approvals.find((a) => a.id === e.approvalId)?.memo ? "보낸 메모: " + w.data?.approvals.find((a) => a.id === e.approvalId)?.memo : "" }}
+        <p v-if="e.problem" class="task-problem"><strong>품목별 문제</strong><br />{{ e.problem }}</p>
+        <p v-if="w.data?.approvals.find(a => a.id === e.approvalId)?.memo" class="task-problem">
+          개인 메모: {{ w.data?.approvals.find(a => a.id === e.approvalId)?.memo }}
         </p>
         <template v-if="cardStatus(e) === '승인 대기' && w.session?.role === 'APPROVER' && cardState(e) === 'PENDING'"
           ><label
@@ -476,3 +456,7 @@ async function ask() {
     </form>
   </aside>
 </template>
+
+<style scoped>
+.task-problem { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>

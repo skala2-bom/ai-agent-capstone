@@ -127,6 +127,74 @@ class ApprovalRecovery(unittest.IsolatedAsyncioTestCase):
         await self.runner.process(command)
         self.assertEqual(self.changed, {"B"})
 
+    async def test_task_readiness_is_stable_and_all_withdrawn_never_execute(self):
+        await self.start()
+        async def readiness():
+            events = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s AND payload->>'type'='TASK_REVIEW_READY'", (self.task,))
+            return [e["payload"] for e in events]
+        ready = await readiness()
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(set(ready[0]["approvalIds"]), {"APR-" + self.task + "A", "APR-" + self.task + "B"})
+        await self.runner.process(await self.enqueue("DECISION", "A", "WITHDRAWN"))
+        self.assertEqual(await readiness(), ready)
+        await self.runner.process(await self.enqueue("DECISION", "B", "WITHDRAWN"))
+        self.assertEqual(self.writes, [])
+        self.assertEqual([p["status"] for p in (await self.values())["proposals"]], ["WITHDRAWN", "WITHDRAWN"])
+        events = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s AND payload->>'type'='DONE'", (self.task,))
+        self.assertEqual(len(events), 1)
+
+    async def test_upgrade_restores_readiness_for_existing_idle_drafts_without_tool_calls(self):
+        await self.start()
+        await self.store.query("DELETE FROM agent.workflow_outbox WHERE task_id=%s AND payload->>'type'='TASK_REVIEW_READY'", (self.task,))
+        before_calls = self.emit.await_count
+        before = await self.values()
+        restarted = ApprovalRunner(self.graph, self.store, self.runner.initial_state)
+        await restarted.recover_review_readiness()
+        events = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s AND payload->>'type'='TASK_REVIEW_READY'", (self.task,))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(await self.values(), before)
+        self.assertEqual(self.emit.await_count, before_calls)
+        self.assertEqual(self.writes, [])
+
+    async def old_reproposal(self):
+        p = self.proposals[0]
+        p.update(revision=2, replaces="old-proposal", previous_approval_id="APR-old")
+        await self.graph.aupdate_state(self.cfg, {"proposals": self.proposals}, as_node="check_batch")
+        await self.start()
+        await self.store.query("UPDATE agent.approval_binding SET payload=payload-'previousApprovalId' WHERE proposal_id=%s", (p["proposal_id"],))
+        self.emit.reset_mock()
+        return p
+
+    async def test_old_reproposal_is_forwarded_by_known_id_without_restarting_graph(self):
+        p = await self.old_reproposal()
+        before = await self.values()
+        await self.runner.recover_reproposals()
+        self.emit.assert_awaited_once()
+        payload = self.emit.call_args.args[1]
+        self.assertEqual(payload["approvalId"], "APR-" + p["proposal_id"])
+        self.assertEqual(payload["previousApprovalId"], "APR-old")
+        self.assertEqual(await self.values(), before)
+        self.assertEqual(self.writes, [])
+        await self.runner.recover_reproposals()
+        self.emit.assert_awaited_once()
+
+    async def test_reproposal_forwarding_response_loss_retries_same_known_card_only(self):
+        p = await self.old_reproposal()
+        self.emit.side_effect = [None, httpx.Response(200, json={"approvalId": "APR-" + p["proposal_id"]})]
+        await self.runner.recover_reproposals()
+        await self.runner.recover_reproposals()
+        self.assertEqual(self.emit.await_count, 2)
+        self.assertEqual(self.emit.await_args_list[0], self.emit.await_args_list[1])
+        await self.runner.recover_reproposals()
+        self.assertEqual(self.emit.await_count, 2)
+        self.assertEqual(self.writes, [])
+
+    async def test_reproposal_recovery_never_reposts_unknown_registration(self):
+        p = await self.old_reproposal()
+        await self.store.bind(p["proposal_id"], "UNKNOWN", error="response lost")
+        await self.runner.recover_reproposals()
+        self.emit.assert_not_awaited()
+
     async def test_observed_resume_links_runs_and_done_stays_last(self):
         await self.runner.process_observed(await self.enqueue())
         rows = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s ORDER BY id", (self.task,))
@@ -174,7 +242,7 @@ class ApprovalRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(interrupts(await self.graph.aget_state(self.cfg)))
         self.assertEqual(self.emit.await_count, 2)
         events = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s", (self.task,))
-        self.assertFalse(any(e["payload"]["type"] == "DONE" for e in events))
+        self.assertFalse(any(e["payload"]["type"] in {"DONE", "TASK_REVIEW_READY"} for e in events))
 
     async def test_crash_after_registration_reply_reuses_binding(self):
         original = self.store.bind

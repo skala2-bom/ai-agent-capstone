@@ -86,8 +86,10 @@ export interface Approval {
   at: string;
   /** DRAFT = 요청자 검토 전, WITHDRAWN = 요청자가 보내지 않음 (decisions 6.33) */
   status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "EXECUTED" | "WITHDRAWN";
-  /** 문제 정의 (AI가 미리 채우고 요청자가 고침) · 요청자 메모 */
+  /** AI의 고정된 품목 문제 · 구매 담당자의 작업 전체 설명 · 개인 메모 */
   problem?: string;
+  taskProblem?: string;
+  previousApprovalId?: string;
   memo?: string;
   reason?: string;
   beforeQty?: number;
@@ -176,6 +178,7 @@ export interface AgentEvent {
     | "TOOL_START"
     | "TOOL_END"
     | "APPROVAL_REQUIRED"
+    | "TASK_REVIEW_READY"
     | "PROPOSAL_PROGRESS"
     | "WORKFLOW_NOTICE"
     | "TRACE"
@@ -205,4 +208,12 @@ export interface AgentEvent {
   eventId?: string;
   replaces?: string;
   itemId?: string;
+}
+
+export interface TaskReviewReady { reviewId: string; approvalIds: string[] }
+export interface TaskReviewRequest {
+  requestId: string;
+  reviewId: string;
+  taskProblem: string;
+  memos: Record<string, string>;
 }

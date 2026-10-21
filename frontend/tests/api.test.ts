@@ -10,6 +10,12 @@ describe("API 모드 응답 변환", () => {
     ],
   };
 
+  it("재제안의 이전 요청 ID와 전체 문제·기존 구매 메모를 보존한다", () => {
+    const { approvals } = toApprovals([{ approval_id: "NEW", task_id: "T", requested_by: "buyer", status: "PENDING",
+      previousApprovalId: "OLD", taskProblem: "전체 문제", problem: "재제안 품목 문제", memo: "이전 구매 메모" }], new Map());
+    expect(approvals[0]).toMatchObject({ previousApprovalId: "OLD", taskProblem: "전체 문제", problem: "재제안 품목 문제", memo: "이전 구매 메모" });
+  });
+
   it("재고·생산계획·발주를 화면 타입으로 바꾼다", () => {
     const w = toWorkspace(
       { plans: [{ plan_id: "PP-05", product_id: "FG-HUB", plan_date: "2026-12-14", qty: 400, status: "PLANNED" }] },
