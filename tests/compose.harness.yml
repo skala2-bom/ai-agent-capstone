@@ -26,4 +26,5 @@ services:
       args:
         VITE_DATA_MODE: api
     ports: ["127.0.0.1:3100:80"]
-    depends_on: [backend]
+    depends_on:
+      backend: {condition: service_healthy}

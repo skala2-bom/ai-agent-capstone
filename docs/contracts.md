@@ -12,8 +12,8 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
-| 43 | **작업 이력은 본인만** — 모든 역할에서 목록·상세·SSE를 작업 소유자로 제한. SYSTEM도 동일. 승인함 진행 정보는 별도 API | 3.1, decisions 6.42 | 승인함은 `/approval-progress` 사용. 타인 작업 결과 열기 제외 | AI 요청·승인 계약 유지 |
-| 42 | **입고 정보 수동 수정** — OPEN 발주의 예정 수량·날짜를 함께 저장, 사유 필수, 변경 이력과 자동 영향 분석 | 3.1, decisions 6.41 | 발주·입고 상세의 수량·일정 폼 연결 | 기존 승인 실행 도구 유지. DB 구조 변경 없음 |
+| 43 | **작업 이력은 본인만** — 모든 역할에서 목록·상세·SSE를 작업 소유자로 제한. SYSTEM도 동일. 승인함 진행 정보는 별도 API | 3.1, decisions 6.43 | 승인함은 `/approval-progress` 사용. 타인 작업 결과 열기 제외 | AI 요청·승인 계약 유지 |
+| 42 | **입고 정보 수동 수정** — OPEN 발주의 예정 수량·날짜를 함께 저장, 사유 필수, 변경 이력과 자동 영향 분석 | 3.1, decisions 6.42 | 발주·입고 상세의 수량·일정 폼 연결 | 기존 승인 실행 도구 유지. DB 구조 변경 없음 |
 | 41 | **거절 후 재제안은 팀장에게 직접 전달** — 최초 제안만 구매 검토. 동일 작업·요청자·품목의 실제 거절을 검증한 재제안은 PENDING으로 등록. 전체 문제·이전 구매 메모 계승. 작업 카드에서 원 질문 숨김 | 3.3, decisions 6.40 | 작업 카드에는 전체 문제만 표시. 재제안 이전 카드 ID로 배치 | APPROVAL_REQUIRED에 previousApprovalId. 이미 등록된 재제안 초안은 정확한 approvalId로 복구. 승인 자동 실행 금지 |
 | 40 | **작업 단위 구매 검토** — 전체 문제 설명 + 고정된 품목 문제 + 부품별 메모. 현재 작업의 초안 전체를 전송/철회. 팀장에게 DRAFT·WITHDRAWN 비노출 | 3.1·3.3, decisions 6.39, [구현·검증 기록](task-review-changes.md) | 공통 작업 검토 UI와 task API 사용. 카드별 전송 API 폐기 | 모든 카드 등록 뒤 TASK_REVIEW_READY. 기존 승인/거절·실행은 부품별 유지. DB 스키마 변경 없음 |
 | 39 | **해결안 비교 화면 삭제** (팀장 포함 모두), AI 채팅창에 업무 검색·너비 조절 | decisions 6.38 | ✅ B가 반영함. 해결안은 채팅창 카드와 승인 대기함에서만 | 없음 (`compare_options`·`/api/analysis/options`는 그대로) |
@@ -147,7 +147,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 - **접속 정보** (✅ [`db/init.sql`](../db/init.sql)에 구현): 호스트 `postgres:5432`, DB `bom`, 계정·비밀번호 `app/app` · `agent/agent` · `rag/rag`. 포트를 밖으로 열지 않은 내부망 개발값이다.
   - 계정마다 `search_path`가 자기 스키마라 테이블 이름에 스키마를 안 붙여도 된다.
   - **pgvector 확장은 `rag` 스키마에 있다.** `rag` 계정은 `vector(1536)`처럼 그냥 쓰면 된다. 다른 계정에는 이 타입이 보이지 않는다.
-  - DB를 쓰기 시작하는 서비스는 `depends_on: postgres: condition: service_healthy`를 붙인다 (healthcheck 있음).
+  - DB를 쓰기 시작하는 서비스는 `depends_on: postgres: condition: service_healthy`를 붙인다 (healthcheck 있음). 다른 서비스도 모두 healthcheck가 있다 (decisions 6.41).
   - `db/` 안의 `init.sql` → `schema.sql` → `seed.sql`이 이름 순서로 돈다. **빈 볼륨일 때만** 돌므로 다시 돌리려면 `docker compose down -v`.
 
 ### 1.4 seed 데이터

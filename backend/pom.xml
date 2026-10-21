@@ -35,6 +35,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
+        <!-- healthcheck (/actuator/health). Boot 기본값이 health만 열고 상세(DB·RabbitMQ 각각의 상태)는 숨긴다.
+             공개 포트로 나가는 건 {"status":"UP"} 한 줄뿐이다 (decisions 6.41) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

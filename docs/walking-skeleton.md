@@ -109,7 +109,7 @@
 | postgres | 아키텍처 Data tier | ~~없음~~ → 10/20 오후 추가 (스키마·계정만, `db/init.sql`) | 테이블·seed는 B 파트 다음 단계 |
 | 요청자 헤더 | `X-Task-Id`, `X-User-Id`, `X-Role` 전달 (아키텍처 6장) | 없음 | 인증이 없어서 전달할 값이 없음 |
 | rag-mcp | `search_docs` 도구 + Resource (8.2) | Resource만 | 요청이 "Resource 한 번 읽기"였음 |
-| healthcheck | 서비스마다 (7장 표) | 없음 | 시작 순서 문제는 "호출할 때 연결"로 피함 |
+| healthcheck | 서비스마다 (7장 표) | ~~없음~~ → 10/21 서비스마다 추가 (decisions 6.41) | 뼈대 때는 "호출할 때 연결"로 피했다 |
 
 ## 6. 일부러 뺀 것과 나중에 들어갈 곳
 

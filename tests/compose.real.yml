@@ -19,6 +19,7 @@ services:
     environment: *real-rag
     volumes: ["../data:/app/data:ro"]
     command: ["python", "indexer.py"]
+    healthcheck: {disable: true}
   tests:
     environment:
       AGENT_MODEL_MODE: auto
