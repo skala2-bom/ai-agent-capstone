@@ -188,9 +188,6 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       <p v-else>
         AI 채팅에서 "부족한 부품 해결 방법 만들어 줘"처럼 요청하면, AI가 검증한 해결안이 승인 카드로 여기 올라옵니다.
       </p>
-      <RouterLink v-if="w.approver" class="button" to="/solutions"
-        >해결안 비교로 이동 →</RouterLink
-      >
     </div>
   </section>
   <Drawer

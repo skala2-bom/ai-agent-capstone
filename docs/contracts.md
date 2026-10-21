@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 39 | **해결안 비교 화면 삭제** (팀장 포함 모두), AI 채팅창에 업무 검색·너비 조절 | decisions 6.38 | ✅ B가 반영함. 해결안은 채팅창 카드와 승인 대기함에서만 | 없음 (`compare_options`·`/api/analysis/options`는 그대로) |
 | 38 | **Harness 관측·예산·모델 복구** (harness 브랜치, MaJaeHyun00) — `TRACE` 이벤트(업무 상태는 안 바뀜), 작업 목록 `trace`·상세 `traces[]`, 도구 결과·입력 토큰 예산, 모델 재시도·대체(`FALLBACK_MODEL`), LangSmith 추적(기본 꺼짐) | 아래 "Harness 관측 추가 계약", decisions 6.37, [harness-validation.md](harness-validation.md) | 작업 이력에 trace 표시 (반영됨) | 반영됨. `.env`에 `AGENT_MODEL_MODE`·`LANGSMITH_*`·예산 변수 추가 (`.env.example`) |
 | 37 | **구매 담당자 검토 단계** — 구매 요청 카드는 `DRAFT`(초안)로 시작. 요청자가 문제 정의(AI가 채움)·메모를 달아 `submit`하면 팀장에게, `withdraw`하면 보내지 않음. 반려 뒤 재제안도 다시 초안으로. `APPROVAL_REQUIRED`에 `problem` 추가, resume `decision`에 `WITHDRAWN` 추가 | 2.7·3.1·3.3, decisions 6.33 | ✅ B가 반영함: **AI 채팅창 카드**와 승인 대기함 양쪽에서 초안에 문제 정의·메모를 달아 보내기/보내지 않기(6.34), 팀장 화면의 요청자 검토 표시, 구매 할 일 "승인 요청 보내기 (초안)" | ✅ B가 반영함: `problem_text`, `approval_gate`의 WITHDRAWN 처리, `approval_summary.WITHDRAWN`. 통합 테스트는 초안을 먼저 보내고 결정, 새 시나리오 `draft` |
 | 36 | **카드가 남아 있으면 작업 상태는 `WAITING_APPROVAL`** — 여러 장 중 하나를 결정해도 "승인 대기" 유지, 마지막 결정 뒤에만 `RUNNING` | 3.1, decisions 6.31 | 없음 (작업 이력·필터가 그대로 맞게 나온다) | 없음 |
