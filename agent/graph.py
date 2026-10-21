@@ -829,7 +829,7 @@ async def check_batch(state: AgentState) -> dict:
 
 
 def problem_text(targets: list[dict]) -> str:
-    """승인 카드의 "문제 정의" 초안 (decisions 6.33). 계산 결과에서 그대로 만든다 — 요청자가 고쳐 쓴다"""
+    """승인 카드의 고정된 품목별 문제. 계산 결과에서 만들고 구매 담당자의 전체 문제 설명과 구분한다"""
     lines = []
     for t in targets:
         name = t.get("item_name") or t.get("item_id")
@@ -851,7 +851,7 @@ def approval_payload(p: dict) -> dict:
         "amount": opt.get("added_cost"), "evidence": opt.get("evidence") or [],
         "problem": problem_text(p.get("targets") or []),
         "option_id": opt["option_id"], "proposalId": p["proposal_id"], "revision": p["revision"],
-        "replaces": p.get("replaces"), "itemId": opt["item_id"],
+        "replaces": p.get("replaces"), "previousApprovalId": p.get("previous_approval_id"), "itemId": opt["item_id"],
         "verify": {"passed": True, "warnings_after": p["verify"].get("warnings_after", [])},
     }
 

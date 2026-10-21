@@ -88,7 +88,7 @@ const todos = computed(() =>
           {
             // AI가 만든 해결안 초안: 메모를 달아 팀장에게 보낼지 정한다 (decisions 6.33)
             title: "승인 요청 보내기 (초안)",
-            count: w.data!.approvals.filter((a) => a.status === "DRAFT").length,
+            count: new Set(w.data!.approvals.filter((a) => a.status === "DRAFT").map(a => a.taskId)).size,
             to: "/approvals",
           },
           {

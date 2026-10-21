@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { Session, Workspace, Command, Role } from "../types";
-import { gateway, mode, fetchApprovals, decideApproval, reviewApproval } from "../services/api";
+import type { Session, Workspace, Command, Role, TaskReviewReady, TaskReviewRequest } from "../types";
+import { gateway, mode, fetchApprovals, decideApproval, reviewTask as submitTaskReview, request, toApprovals, toHistory } from "../services/api";
 export const names: Record<Role, string> = {
   PLANNER: "김계획",
   BUYER: "박구매",
@@ -18,6 +18,19 @@ export const useWorkspace = defineStore("workspace", () => {
   const panel = ref(false);
   const activeTask = ref<string>();
   const deciding = ref<Record<string, boolean>>({});
+  interface ReviewState {
+    taskProblem: string; memos: Record<string, string>; ready?: TaskReviewReady;
+    busy: boolean; error: string; loading: boolean;
+    attempt?: { send: boolean; body: TaskReviewRequest };
+  }
+  // 입력 중인 메모는 메모리에만 둔다. 자동 저장하거나 브라우저 저장소에 쓰지 않는다.
+  const taskReviews = ref<Record<string, ReviewState>>({});
+  function taskReview(id: string): ReviewState {
+    return taskReviews.value[id] ??= {
+      taskProblem: [...(data.value?.approvals ?? [])].reverse().find(a => a.taskId === id && a.taskProblem)?.taskProblem ?? "",
+      memos: {}, busy: false, error: "", loading: false,
+    };
+  }
   const epoch = ref(0);
   const buyer = computed(() => session.value?.role !== "PLANNER");
   // 해결안 비교 화면은 구매팀장만 본다 (팀 토의, decisions 6.25). 구매 담당자는 AI 채팅으로 승인을 요청한다
@@ -86,6 +99,7 @@ export const useWorkspace = defineStore("workspace", () => {
     panel.value = false;
     activeTask.value = undefined;
     deciding.value = {};
+    taskReviews.value = {};
     approvalVersion++;
     refreshSequence++;
     busy.value = false;
@@ -150,28 +164,58 @@ export const useWorkspace = defineStore("workspace", () => {
       }
     }
   }
-  /** 요청자가 초안을 보내거나 보내지 않는다 (decisions 6.33). 카드마다 따로 잠근다 */
-  async function review(id: string, send: boolean, problem: string, memo: string) {
-    const card = data.value?.approvals.find((x) => x.id === id);
-    if (!card || !session.value || deciding.value[id] || card.status !== "DRAFT") return false;
-    if (send && !problem.trim()) return false;
-    const e = epoch.value;
-    deciding.value[id] = true;
-    error.value = "";
+  async function loadTaskReview(id: string) {
+    if (!session.value || mode !== "api") return;
+    const state = taskReview(id), e = epoch.value;
+    if (state.loading) return;
+    state.loading = true;
     try {
-      await reviewApproval(session.value, id, send, problem, memo);
+      const result = await request<{ reviewReady?: TaskReviewReady } & Record<string, unknown>>(`/ai/tasks/${encodeURIComponent(id)}`, session.value.token);
+      if (e === epoch.value) {
+        state.ready = result.reviewReady;
+        if (data.value && typeof result.taskId === "string") {
+          data.value.history = [...toHistory([result]), ...data.value.history.filter(t => t.id !== id)]
+            .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+        }
+      }
+    } finally { if (e === epoch.value) state.loading = false; }
+  }
+  async function reviewTask(id: string, send: boolean) {
+    const state = taskReview(id), e = epoch.value;
+    if (!session.value || state.busy || (state.attempt && state.attempt.send !== send)) return false;
+    const drafts = data.value?.approvals.filter(a => a.taskId === id && a.status === "DRAFT") ?? [];
+    if (!state.attempt) {
+      if (!state.ready || !drafts.length || drafts.some(a => !state.ready!.approvalIds.includes(a.id))) return false;
+      if (send && !state.taskProblem.trim()) return false;
+      state.attempt = { send, body: { requestId: crypto.randomUUID(), reviewId: state.ready.reviewId,
+        taskProblem: state.taskProblem.trim(), memos: Object.fromEntries(drafts.map(a => [a.id, state.memos[a.id] ?? a.memo ?? ""])) } };
+    }
+    state.busy = true; state.error = ""; approvalVersion++;
+    try {
+      const result = await submitTaskReview(session.value, id, state.attempt.send, state.attempt.body);
       if (e !== epoch.value) return false;
-      Object.assign(card, { status: send ? "PENDING" : "WITHDRAWN", problem, memo });
+      if (data.value) {
+        const converted = toApprovals(result.cards, new Map(data.value.items.map(i => [i.id, i.name])));
+        const ids = new Set(converted.approvals.map(a => a.id));
+        data.value.approvals = [...data.value.approvals.filter(a => !ids.has(a.id)), ...converted.approvals];
+        data.value.options = [...data.value.options.filter(o => !ids.has(o.id)), ...converted.options];
+      }
+      state.attempt = undefined;
       approvalVersion++;
-      notice.value = send ? "팀장에게 승인 요청을 보냈습니다." : "보내지 않기로 했습니다. AI가 그 품목을 정리합니다.";
+      notice.value = send ? "작업의 해결안을 팀장에게 모두 보냈습니다." : "작업의 해결안을 보내지 않음으로 처리했습니다.";
       return true;
     } catch (err) {
-      if (e === epoch.value) error.value = (err as Error).message;
+      if (e === epoch.value) {
+        state.error = (err as Error).message;
+        // 응답 유실은 동일 requestId로 재전송한다. 명시적인 거부는 입력을 수정할 수 있게 한다.
+        if (err instanceof Error && "status" in err && [400, 403, 404, 409].includes(Number(err.status))) state.attempt = undefined;
+      }
       return false;
     } finally {
       if (e === epoch.value) {
-        deciding.value[id] = false;
+        state.busy = false; approvalVersion++;
         void refreshApprovals().catch(() => {});
+        void loadTaskReview(id).catch(() => {});
       }
     }
   }
@@ -218,7 +262,7 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTask,
     deciding,
     decide,
-    review,
+    reviewTask, taskReview, taskReviews, loadTaskReview,
     refreshApprovals,
     openTask,
     epoch,

@@ -5,6 +5,8 @@ Approval HTTP registration cannot be made exactly-once with the current backend
 for inspection, never blindly sent again. Other mapped cards can still proceed.
 """
 import asyncio
+import hashlib
+import json
 import logging
 import os
 
@@ -32,7 +34,8 @@ class ApprovalRunner:
         self.loops = []
 
     def start(self):
-        self.loops = [asyncio.create_task(self.dispatch()), asyncio.create_task(self.deliver_events())]
+        self.loops = [asyncio.create_task(self.dispatch()), asyncio.create_task(self.deliver_events()),
+                      asyncio.create_task(self.recover_reviews())]
 
     async def close(self):
         tasks = [*self.loops, *self.active.values()]
@@ -127,12 +130,75 @@ class ApprovalRunner:
                 await self.graph.ainvoke(Command(resume={pending[0].id: bindings}), cfg)
                 continue
             await self.progress(task_id, snapshot.values)
+            await self.review_ready(task_id, snapshot)
             if not pending and not snapshot.next:
                 v = snapshot.values
                 await self.store.event(task_id, {"type": "DONE", "status": "DONE", "answer": v.get("answer"),
                     "result": G.mask(v.get("result"), v.get("role")), "sources": v.get("evidence") or [],
                     "next_actions": v.get("next_actions") or []})
             return snapshot
+
+    async def review_ready(self, task_id, snapshot):
+        pending = interrupts(snapshot)
+        proposals = snapshot.values.get("proposals") or []
+        # Only a complete registration round at the common decision wait is reviewable.
+        if not pending or pending[0].value.get("stage") != "decisions" or not proposals:
+            return
+        if any(p["status"] in {"PREPARED", "REGISTRATION_UNKNOWN"} for p in proposals):
+            return
+        # The full registered lineage keeps this ID stable across manager decisions.
+        ids = sorted({p["approval_id"] for p in proposals if p.get("approval_id")})
+        if ids:
+            review_id = hashlib.sha256(json.dumps([task_id, ids]).encode()).hexdigest()
+            await self.store.event(task_id, {"type": "TASK_REVIEW_READY", "reviewId": review_id, "approvalIds": ids})
+
+    async def recover_review_readiness(self):
+        # Upgrade compatibility: existing idle DRAFT tasks have no new inbox command.
+        # Read their saved decision wait; never resume the graph or perform a tool call here.
+        rows = await self.store.query("""SELECT c.task_id, c.thread_id FROM agent.workflow_command c
+            WHERE c.kind='START' AND c.status='DONE'
+              AND EXISTS (SELECT 1 FROM agent.approval_binding b WHERE b.task_id=c.task_id AND b.status='REGISTERED')
+              AND NOT EXISTS (SELECT 1 FROM agent.workflow_outbox e WHERE e.task_id=c.task_id
+                  AND e.payload->>'type' IN ('TASK_REVIEW_READY', 'DONE', 'FAILED'))""")
+        for row in rows:
+            async with self.store.thread_lock(row["thread_id"]) as locked:
+                if locked:
+                    snapshot = await self.graph.aget_state(config(row["thread_id"]))
+                    await self.review_ready(row["task_id"], snapshot)
+
+    async def recover_reproposals(self):
+        # Old registered reproposals may still be DRAFT in the backend. Use their known
+        # approval IDs, never create an unbound replacement or replay an uncertain registration.
+        rows = await self.store.query("""SELECT DISTINCT c.task_id, c.thread_id FROM agent.workflow_command c
+            JOIN agent.approval_binding b ON b.task_id=c.task_id
+            WHERE c.kind='START' AND c.status='DONE' AND b.status='REGISTERED'
+              AND b.payload->>'replaces' IS NOT NULL AND b.payload->>'previousApprovalId' IS NULL
+              AND NOT EXISTS (SELECT 1 FROM agent.workflow_outbox e WHERE e.task_id=c.task_id
+                  AND e.payload->>'type' IN ('DONE', 'FAILED'))""")
+        for row in rows:
+            async with self.store.thread_lock(row["thread_id"]) as locked:
+                if not locked:
+                    continue
+                snapshot = await self.graph.aget_state(config(row["thread_id"]))
+                for p in snapshot.values.get("proposals") or []:
+                    if p["status"] != "PENDING" or not p.get("previous_approval_id") or not p.get("approval_id"):
+                        continue
+                    binding = (await self.store.query("SELECT * FROM agent.approval_binding WHERE proposal_id=%s", (p["proposal_id"],)))[0]
+                    if binding["status"] != "REGISTERED" or binding["payload"].get("previousApprovalId"):
+                        continue
+                    payload = {"type": "APPROVAL_REQUIRED", **G.approval_payload(p), "approvalId": p["approval_id"]}
+                    response = await G.emit(row["task_id"], payload)
+                    if response is not None and response.is_success and response.json().get("approvalId") == p["approval_id"]:
+                        await self.store.confirm_reproposal_route(p["proposal_id"], payload)
+
+    async def recover_reviews(self):
+        while True:
+            try:
+                await self.recover_reproposals()
+                await self.recover_review_readiness()
+            except Exception:
+                log.exception("buyer review readiness recovery failed; retrying")
+            await asyncio.sleep(30)
 
     async def progress(self, task_id, state):
         for p in state.get("proposals") or []:

@@ -81,9 +81,9 @@ class ApprovalFlowTest {
         // 구매 담당자의 요청은 초안이다. 보내기 전에는 팀장이 결정할 수 없다 (decisions 6.33)
         assertThat(approvals.card(id)).containsEntry("status", "DRAFT");
         assertCode(() -> approvals.decide("T-1", id, "APPROVED", null, "approver"), "APPROVAL_NOT_PENDING");
-        assertCode(() -> approvals.review(id, "approver", true, "p", null), "ROLE_NOT_ALLOWED");   // 남이 대신 못 보낸다
-        assertCode(() -> approvals.review(id, "buyer", true, " ", null), "INVALID_ARGUMENT");      // 문제 정의 필수
-        assertThat(approvals.review(id, "buyer", true, "MCU 11/25 100개 부족", "협력사 구두 확인함"))
+        assertCode(() -> review(id, "approver", true, "p", null), "ROLE_NOT_ALLOWED");   // 남이 대신 못 보낸다
+        assertCode(() -> review(id, "buyer", true, " ", null), "INVALID_ARGUMENT");      // 문제 정의 필수
+        assertThat(review(id, "buyer", true, "MCU 11/25 100개 부족", "협력사 구두 확인함"))
                 .containsEntry("status", "PENDING").containsEntry("memo", "협력사 구두 확인함");
         assertCode(() -> approvals.decide("T-1", id, "REJECTED", " ", "approver"), "INVALID_ARGUMENT");
         assertThat(approvals.decide("T-1", id, "APPROVED", null, "approver")).containsEntry("status", "APPROVED");
@@ -157,12 +157,12 @@ class ApprovalFlowTest {
         // SC2 해결: 플러그 케이스 11/27분 800 → 500
         Map<String, Object> qtyArgs = m("po_id", "PO-2610-115", "new_qty", 500);
         String q = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", qtyArgs)).get("approval_id");
-        approvals.review(q, "buyer", true, "테스트", null);
+        review(q, "buyer", true, "테스트", null);
         approvals.decide("T-3", q, "APPROVED", null, "approver");
         // MOQ(300) 미만으로 바꾸려는 호출은 승인과 인자가 달라서 먼저 막히므로, MOQ 검사는 별도 승인으로 본다
         Map<String, Object> tooSmall = m("po_id", "PO-2610-115", "new_qty", 100);
         String small = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "change_po_qty", "args", tooSmall)).get("approval_id");
-        approvals.review(small, "buyer", true, "테스트", null);
+        review(small, "buyer", true, "테스트", null);
         approvals.decide("T-3", small, "APPROVED", null, "approver");
         assertCode(() -> internal.changePoQty("PO-2610-115", call(tooSmall, small)), "BELOW_MOQ");
         assertThat(internal.changePoQty("PO-2610-115", call(qtyArgs, q)).toString()).contains("before={qty=800}", "after={qty=500}");
@@ -171,7 +171,7 @@ class ApprovalFlowTest {
         Map<String, Object> cancelArgs = m("po_id", "PO-2610-110");
         String c = (String) approvals.create("T-3", "buyer", "BUYER", m("tool", "cancel_po", "args", cancelArgs)).get("approval_id");
         assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");   // 승인 전
-        approvals.review(c, "buyer", true, "테스트", null);
+        review(c, "buyer", true, "테스트", null);
         approvals.decide("T-3", c, "APPROVED", null, "approver");
         assertThat(internal.cancelPo("PO-2610-110", call(cancelArgs, c))).containsEntry("after", Map.of("status", "CANCELLED"));
         assertCode(() -> internal.cancelPo("PO-2610-110", call(cancelArgs, c)), "APPROVAL_REQUIRED");  // 같은 승인 두 번
@@ -191,7 +191,7 @@ class ApprovalFlowTest {
         assertThat(approvals.list(null, planner)).isEmpty();
         assertThat(approvals.list(null, approver)).extracting(c -> c.get("approval_id")).contains(boss).doesNotContain(mine);
         assertCode(() -> approvals.get(mine, approver), "ROLE_NOT_ALLOWED");   // 초안은 요청자만
-        approvals.review(mine, "buyer", true, "테스트", null);
+        review(mine, "buyer", true, "테스트", null);
         assertThat(approvals.list(null, approver)).extracting(c -> c.get("approval_id")).contains(mine, boss);
         assertThat(approvals.get(mine, buyer)).containsEntry("approval_id", mine);
         assertCode(() -> approvals.get(boss, buyer), "ROLE_NOT_ALLOWED");
@@ -216,6 +216,21 @@ class ApprovalFlowTest {
     }
 
     // ------------------------------------------------------------------
+
+    // 기존 실행 테스트도 작업 단위 검토 계약으로 초안을 보낸다.
+    private static Map<String, Object> review(String id, String user, boolean send, String problem, String memo) {
+        String task = (String) approvals.card(id).get("task_id");
+        List<String> ids = db.queryForList("select approval_id from approval where task_id = ? and status = 'DRAFT'", String.class, task);
+        String reviewId = UUID.randomUUID().toString();
+        Map<String, String> memos = new LinkedHashMap<>();
+        ids.forEach(i -> memos.put(i, i.equals(id) ? Objects.toString(memo, "") : ""));
+        try {
+            String payload = new ObjectMapper().writeValueAsString(m("reviewId", reviewId, "approvalIds", ids));
+            db.update("insert into task_event (task_id, seq, type, payload) select ?, coalesce(max(seq),0)+1, 'TASK_REVIEW_READY', ?::jsonb from task_event where task_id = ?", task, payload, task);
+        } catch (Exception e) { throw new RuntimeException(e); }
+        return approvals.reviewTask(task, user, send, new Approvals.TaskReview(UUID.randomUUID().toString(), reviewId, problem, memos))
+                .stream().filter(c -> id.equals(c.get("approval_id"))).findFirst().orElseThrow();
+    }
 
     /** 변경 도구 호출 body = 승인 카드의 args + approval_id (agent-draft가 이렇게 부른다) */
     private static Map<String, Object> call(Map<String, Object> args, String approvalId) {

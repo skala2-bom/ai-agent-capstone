@@ -6,6 +6,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -33,10 +35,12 @@ class Approvals {
 
     private final JdbcTemplate db;
     private final ObjectMapper json;
+    private final TransactionTemplate tx;
 
     Approvals(JdbcTemplate db, ObjectMapper json) {
         this.db = db;
         this.json = json;
+        this.tx = new TransactionTemplate(new DataSourceTransactionManager(Objects.requireNonNull(db.getDataSource())));
     }
 
     // ------------------------------------------------------------------
@@ -55,6 +59,13 @@ class Approvals {
      * @return 카드, 그리고 새로 만들었는지({@code created})
      */
     Map<String, Object> create(String taskId, String userId, String role, Map<String, Object> event) {
+        return tx.execute(s -> {
+            lockTask(taskId);
+            return createLocked(taskId, userId, role, event);
+        });
+    }
+
+    private Map<String, Object> createLocked(String taskId, String userId, String role, Map<String, Object> event) {
         if (!Auth.allows(role, "BUYER"))
             throw new ApiError("ROLE_NOT_ALLOWED", "발주 조정은 구매 담당자나 팀장만 요청할 수 있습니다.",
                     "승인 요청을 올리지 말고, 영향과 해결 대안까지만 안내한 뒤 구매 담당자에게 요청하라고 답하세요.");
@@ -66,25 +77,64 @@ class Approvals {
         Map<String, Object> args = withoutApprovalId(rawArgs);
         String argsJson = write(args);
 
+        Map<String, Object> preview = preview(tool, args);
+        String previous = event.get("previousApprovalId") instanceof String v && !v.isBlank() ? v : null;
+        String proposal = event.get("proposalId") instanceof String v ? v : null;
+        String inheritedMemo = null;
+        if (previous != null) {
+            Map<String, Object> parent = card(previous);
+            if (!taskId.equals(parent.get("task_id")) || !userId.equals(parent.get("requested_by"))
+                    || !"REJECTED".equals(parent.get("status")) || proposal == null || proposal.isBlank()
+                    || !(event.get("revision") instanceof Number revision) || revision.intValue() < 2
+                    || !Objects.equals(((Map<?, ?>) parent.get("before")).get("item_id"), ((Map<?, ?>) preview.get("before")).get("item_id")))
+                throw ApiError.invalid("같은 작업에서 거절된 품목의 재제안만 바로 전달할 수 있습니다.", "이전 승인 ID·품목·제안 회차를 확인하세요.");
+            // 기존 구매 설명/메모를 계승한다. 최초 구매 전송의 requestId는 복사하지 않는다.
+            inheritedMemo = write(m("format", "task-review-v1", "taskProblem", Objects.toString(parent.get("taskProblem"), ""),
+                    "personalMemo", Objects.toString(parent.get("memo"), ""), "previousApprovalId", previous, "proposalId", proposal));
+            if (event.get("approvalId") instanceof String knownId) {
+                // 업데이트 전에 이미 등록된 재제안 초안. 정확한 카드 ID로만 전환하며 결정된 카드는 되돌리지 않는다.
+                return existingReproposal(card(knownId), taskId, userId, tool, args, previous, inheritedMemo);
+            }
+            for (String candidate : db.queryForList("select approval_id from approval where task_id = ?", String.class, taskId)) {
+                Map<String, Object> existing = card(candidate);
+                if (previous.equals(existing.get("previousApprovalId")) && proposal.equals(existing.get("proposalId")))
+                    return existingReproposal(existing, taskId, userId, tool, args, previous, inheritedMemo);
+            }
+        } else if (event.containsKey("approvalId")) {
+            throw ApiError.invalid("기존 카드 연결은 재제안 복구에만 사용합니다.", "이전 거절 카드와 제안 정보를 확인하세요.");
+        }
         List<String> same = db.queryForList(
                 "select approval_id from approval where task_id = ? and tool = ? and args = ?::jsonb and status in ('DRAFT', 'PENDING')",
                 String.class, taskId, tool, argsJson);
-        if (!same.isEmpty()) return withCreated(card(same.getFirst()), false);
+        if (!same.isEmpty()) return previous == null ? withCreated(card(same.getFirst()), false)
+                : existingReproposal(card(same.getFirst()), taskId, userId, tool, args, previous, inheritedMemo);
 
-        Map<String, Object> preview = preview(tool, args);
         String id = "APR-" + UUID.randomUUID().toString().substring(0, 8);
         Object amount = event.get("amount");
         db.update("""
-                insert into approval (approval_id, task_id, tool, args, summary, amount, evidence, before, after, requested_by, status, problem)
-                values (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?)""",
+                insert into approval (approval_id, task_id, tool, args, summary, amount, evidence, before, after, requested_by, status, problem, memo)
+                values (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)""",
                 id, taskId, tool, argsJson, event.get("summary"),
                 amount instanceof Number n ? n.longValue() : null,
                 write(event.get("evidence") == null ? List.of() : event.get("evidence")),
                 write(preview.get("before")), write(preview.get("after")), userId,
-                // 구매 담당자의 요청은 초안으로 시작한다 — 메모를 달고 직접 보낸다 (decisions 6.33). 팀장은 바로 대기함으로
-                "APPROVER".equals(role) ? "PENDING" : "DRAFT",
-                event.get("problem") instanceof String p ? p : null);
+                // 최초 구매 요청만 초안. 검증된 거절 재제안은 구매 재검토 없이 팀장에게 간다.
+                previous != null || "APPROVER".equals(role) ? "PENDING" : "DRAFT",
+                event.get("problem") instanceof String p ? p : null, inheritedMemo);
         return withCreated(card(id), true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> existingReproposal(Map<String, Object> existing, String taskId, String userId,
+            String tool, Map<String, Object> args, String previous, String inheritedMemo) {
+        boolean sameParent = previous.equals(existing.get("previousApprovalId"))
+                || (existing.get("previousApprovalId") == null && Objects.toString(existing.get("summary"), "").contains("· 이전 요청 " + previous + "]"));
+        if (!sameParent || !taskId.equals(existing.get("task_id")) || !userId.equals(existing.get("requested_by"))
+                || !tool.equals(existing.get("tool")) || !sameArgs((Map<String, Object>) existing.get("args"), args))
+            throw ApiError.invalid("기존 재제안 카드와 연결 정보가 다릅니다.", "같은 작업·도구·인자·이전 요청인지 확인하세요.");
+        String id = (String) existing.get("approval_id");
+        db.update("update approval set status = 'PENDING', memo = ? where approval_id = ? and status = 'DRAFT'", inheritedMemo, id);
+        return withCreated(card(id), false);
     }
 
     /**
@@ -122,13 +172,13 @@ class Approvals {
     @GetMapping("/api/approvals")
     List<Map<String, Object>> list(@RequestParam(required = false) String status, @AuthenticationPrincipal Jwt user) {
         boolean all = Auth.allows(user.getClaimAsString("role"), "APPROVER");
-        // 남의 초안(DRAFT)은 팀장에게도 안 보인다 — 요청자가 보내기 전이다 (decisions 6.33)
+        // 초안·보내지 않음은 팀장의 목록·필터·집계에서 제외한다 (decisions 6.36)
         return db.queryForList("""
                 select approval_id from approval
                 where (cast(? as text) is null or status = ?)
-                  and (requested_by = ? or (? and status <> 'DRAFT'))
+                  and ((not ? and requested_by = ?) or (? and status not in ('DRAFT', 'WITHDRAWN')))
                 order by requested_at""",
-                String.class, status, status, user.getSubject(), all).stream().map(this::card).toList();
+                String.class, status, status, all, user.getSubject(), all).stream().map(this::card).toList();
     }
 
     /** GET /api/approvals/{id} — 카드 하나. 팀장이 아니면 자기가 요청한 카드만 */
@@ -136,7 +186,8 @@ class Approvals {
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Map<String, Object> c = card(id);
         boolean mine = user.getSubject().equals(c.get("requested_by"));
-        if (!mine && (!Auth.allows(user.getClaimAsString("role"), "APPROVER") || "DRAFT".equals(c.get("status"))))
+        if (!mine && (!Auth.allows(user.getClaimAsString("role"), "APPROVER")
+                || Set.of("DRAFT", "WITHDRAWN").contains(c.get("status"))))
             throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "자기가 요청한 승인만 볼 수 있습니다. 전체는 구매팀장 계정으로 보세요.");
         return c;
     }
@@ -163,23 +214,70 @@ class Approvals {
         return card(approvalId);
     }
 
-    /**
-     * 요청자의 검토 (decisions 6.33): 초안(DRAFT)에 문제 정의·메모를 달아 팀장에게 보내거나(PENDING) 보내지 않는다(WITHDRAWN).
-     * 요청한 사람만 할 수 있다. 화면 API는 {@link Tasks}가 연다 — 보내지 않으면 AI에 알려야 해서.
-     */
-    Map<String, Object> review(String approvalId, String requester, boolean send, String problem, String memo) {
-        if (send && (problem == null || problem.isBlank()))
-            throw ApiError.invalid("문제 정의가 없습니다.", "무엇이 문제인지 한 줄이라도 적어 주세요. AI가 미리 채운 문장을 고쳐 써도 됩니다.");
-        Map<String, Object> c = card(approvalId);   // 없으면 NOT_FOUND
-        if (!requester.equals(c.get("requested_by")))
-            throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "승인 요청은 요청한 본인만 보낼 수 있습니다.");
-        int n = db.update("""
-                update approval set status = ?, problem = coalesce(?, problem), memo = ?
-                where approval_id = ? and status = 'DRAFT'""",
-                send ? "PENDING" : "WITHDRAWN", problem, memo, approvalId);
-        if (n == 0)
-            throw new ApiError("APPROVAL_NOT_PENDING", "이미 보낸 요청입니다.", "현재 상태는 " + c.get("status") + "입니다.");
-        return card(approvalId);
+    record TaskReview(String requestId, String reviewId, String taskProblem, Map<String, String> memos) {}
+
+    /** 현재 작업의 초안을 한 트랜잭션으로 처리한다. AI의 품목 문제(problem)는 변경하지 않는다. */
+    List<Map<String, Object>> reviewTask(String taskId, String requester, boolean send, TaskReview body) {
+        if (body.requestId() == null || body.requestId().isBlank() || body.requestId().length() > 100
+                || body.reviewId() == null || body.memos() == null || body.memos().isEmpty()
+                || body.memos().entrySet().stream().anyMatch(e -> e.getKey() == null || e.getValue() == null))
+            throw ApiError.invalid("작업 검토 정보가 없습니다.", "작업을 다시 불러온 뒤 전송하세요.");
+        String problem = Objects.toString(body.taskProblem(), "").trim();
+        if (send && problem.isBlank()) throw ApiError.invalid("전체 문제 설명을 입력해 주세요.", "작업 전체의 문제를 적어 주세요.");
+        if (problem.length() > 4000 || body.memos().values().stream().anyMatch(v -> v.length() > 4000))
+            throw ApiError.invalid("문제 설명과 메모는 각각 4,000자까지 입력할 수 있습니다.", "입력 내용을 줄여 주세요.");
+        String decision = send ? "PENDING" : "WITHDRAWN";
+        return tx.execute(s -> {
+            Map<String, Object> task = lockTask(taskId);
+            if (!requester.equals(task.get("user_id")))
+                throw new ApiError("ROLE_NOT_ALLOWED", "작업 요청자만 검토할 수 있습니다.", "본인의 작업에서 요청하세요.");
+            List<Map<String, Object>> all = db.queryForList("select approval_id from approval where task_id = ? order by requested_at, approval_id",
+                    String.class, taskId).stream().map(this::card).toList();
+            List<Map<String, Object>> replay = all.stream().filter(c -> body.requestId().equals(c.get("reviewRequestId"))).toList();
+            if (!replay.isEmpty()) {
+                Set<String> ids = new LinkedHashSet<>();
+                for (Map<String, Object> c : replay) {
+                    ids.add((String) c.get("approval_id"));
+                    if (!decision.equals(c.get("reviewDecision")) || !body.reviewId().equals(c.get("reviewId"))
+                            || !problem.equals(c.get("taskProblem")) || !Objects.equals(body.memos().get(c.get("approval_id")), c.get("memo")))
+                        throw reviewConflict("이미 접수한 요청과 내용이 다릅니다.");
+                }
+                if (!ids.equals(body.memos().keySet())) throw reviewConflict("이미 접수한 작업의 카드 구성이 다릅니다.");
+                return replay; // 응답 유실 뒤 같은 요청을 보내도 이미 실행된 카드를 되돌리지 않는다.
+            }
+            if (Set.of("DONE", "FAILED").contains(task.get("status"))) throw reviewConflict("이미 종료된 작업입니다.");
+            Map<String, Object> ready = reviewReady(taskId);
+            List<Map<String, Object>> drafts = all.stream().filter(c -> "DRAFT".equals(c.get("status"))).toList();
+            Set<String> ids = new LinkedHashSet<>();
+            drafts.forEach(c -> ids.add((String) c.get("approval_id")));
+            if (ready == null || !body.reviewId().equals(ready.get("reviewId")) || drafts.isEmpty()
+                    || !ids.equals(body.memos().keySet()) || !(ready.get("approvalIds") instanceof List<?> readyIds)
+                    || !readyIds.containsAll(ids))
+                throw reviewConflict("해결안을 준비 중이거나 카드 구성이 바뀌었습니다. 내용을 다시 확인해 주세요.");
+            for (String id : ids) {
+                String envelope = write(m("format", "task-review-v1", "taskProblem", problem,
+                        "personalMemo", body.memos().get(id), "requestId", body.requestId(),
+                        "reviewId", body.reviewId(), "decision", decision));
+                db.update("update approval set status = ?, memo = ? where approval_id = ? and status = 'DRAFT'", decision, envelope, id);
+            }
+            return drafts.stream().map(c -> card((String) c.get("approval_id"))).toList();
+        });
+    }
+
+    Map<String, Object> reviewReady(String taskId) {
+        List<String> rows = db.queryForList("select payload::text from task_event where task_id = ? and type = 'TASK_REVIEW_READY' order by seq desc limit 1",
+                String.class, taskId);
+        return rows.isEmpty() ? null : read(rows.getFirst());
+    }
+
+    private Map<String, Object> lockTask(String taskId) {
+        List<Map<String, Object>> rows = db.queryForList("select user_id, status from ai_task where task_id = ? for update", taskId);
+        if (rows.isEmpty()) throw new ApiError("NOT_FOUND", "작업을 찾을 수 없습니다.", "작업 목록을 확인해 주세요.");
+        return rows.getFirst();
+    }
+
+    private static ApiError reviewConflict(String message) {
+        return new ApiError("APPROVAL_NOT_PENDING", message, "화면을 갱신하고 작업 전체를 다시 확인하세요. 작성 중인 메모는 유지됩니다.");
     }
 
     // ------------------------------------------------------------------
@@ -245,6 +343,21 @@ class Approvals {
         Map<String, Object> c = new LinkedHashMap<>(rows.getFirst());
         for (String k : List.of("args", "evidence", "before", "after"))
             if (c.get(k) != null) c.put(k, readAny((String) c.get(k)));
+        // 예전 일반 문자열 메모는 그대로 둔다. 버전이 맞는 검토 봉투만 해석한다.
+        if (c.get("memo") instanceof String memo) {
+            try {
+                if (readAny(memo) instanceof Map<?, ?> note && "task-review-v1".equals(note.get("format"))
+                        && note.get("taskProblem") instanceof String && note.get("personalMemo") instanceof String) {
+                    c.put("taskProblem", note.get("taskProblem"));
+                    c.put("memo", note.get("personalMemo"));
+                    c.put("reviewRequestId", note.get("requestId"));
+                    c.put("reviewId", note.get("reviewId"));
+                    c.put("reviewDecision", note.get("decision"));
+                    c.put("previousApprovalId", note.get("previousApprovalId"));
+                    c.put("proposalId", note.get("proposalId"));
+                }
+            } catch (IllegalStateException ignored) { /* 기존 메모 */ }
+        }
         return c;
     }
 

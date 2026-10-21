@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useWorkspace } from "../stores/workspace";
+import TaskReview from "../components/TaskReview.vue";
+import ApprovalNote from "../components/ApprovalNote.vue";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
 import { mode, request } from "../services/api";
@@ -8,9 +10,6 @@ import type { Approval } from "../types";
 const w = useWorkspace();
 const selectedId = ref<string>();
 const reason = ref("");
-// 요청자의 초안 검토 입력 (decisions 6.33). 카드를 열 때 AI가 채운 문제 정의로 시작한다
-const problem = ref("");
-const memo = ref("");
 const filter = ref("");
 const pollError = ref("");
 // 거절 뒤 AI 재검토 결과 (decisions 6.30): approvalId → {code, item_name, message, next_action, detail}
@@ -33,7 +32,9 @@ async function loadOutcomes() {
   }
 }
 const selected = computed(() => w.data?.approvals.find((a) => a.id === selectedId.value));
-const rows = computed(() => (w.data?.approvals ?? []).filter((a) => !filter.value || a.status === filter.value));
+const visibleApprovals = computed(() => (w.data?.approvals ?? []).filter(a =>
+  w.session?.role !== "APPROVER" || !["DRAFT", "WITHDRAWN"].includes(a.status)));
+const rows = computed(() => visibleApprovals.value.filter((a) => !filter.value || a.status === filter.value));
 const optionsById = computed(() => new Map(w.data?.options.map((o) => [o.id, o]) ?? []));
 function approvalTitle(text = "") {
   return text.replace(/\s*\(실제 발주 변경입니다\.\s*협력사 협의·확약 여부를 확인한 뒤 승인하세요\.\)/g, "").trim();
@@ -43,8 +44,8 @@ function withReproposals(all: Approval[]) {
   const children = new Map<string, Approval[]>();
   const childIds = new Set<string>();
   for (const a of all) {
-    // 승인 API는 이전 요청 ID를 summary에 담으므로, 품목명이 아닌 정확한 요청으로 연결한다.
-    const previousId = optionsById.value.get(a.optionId)?.name
+    // 이전 요청 ID로 연결하고, ID 필드가 없는 옛 카드는 제목의 연결 정보를 읽는다.
+    const previousId = a.previousApprovalId ?? optionsById.value.get(a.optionId)?.name
       .match(/^\[재제안 \d+차 · 이전 요청 ([^\]\s]+)\]/)?.[1];
     if (previousId && previousId !== a.id && byId.has(previousId)) {
       const siblings = children.get(previousId) ?? [];
@@ -67,16 +68,16 @@ function withReproposals(all: Approval[]) {
   return ordered;
 }
 const groups = computed(() => {
-  const approvals = w.data?.approvals ?? [];
+  const approvals = visibleApprovals.value;
   return [...new Set(approvals.map((a) => a.taskId))].map((taskId) => {
     const all = approvals.filter((a) => a.taskId === taskId)
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const task = w.data?.history.find((h) => h.id === taskId);
     return {
       taskId,
+      taskProblem: [...all].reverse().find(a => a.taskProblem)?.taskProblem,
       all,
       rows: withReproposals(all).filter((a) => !filter.value || a.status === filter.value),
-      title: task?.title ?? `발주 변경 요청 · ${taskId.slice(0, 8)}`,
       // 필터·재제안에 따라 작업 순서가 바뀌지 않도록 생성 시각을 기준으로 한다.
       createdAt: Date.parse(task?.at ?? "") || Date.parse(all[0]?.at ?? "") || 0,
     };
@@ -107,12 +108,12 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
   <div class="toolbar">
     <select v-model="filter" aria-label="승인 상태 필터">
       <option value="">모든 상태</option>
-      <option value="DRAFT">검토 전 (초안)</option>
+      <option v-if="!w.approver" value="DRAFT">검토 전 (초안)</option>
       <option value="PENDING">승인 대기</option>
       <option value="APPROVED">실행 대기</option>
       <option value="REJECTED">거절</option>
       <option value="EXECUTED">실행 완료</option>
-      <option value="WITHDRAWN">보내지 않음</option>
+      <option v-if="!w.approver" value="WITHDRAWN">보내지 않음</option>
     </select>
   </div>
   <p v-if="pollError" class="error">승인 상태 갱신 실패: {{ pollError }}</p>
@@ -130,9 +131,12 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       <tbody>
         <template v-for="group in groups" :key="group.taskId">
         <tr class="approval-group"><td colspan="5">
-          <b>{{ group.title }}</b>
+          <p v-if="group.taskProblem" class="task-problem"><strong>전체 문제 설명</strong><br />{{ group.taskProblem }}</p>
+          <p v-else-if="!group.all.some(a => a.status === 'DRAFT')" class="caption">작성된 전체 문제 설명이 없습니다.</p>
           <p class="caption">{{ group.all.length }}건<template v-if="group.all.some(a => a.status === 'DRAFT')"> · 검토 전 {{ group.all.filter(a => a.status === 'DRAFT').length }}건</template> · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
           <button v-if="mode === 'api'" @click="w.openTask(group.taskId)">작업 결과</button>
+          <TaskReview v-if="mode === 'api' && w.session?.role === 'BUYER' && (group.all.some(a => a.status === 'DRAFT') || w.taskReviews[group.taskId]?.attempt)"
+            :task-id="group.taskId" compact />
         </td></tr>
         <template v-for="a in group.rows" :key="a.id">
         <tr>
@@ -141,6 +145,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
             ><small>{{
               w.data?.options.find((o) => o.id === a.optionId)?.item
             }}</small>
+            <ApprovalNote v-if="a.status === 'DRAFT' && w.session?.role === 'BUYER' && mode === 'api'" :card="a" />
           </td>
           <td>{{ a.requester }}</td>
           <td>
@@ -154,8 +159,6 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
               @click="
                 selectedId = a.id;
                 reason = '';
-                problem = a.problem ?? '';
-                memo = a.memo ?? '';
               "
             >
               승인 상세
@@ -220,11 +223,12 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       >
     </dl>
     <!-- 요청자가 쓴 문제 정의·메모 (초안이 아니면 팀장·요청자 모두 본다) -->
-    <div v-if="selected.status !== 'DRAFT' && (selected.problem || selected.memo)" class="card request-note">
-      <h3>요청자 검토</h3>
+    <div v-if="selected.problem || selected.taskProblem || selected.memo" class="card request-note">
+      <h3>요청 내용</h3>
       <dl>
-        <template v-if="selected.problem"><dt>문제 정의</dt><dd>{{ selected.problem }}</dd></template>
-        <template v-if="selected.memo"><dt>메모</dt><dd>{{ selected.memo }}</dd></template>
+        <template v-if="selected.taskProblem"><dt>전체 문제 설명</dt><dd>{{ selected.taskProblem }}</dd></template>
+        <template v-if="selected.problem"><dt>품목별 문제</dt><dd>{{ selected.problem }}</dd></template>
+        <template v-if="selected.memo"><dt>{{ selected.previousApprovalId ? "이전 요청의 구매 메모" : "메모" }}</dt><dd>{{ selected.memo }}</dd></template>
       </dl>
     </div>
     <h3>변경 전후</h3>
@@ -267,26 +271,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       <p v-if="option.role !== 'PLANNER' && option.costEvidence">{{ option.costEvidence }}</p>
     </details>
     <p v-else class="caption">시연용 승인 카드입니다.</p>
-    <!-- 초안: 요청자가 문제 정의·메모를 달아 팀장에게 보낼지 정한다 (decisions 6.33). 초안은 요청자에게만 보인다 -->
-    <form v-if="selected.status === 'DRAFT'" class="draft-review" @submit.prevent="w.review(selected.id, true, problem, memo)">
-      <p class="caption">아직 팀장에게 가지 않은 해결안입니다. 문제를 확인하고 메모를 달아 승인 요청을 보낼지 정하세요.</p>
-      <label
-        >문제 정의 · 필수 (AI가 계산 결과로 채움, 고쳐 써도 됩니다)<textarea v-model="problem" rows="3"
-      /></label>
-      <label
-        >메모 · 내 판단 (협력사 확인 여부, 우려 사항 등)<textarea
-          v-model="memo"
-          rows="3"
-          placeholder="예: 세미온 담당자와 구두로 분할 납품 가능 확인함"
-      /></label>
-      <div class="action-row">
-        <button type="button" :disabled="w.deciding[selected.id]" @click="w.review(selected.id, false, problem, memo)">
-          보내지 않음</button
-        ><button class="primary" :disabled="w.deciding[selected.id] || !problem.trim()">
-          {{ w.deciding[selected.id] ? "보내는 중…" : "팀장에게 승인 요청" }}
-        </button>
-      </div>
-    </form>
+    <p v-if="selected.status === 'DRAFT'" class="caption">전체 문제 설명과 개인 메모는 작업 카드에서 작성하고, 작업 단위로 전송해 주세요.</p>
     <form
       v-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER'"
       @submit.prevent="decide('REJECTED')"
@@ -344,4 +329,8 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
   border-top: 1px solid #e9eee4;
   border-bottom: 1px solid #e9eee4;
 }
+</style>
+
+<style scoped>
+.task-problem, .request-note dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

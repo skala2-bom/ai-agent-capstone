@@ -1,4 +1,4 @@
-import type { Command, Session, Workspace, Role, Option, Issue, Grade } from "../types";
+import type { Command, Session, Workspace, Role, Option, Issue, Grade, TaskReviewRequest } from "../types";
 import { sourceCards } from "./answer";
 import { environmentFixture } from "../mocks/environments";
 import { mutate } from "./workflow";
@@ -19,15 +19,17 @@ export async function request<T>(
   });
   if (!r.ok) {
     if (r.status === 401) window.dispatchEvent(new Event("session-expired"));
-    throw new Error(
+    const detail = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(
       r.status === 401
         ? "로그인이 만료되었습니다. 다시 로그인하세요."
         : r.status === 403
           ? "이 작업에 대한 권한이 없습니다."
           : r.status === 404
             ? "아직 연결되지 않은 API입니다."
-            : `요청 실패 (${r.status}). 잠시 후 다시 시도하세요.`,
-    );
+            : ((r.status === 400 || r.status === 409) && typeof detail.message === "string")
+              ? detail.message : `요청 실패 (${r.status}). 잠시 후 다시 시도하세요.`,
+    ), { status: r.status });
   }
   return r.status === 204 || r.headers.get("content-length") === "0"
     ? (undefined as T)
@@ -150,6 +152,8 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       beforeDate: before.due_date == null ? undefined : String(before.due_date),
       evidence: sourceCards(c.evidence),
       problem: (c.problem as string) ?? undefined,
+      taskProblem: (c.taskProblem as string) ?? undefined,
+      previousApprovalId: (c.previousApprovalId as string) ?? undefined,
       memo: (c.memo as string) ?? undefined,
     });
     options.push({
@@ -393,10 +397,10 @@ export async function decideApproval(s: Session, taskId: string, id: string,
   await request(`/ai/tasks/${encodeURIComponent(taskId)}/approval`, s.token, "POST",
     { approvalId: id, decision, reason: reason || null });
 }
-/** 요청자의 초안 검토: 보내기(문제 정의·메모와 함께) 또는 보내지 않기 (decisions 6.33) */
-export async function reviewApproval(s: Session, id: string, send: boolean, problem: string, memo: string) {
-  await request(`/approvals/${encodeURIComponent(id)}/${send ? "submit" : "withdraw"}`, s.token, "POST",
-    { problem, memo: memo || null });
+/** 현재 작업의 초안 전체를 검토한다 (decisions 6.36). */
+export async function reviewTask(s: Session, taskId: string, send: boolean, body: TaskReviewRequest) {
+  return request<{ cards: Row[] }>(`/ai/tasks/${encodeURIComponent(taskId)}/review/${send ? "submit" : "withdraw"}`,
+    s.token, "POST", body);
 }
 export async function login(
   username: string,

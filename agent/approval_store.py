@@ -82,6 +82,10 @@ class ApprovalStore:
         await self.query("""UPDATE agent.approval_binding SET status=%s,approval_id=%s,error=%s
             WHERE proposal_id=%s""", (status, approval_id, error, proposal_id))
 
+    async def confirm_reproposal_route(self, proposal_id, payload):
+        await self.query("UPDATE agent.approval_binding SET payload=%s WHERE proposal_id=%s AND status='REGISTERED'",
+                         (Jsonb(payload), proposal_id))
+
     async def attempt(self, approval_id):
         rows = await self.query("SELECT * FROM agent.execution_attempt WHERE approval_id=%s", (approval_id,))
         return rows[0] if rows else None
