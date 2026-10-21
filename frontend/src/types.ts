@@ -83,6 +83,7 @@ export interface Approval {
   taskId: string;
   optionId: string;
   requester: string;
+  requesterId?: string;
   at: string;
   /** DRAFT = 요청자 검토 전, WITHDRAWN = 요청자가 보내지 않음 (decisions 6.33) */
   status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "EXECUTED" | "WITHDRAWN";
@@ -160,6 +161,7 @@ export interface Session {
 export type Command =
   | { type: "plan"; id: string; date: string; qty: number }
   | { type: "delay"; id: string; date: string; reason: string }
+  | { type: "purchase"; id: string; date: string; qty: number; reason: string }
   | { type: "review"; id: string; grade: Grade; note: string; confirm: boolean }
   | { type: "priority"; id: string; priority: number; reason: string }
   | { type: "request"; id: string }

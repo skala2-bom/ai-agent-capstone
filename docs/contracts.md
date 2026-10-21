@@ -12,6 +12,8 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 43 | **작업 이력은 본인만** — 모든 역할에서 목록·상세·SSE를 작업 소유자로 제한. SYSTEM도 동일. 승인함 진행 정보는 별도 API | 3.1, decisions 6.42 | 승인함은 `/approval-progress` 사용. 타인 작업 결과 열기 제외 | AI 요청·승인 계약 유지 |
+| 42 | **입고 정보 수동 수정** — OPEN 발주의 예정 수량·날짜를 함께 저장, 사유 필수, 변경 이력과 자동 영향 분석 | 3.1, decisions 6.41 | 발주·입고 상세의 수량·일정 폼 연결 | 기존 승인 실행 도구 유지. DB 구조 변경 없음 |
 | 41 | **거절 후 재제안은 팀장에게 직접 전달** — 최초 제안만 구매 검토. 동일 작업·요청자·품목의 실제 거절을 검증한 재제안은 PENDING으로 등록. 전체 문제·이전 구매 메모 계승. 작업 카드에서 원 질문 숨김 | 3.3, decisions 6.40 | 작업 카드에는 전체 문제만 표시. 재제안 이전 카드 ID로 배치 | APPROVAL_REQUIRED에 previousApprovalId. 이미 등록된 재제안 초안은 정확한 approvalId로 복구. 승인 자동 실행 금지 |
 | 40 | **작업 단위 구매 검토** — 전체 문제 설명 + 고정된 품목 문제 + 부품별 메모. 현재 작업의 초안 전체를 전송/철회. 팀장에게 DRAFT·WITHDRAWN 비노출 | 3.1·3.3, decisions 6.39, [구현·검증 기록](task-review-changes.md) | 공통 작업 검토 UI와 task API 사용. 카드별 전송 API 폐기 | 모든 카드 등록 뒤 TASK_REVIEW_READY. 기존 승인/거절·실행은 부품별 유지. DB 스키마 변경 없음 |
 | 39 | **해결안 비교 화면 삭제** (팀장 포함 모두), AI 채팅창에 업무 검색·너비 조절 | decisions 6.38 | ✅ B가 반영함. 해결안은 채팅창 카드와 승인 대기함에서만 | 없음 (`compare_options`·`/api/analysis/options`는 그대로) |
@@ -469,18 +471,20 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 |---|---|---|---|
 | POST | `/api/auth/login` | ✅ `{token, user_id, name, role, expires_at}` | 모두 |
 | POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
-| GET | `/api/ai/tasks/{id}` | ✅ 작업 한 건 (아래) | 요청자, 구매·팀장 (생산관리는 자기 것만) |
+| GET | `/api/ai/tasks/{id}` | ✅ 작업 한 건 (아래) | 작업 소유자만. 다른 사람은 역할·trigger 무관하게 403 |
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
+| GET | `/api/ai/tasks/{id}/approval-progress` | `{progress:[{approvalId, proposalStatus, outcome}]}`. 질문·답변·분석 결과·trace 없음. 조회 가능한 카드만 반환 | 승인 요청자 또는 전달된 카드가 있는 APPROVER. DRAFT·WITHDRAWN은 팀장 비노출 |
 | POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` — `PENDING` 카드만 (초안은 `APPROVAL_NOT_PENDING`) | APPROVER |
 | POST | `/api/ai/tasks/{id}/review/submit` | 현재 초안 전체를 한 트랜잭션으로 `DRAFT → PENDING`. `taskProblem` 필수. 아래 작업 검토 계약 참조 | 요청자 본인(BUYER 이상) |
 | POST | `/api/ai/tasks/{id}/review/withdraw` | 현재 초안 전체를 한 트랜잭션으로 `DRAFT → WITHDRAWN`. 부품별 재개 알림은 영속 상태를 기준으로 재시도 | 요청자 본인(BUYER 이상) |
-| GET | `/api/ai/tasks?mine=true` | ✅ 작업 목록, 최근 50개. 생산관리는 항상 자기 것만, 구매·팀장은 `mine`을 빼면 전체 | 로그인 |
+| GET | `/api/ai/tasks?mine=true` | ✅ 본인 작업 목록, 최근 50개. `mine` 생략·false도 본인만. 본인이 시작한 SYSTEM 작업 포함 | 로그인 |
 | GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3). **APPROVER에게 DRAFT·WITHDRAWN은 제외, 다른 역할은 자기가 요청한 카드만** (남의 카드 하나를 열면 403 `ROLE_NOT_ALLOWED`, decisions 6.28) | 전부 (요청자 기준으로 거름) |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` · `/api/suppliers/metrics` (응답 모양은 2.1 `/internal`과 같다) | 조회 | 로그인 (금액 마스킹) |
 | POST | ✅ `/api/analysis/impact` · `/api/analysis/options` `{whatif, issues?}` | AI 도구 2.2·2.3과 같은 모양. `whatif`를 비우면 지금 DB 상태 그대로 (업무 현황·해결안 비교), 넣으면 미리보기 (DB는 안 바뀜) | 로그인 (금액 마스킹) |
 | PUT | ✅ `/api/suppliers/{supplier_id}/items/{item_id}/metrics` `{on_time_rate?, quality_score?, unit_price?, lead_time_days?, expedite_cost_per_day?, split_fee?, delay_penalty?}` | 바뀐 지표 한 줄. 보낸 칸만 바꾸고 `evaluated_at`·`evaluated_by`를 남긴다 | BUYER·APPROVER (AI 도구로는 안 연다) |
 | PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
 | PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양) + `analysis_task_id`(자동 분석 작업). 사유 필수 | BUYER·APPROVER |
+| PUT | `/api/purchase-orders/{id}` `{qty?, due_date?, reason}` | 변경된 발주 값 + `analysis_task_id`. OPEN만, 수량은 양의 정수, 날짜는 기준일·발주일 이전 불가. 사유 필수. 변경 없음은 400. `update_purchase` 전후 이력 저장 후 자동 분석 | BUYER·APPROVER |
 
 ✅ = 구현됨 (10/20). 3.1 화면 API는 전부 구현됐다.
 

@@ -31,6 +31,7 @@ const traces = computed(() => selected.value?.traces ?? (selected.value?.trace ?
 const rows = computed(() =>
   w.data!.history.filter(
     (h) =>
+      !!h.userId && h.userId === w.session?.userId &&
       (h.title + h.target).includes(q.value) &&
       (!status.value || h.status === status.value) &&
       (!from.value || h.at.slice(0, 10) >= from.value) &&
@@ -39,6 +40,7 @@ const rows = computed(() =>
 );
 </script>
 <template>
+  <p class="caption">내가 시작한 작업 이력만 표시됩니다.</p>
   <div class="toolbar">
     <input
       v-model="q"

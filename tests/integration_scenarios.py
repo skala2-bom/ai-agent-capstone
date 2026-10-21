@@ -26,6 +26,7 @@ if not DSN.endswith("/capstone_ai_test"):
     raise RuntimeError("초기화·자동 승인은 capstone_ai_test DB에서만 허용합니다.")
 CASES = json.loads((ROOT / "eval/golden.json").read_text())["cases"]
 TOKENS = {}
+TASK_OWNERS = {}
 HTTP = httpx.Client(timeout=10)
 
 
@@ -115,7 +116,7 @@ def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, 
     decided = set()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        task = request("GET", f"/api/ai/tasks/{task_id}")
+        task = request("GET", f"/api/ai/tasks/{task_id}", TASK_OWNERS.get(task_id, "buyer"))
         if task["status"] == "FAILED":
             raise AssertionError(f"agent FAILED: {task.get('answer')}")
         if task["status"] == "DONE":
@@ -154,7 +155,9 @@ def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, 
 
 
 def start(question, role="buyer"):
-    return request("POST", "/api/ai/tasks", role, json={"question": question})["taskId"]
+    task_id = request("POST", "/api/ai/tasks", role, json={"question": question})["taskId"]
+    TASK_OWNERS[task_id] = role
+    return task_id
 
 
 def golden_read_only():
@@ -229,6 +232,10 @@ def rejection():
     assert revised["previousApprovalId"] == initial["approval_id"]
     assert revised["taskProblem"] == initial["taskProblem"] and revised["memo"] == initial["memo"]
     assert revised["tool"] == "request_due_date_change"
+    progress = request("GET", f"/api/ai/tasks/{task_id}/approval-progress", "approver")
+    assert set(progress) == {"progress"} and any(p["approvalId"] == initial["approval_id"] for p in progress["progress"])
+    hidden = HTTP.get(BASE + f"/api/ai/tasks/{task_id}", headers={"Authorization": "Bearer " + TOKENS["approver"]})
+    assert hidden.status_code == 403, hidden.text
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
     decide_card(task_id, revised, "APPROVED")
@@ -377,9 +384,46 @@ def qa():
     print("PASS QA 검색 → 원문 → 출처", flush=True)
 
 
+def manual_and_private():
+    reset_seed()
+    with psycopg.connect(DSN) as conn:
+        conn.execute("insert into app_user select 'buyer2', '다른 구매', role, password_hash from app_user where user_id='buyer'")
+    TOKENS["buyer2"] = HTTP.post(BASE + "/api/auth/login", json={"user_id": "buyer2", "password": "1234"}).json()["token"]
+    updated = request("PUT", "/api/purchase-orders/PO-2610-106", json={
+        "qty": 1000, "due_date": "2026-11-19", "reason": "협력사 확정 수량과 입고일 수동 반영"})
+    assert updated["qty"] == 1000 and updated["due_date"] == "2026-11-19"
+    analysis, _ = finish_task(updated["analysis_task_id"])
+    assert analysis["trigger"] == "SYSTEM" and analysis["userId"] == "buyer"
+    assert W.same_ops(analysis["result"]["whatif"], [
+        {"op": "change_po_qty", "po_id": "PO-2610-106", "new_qty": 1000},
+        {"op": "request_due_date_change", "po_id": "PO-2610-106", "new_due_date": "2026-11-19"}])
+    with psycopg.connect(DSN) as conn:
+        h = conn.execute("select before, after, changed_by, reason from change_history where action='update_purchase'").fetchone()
+        assert h[0]["qty"] == 1200 and h[1]["qty"] == 1000 and h[2] == "buyer" and h[3]
+    tasks = {analysis["taskId"]: "buyer"}
+    roles = ("planner", "buyer", "buyer2", "approver")
+    for role in roles:
+        task_id = start("ECN-2026-014는 MCU 교체야 아니면 도어센서 케이스 교체야?", role)
+        finish_task(task_id)
+        tasks[task_id] = role
+    for role in roles:
+        for suffix in ("", "?mine=false", "?mine=true"):
+            listed = request("GET", "/api/ai/tasks" + suffix, role)
+            assert listed and all(t["userId"] == role for t in listed), (role, listed)
+        for task_id, owner in tasks.items():
+            if owner == role:
+                assert request("GET", f"/api/ai/tasks/{task_id}", role)["userId"] == role
+                continue
+            for suffix in ("", "/stream", "/approval-progress"):
+                res = HTTP.get(BASE + f"/api/ai/tasks/{task_id}" + suffix,
+                               headers={"Authorization": "Bearer " + TOKENS[role]})
+                assert res.status_code == 403, (role, owner, suffix, res.status_code)
+    print("PASS 입고 수량·당김 일정 수동 저장 → 변경 이력·자동 분석 / 전 역할·동일 역할 간 본인 이력·상세·SSE만 조회", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "recovery-prepare", "recovery-finish"])
+    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "manual-private", "recovery-prepare", "recovery-finish"])
     args = parser.parse_args()
     for _ in range(60):
         try:
@@ -389,7 +433,7 @@ def main():
             pass
         time.sleep(1)
     checks = {"golden": golden_read_only, **{s: lambda s=s: scenario(s) for s in ("SC1", "SC2", "SC3", "SC4")},
-              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa,
+              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa, "manual-private": manual_and_private,
               "recovery-prepare": recovery_prepare, "recovery-finish": recovery_finish}
     for name in args.only or [k for k in checks if not k.startswith("recovery-")]:
         checks[name]()

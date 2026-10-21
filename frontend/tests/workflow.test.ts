@@ -6,6 +6,31 @@ const planner = { role: "PLANNER" as const, name: "김계획" },
   buyer = { role: "BUYER" as const, name: "박구매" },
   boss = { role: "APPROVER" as const, name: "정팀장" };
 describe("role and workflow boundaries", () => {
+  it("수동 입고 수량·날짜 변경과 작업 소유자를 기록하고 잘못된 수정은 거부한다", () => {
+    const w = fixture("APPROVER");
+    const id = w.purchases[0].id;
+    const command = { type: "purchase" as const, id, date: "2026-11-25", qty: 600, reason: "협력사 확정" };
+    expect(() => mutate(w, command, planner)).toThrow();
+    expect(() => mutate(w, { ...command, qty: 1.5 }, buyer)).toThrow();
+    expect(() => mutate(w, { ...command, reason: " " }, buyer)).toThrow();
+    mutate(w, command, { ...buyer, userId: "buyer-a" });
+    expect(w.purchases[0]).toMatchObject({ date: command.date, qty: 600 });
+    expect(w.history[0]).toMatchObject({ title: "입고 정보 수동 변경", userId: "buyer-a" });
+    expect(w.analysisStale).toBe(true);
+    expect(() => mutate(w, command, buyer)).toThrow();
+    w.purchases[0].status = "CANCELLED";
+    expect(() => mutate(w, { ...command, qty: 700 }, buyer)).toThrow();
+  });
+
+  it("같은 역할의 다른 사용자에게도 목 작업 이력을 노출하지 않는다", async () => {
+    gateway.reset();
+    const a = { ...buyer, userId: "buyer-a" }, b = { ...buyer, userId: "buyer-b" };
+    const initial = await gateway.load(a);
+    await gateway.save(a, { type: "purchase", id: initial.purchases[0].id, date: "2026-11-25", qty: 600, reason: "확정" });
+    expect((await gateway.load(a)).history).toHaveLength(1);
+    expect((await gateway.load(b)).history).toHaveLength(0);
+    expect((await gateway.load({ ...boss, userId: "approver" })).history).toHaveLength(0);
+  });
   it("rejects unreviewed, stale and unresolved candidates", () => {
     const w = fixture("APPROVER");
     for (const id of ["OPT-3", "OPT-4"])

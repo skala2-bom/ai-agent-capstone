@@ -10,7 +10,7 @@ def main(fail=False):
     S.reset_seed()
     task_id = S.start("지금 생산 계획대로 가면 부품 문제 있어?", "planner")
     for _ in range(100):
-        task = S.request("GET", f"/api/ai/tasks/{task_id}")
+        task = S.request("GET", f"/api/ai/tasks/{task_id}", "planner")
         traces = task.get("traces") or []
         if task["status"] in {"DONE", "FAILED"} and traces and traces[-1].get("outcome") != "RUNNING":
             break

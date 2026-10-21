@@ -27,7 +27,7 @@ async function loadOutcomes() {
   const tasks = [...new Set((w.data?.approvals ?? []).filter((a) => a.status === "REJECTED").map((a) => a.taskId))];
   for (const id of tasks) {
     const t = await request<{ progress?: { approvalId?: string; outcome?: Outcome }[] }>(
-      `/ai/tasks/${encodeURIComponent(id)}`, w.session.token);
+      `/ai/tasks/${encodeURIComponent(id)}/approval-progress`, w.session.token);
     for (const p of t.progress ?? []) if (p.approvalId && p.outcome) outcomes.value[p.approvalId] = p.outcome;
   }
 }
@@ -134,7 +134,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
           <p v-if="group.taskProblem" class="task-problem"><strong>전체 문제 설명</strong><br />{{ group.taskProblem }}</p>
           <p v-else-if="!group.all.some(a => a.status === 'DRAFT')" class="caption">작성된 전체 문제 설명이 없습니다.</p>
           <p class="caption">{{ group.all.length }}건<template v-if="group.all.some(a => a.status === 'DRAFT')"> · 검토 전 {{ group.all.filter(a => a.status === 'DRAFT').length }}건</template> · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
-          <button v-if="mode === 'api'" @click="w.openTask(group.taskId)">작업 결과</button>
+          <button v-if="mode === 'api' && group.all.some(a => a.requesterId === w.session?.userId)" @click="w.openTask(group.taskId)">작업 결과</button>
           <TaskReview v-if="mode === 'api' && w.session?.role === 'BUYER' && (group.all.some(a => a.status === 'DRAFT') || w.taskReviews[group.taskId]?.attempt)"
             :task-id="group.taskId" compact />
         </td></tr>
@@ -294,7 +294,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     </form>
     <div v-if="selected.status === 'APPROVED'">
       <p class="warning-box">
-        승인은 접수되었습니다. 실행 완료가 확인되면 자동 갱신됩니다. 오래 대기하면 작업 결과에서 보류 여부를 확인하세요.
+        승인은 접수되었습니다. 실행 완료가 확인되면 자동 갱신됩니다.
       </p>
       <button
         v-if="mode === 'mock' && w.session?.role === 'APPROVER'"

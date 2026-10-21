@@ -114,15 +114,13 @@ class Tasks {
 
     /**
      * GET /api/ai/tasks/{id} — 작업 상태와 결과 (contracts.md 3.1). 이벤트를 구독하지 않고 결과만 볼 때.
-     * 질문한 사람, 그리고 구매·팀장이 볼 수 있다 (기획안 2.3 "작업 기록 보기": 생산관리는 내 것만).
+     * 역할과 무관하게 작업을 만든 본인만 조회한다.
      */
     @GetMapping("/api/ai/tasks/{id}")
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Map<String, Object> t = row(id);
-        // 자동 분석(SYSTEM)은 생산관리도 봐야 하는 결과다 (아키텍처 4.6). 그래서 PLANNER 역할로 만들어 금액이 없다
-        if (!t.get("userId").equals(user.getSubject()) && !"SYSTEM".equals(t.get("trigger"))
-                && !Auth.allows(user.getClaimAsString("role"), "BUYER"))
-            throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람의 작업입니다.", "생산관리 담당자는 자기 작업만 볼 수 있습니다.");
+        if (!t.get("userId").equals(user.getSubject()))
+            throw new ApiError("ROLE_NOT_ALLOWED", "본인의 작업만 조회할 수 있습니다.", "작업 이력에서 본인의 작업을 선택하세요.");
         // 제안별 최신 진행 상태 (agent의 PROPOSAL_PROGRESS). 여러 카드 중 일부가 아직 대기 중이라 작업이 끝나지 않아도
         // 승인 대기함이 거절 카드의 재검토 결과를 바로 보여 줄 수 있다 (decisions 6.30). 목록 API에는 넣지 않는다 — 50건마다 읽게 된다
         t.put("progress", db.queryForList("""
@@ -142,17 +140,34 @@ class Tasks {
 
     /**
      * GET /api/ai/tasks?mine=true — 작업 목록, 최근 것부터 50개 (contracts.md 3.1).
-     * 생산관리는 항상 자기 것만, 구매·팀장은 mine을 빼면 전체 (기획안 2.3).
+     * mine은 이전 클라이언트 호환용이며 값과 무관하게 본인 작업만 반환한다.
      */
     @GetMapping("/api/ai/tasks")
     List<Map<String, Object>> list(@RequestParam(defaultValue = "false") boolean mine, @AuthenticationPrincipal Jwt user) {
-        boolean onlyMine = mine || !Auth.allows(user.getClaimAsString("role"), "BUYER");
-        // 생산관리의 "내 것"에는 자동 분석(SYSTEM)도 들어간다 — 생산관리가 꼭 알아야 하는 결과라서
         return db.queryForList("""
                 select task_id from ai_task
-                where (? = false or user_id = ? or (trigger = 'SYSTEM' and ? = 'PLANNER'))
+                where user_id = ?
                 order by created_at desc limit 50""",
-                String.class, onlyMine, user.getSubject(), user.getClaimAsString("role")).stream().map(this::row).toList();
+                String.class, user.getSubject()).stream().map(this::row).toList();
+    }
+
+    /** 승인함용 진행 정보만 제공한다. 타인의 질문·답변·작업 결과·추적은 포함하지 않는다. */
+    @GetMapping("/api/ai/tasks/{id}/approval-progress")
+    Map<String, Object> approvalProgress(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
+        find(id);
+        List<String> visible = db.queryForList("""
+                select approval_id from approval where task_id = ?
+                  and (requested_by = ? or (? and status not in ('DRAFT', 'WITHDRAWN')))""",
+                String.class, id, user.getSubject(), Auth.allows(user.getClaimAsString("role"), "APPROVER"));
+        if (visible.isEmpty())
+            throw new ApiError("ROLE_NOT_ALLOWED", "조회 가능한 승인 요청이 없습니다.", "승인 대기함에서 전달된 요청을 확인하세요.");
+        List<Map<String, Object>> progress = db.queryForList("""
+                select distinct on (payload->>'approvalId') payload::text from task_event
+                where task_id = ? and type = 'PROPOSAL_PROGRESS'
+                order by payload->>'approvalId', seq desc""", String.class, id).stream()
+                .map(s -> this.<Map<String, Object>>read(s)).filter(p -> visible.contains(p.get("approvalId")))
+                .map(p -> m("approvalId", p.get("approvalId"), "proposalStatus", p.get("proposalStatus"), "outcome", p.get("outcome"))).toList();
+        return m("progress", progress);
     }
 
     /**
@@ -168,9 +183,7 @@ class Tasks {
     @GetMapping(path = "/api/ai/tasks/{id}/stream", produces = "text/event-stream")
     SseEmitter stream(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Task task = find(id);
-        // 자동 분석은 누구나 따라볼 수 있다. PLANNER 역할로 돌아 금액이 없다 (ScreenApi.startDelayAnalysis)
-        boolean system = "SYSTEM".equals(db.queryForObject("select trigger from ai_task where task_id = ?", String.class, id));
-        if (!system && !task.userId().equals(user.getSubject()))
+        if (!task.userId().equals(user.getSubject()))
             throw new org.springframework.web.server.ResponseStatusException(HttpStatus.FORBIDDEN, "질문한 사람만 볼 수 있습니다");
         SseEmitter emitter = new SseEmitter(120_000L);  // 작업 전체 제한 120초 (아키텍처 4.2)
         synchronized (lock(id)) {

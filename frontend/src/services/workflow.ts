@@ -35,6 +35,16 @@ export function mutate(w: Workspace, c: Command, s: Session) {
       { date: c.date },
     );
   }
+  if (c.type === "purchase") {
+    const po = w.purchases.find(p => p.id === c.id);
+    require(buyer, "구매 권한이 필요합니다.");
+    require(!!po && po.received === 0 && ["OPEN", "입고 예정", "지연 통보"].includes(po.status), "입고 예정인 발주만 수정할 수 있습니다.");
+    require(Number.isInteger(c.qty) && c.qty > 0 && c.qty <= 2147483647, "수량은 1 이상의 정수여야 합니다.");
+    require(/^\d{4}-\d{2}-\d{2}$/.test(c.date) && c.date >= "2026-11-02", "기준일 이후의 예정일을 입력하세요.");
+    require(!!c.reason.trim(), "변경 사유를 입력하세요.");
+    require(po!.qty !== c.qty || po!.date !== c.date, "변경된 내용이 없습니다.");
+    Object.assign(po!, { qty: c.qty, date: c.date });
+  }
   if (c.type === "review" || c.type === "priority")
     require(!w.approvals.some(
       (a) => a.optionId === c.id && a.status !== "REJECTED",
@@ -169,13 +179,14 @@ export function mutate(w: Workspace, c: Command, s: Session) {
       status: "검수 완료",
     });
   }
-  if (["plan", "delay", "execution"].includes(c.type)) w.analysisStale = true;
+  if (["plan", "delay", "purchase", "execution"].includes(c.type)) w.analysisStale = true;
   w.history.unshift({
     id: crypto.randomUUID(),
     at: new Date().toISOString(),
     title: {
       plan: "생산계획 저장",
       delay: "입고 지연 통보",
+      purchase: "입고 정보 수동 변경",
       review: "비용등급 검수",
       priority: "생산 우선순위 저장",
       request: "발주 변경 승인 요청",
@@ -200,5 +211,6 @@ export function mutate(w: Workspace, c: Command, s: Session) {
             : "실행 대기"
           : "완료",
     detail: s.name,
+    userId: s.userId ?? s.role.toLowerCase(),
   });
 }

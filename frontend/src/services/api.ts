@@ -42,8 +42,9 @@ export interface Gateway {
   reset(environment?: string): void;
 }
 const databases = new Map<string, Workspace>();
-function forRole(w: Workspace, role: Role): Workspace {
+function forRole(w: Workspace, role: Role, userId = role.toLowerCase()): Workspace {
   const copy = structuredClone(w);
+  copy.history = copy.history.filter(h => h.userId === userId);
   copy.options = copy.options.map((o) => {
     const { role: _, ...rest } = o;
     const { addedCost, costEvidence, unitPrice, ...safe } =
@@ -75,7 +76,7 @@ const mock: Gateway = {
   async load(s, environment = "SC1") {
     if (!databases.has(environment))
       databases.set(environment, environmentFixture(environment));
-    return forRole(databases.get(environment)!, s.role);
+    return forRole(databases.get(environment)!, s.role, s.userId);
   },
   async save(s, c, environment = "SC1") {
     const next = structuredClone(
@@ -83,7 +84,7 @@ const mock: Gateway = {
     );
     mutate(next, c, s);
     databases.set(environment, next);
-    return forRole(next, s.role);
+    return forRole(next, s.role, s.userId);
   },
   reset(environment = "SC1") {
     databases.delete(environment);
@@ -146,6 +147,7 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       taskId: String(c.task_id),
       optionId: id,
       requester: userNames[String(c.requested_by)] ?? String(c.requested_by),
+      requesterId: String(c.requested_by ?? ""),
       at: String(c.requested_at),
       status: c.status as Workspace["approvals"][number]["status"],
       reason: (c.reason as string) ?? undefined,
@@ -191,7 +193,7 @@ const TASK_STATUS: Record<string, string> = {
   DONE: "완료",
   FAILED: "실패",
 };
-/** AI 작업 목록(GET /api/ai/tasks) → 작업 이력. 생산관리는 backend가 자기 작업만 준다 */
+/** AI 작업 목록(GET /api/ai/tasks) → 본인의 작업 이력. 모든 역할에 같은 조회 범위를 적용한다. */
 export function toHistory(tasks: Row[]): Workspace["history"] {
   return tasks.map((t) => ({
     id: String(t.taskId),
@@ -351,6 +353,10 @@ const api: Gateway = {
       await request(`/purchase-orders/${c.id}/due-date`, s.token, "PUT", {
         due_date: c.date,
         reason: c.reason,
+      });
+    else if (c.type === "purchase")
+      await request(`/purchase-orders/${encodeURIComponent(c.id)}`, s.token, "PUT", {
+        due_date: c.date, qty: c.qty, reason: c.reason,
       });
     else if (c.type === "metric") {
       // 평가지표 입력은 사람만 한다 (AI 도구로 열지 않음, decisions 2.4). 표의 몇 번째 줄인지로 협력사·부품을 찾는다

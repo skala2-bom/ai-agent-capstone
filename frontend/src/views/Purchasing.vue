@@ -10,6 +10,7 @@ const w = useWorkspace(),
   status = ref(""),
   selected = ref<Purchase>(),
   date = ref(""),
+  qty = ref(1),
   reason = ref(""),
   passed = ref(0),
   failed = ref(0),
@@ -32,17 +33,24 @@ const rows = computed(() =>
 function open(p: Purchase) {
   selected.value = p;
   date.value = p.date;
+  qty.value = p.qty;
   reason.value = "";
+  w.error = "";
   passed.value = p.passed;
   failed.value = p.failed;
   w.context = `${p.id} · ${p.item}`;
 }
-async function delay() {
+const editable = computed(() => !!selected.value && selected.value.received === 0
+  && ["OPEN", "입고 예정", "지연 통보"].includes(selected.value.status));
+const changed = computed(() => !!selected.value && (date.value !== selected.value.date || qty.value !== selected.value.qty));
+async function savePurchase() {
+  if (!editable.value || !changed.value) return;
   if (
     await w.save({
-      type: "delay",
+      type: "purchase",
       id: selected.value!.id,
       date: date.value,
+      qty: qty.value,
       reason: reason.value,
     })
   )
@@ -164,27 +172,38 @@ async function delay() {
     <h2>{{ selected.item }} · {{ selected.supplier }}</h2>
     <div class="comparison">
       <div>
-        <small>현재 예정일</small><b>{{ selected.date }}</b>
+        <small>변경 전</small><b>{{ selected.date }}</b><span>{{ selected.qty.toLocaleString() }}개</span>
       </div>
       <span>→</span>
       <div>
-        <small>통보된 예정일</small><b>{{ date }}</b>
+        <small>변경 후</small><b>{{ date }}</b><span>{{ qty.toLocaleString() }}개</span>
       </div>
     </div>
-    <form @submit.prevent="delay">
+    <p v-if="!editable" class="caption">입고 완료·취소된 발주는 수정할 수 없습니다.</p>
+    <form @submit.prevent="savePurchase">
       <label
         >변경 입고 예정일<input
           v-model="date"
           type="date"
           required
-          :min="selected.date" /></label
+          min="2026-11-02"
+          :disabled="!w.buyer || !editable || w.busy" /></label
       ><label
-        >협력사 지연 사유<textarea v-model="reason" required rows="3" /></label
+        >입고 예정 수량<input
+          v-model.number="qty"
+          type="number"
+          min="1"
+          max="2147483647"
+          step="1"
+          required
+          :disabled="!w.buyer || !editable || w.busy" /></label
+      ><label
+        >변경 사유<textarea v-model="reason" required rows="3" :disabled="!w.buyer || !editable || w.busy" /></label
       ><button
         class="primary"
-        :disabled="!w.buyer || w.busy || date === selected.date"
+        :disabled="!w.buyer || !editable || w.busy || !changed || !reason.trim() || !Number.isInteger(qty) || qty < 1 || !date"
       >
-        지연 통보 저장
+        입고 정보 저장
       </button>
     </form>
     <button

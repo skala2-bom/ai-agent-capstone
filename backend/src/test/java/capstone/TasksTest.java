@@ -169,17 +169,53 @@ class TasksTest {
     }
 
     @Test
-    void 생산관리는_자기_작업만_구매와_팀장은_전체를_본다() {
+    void 모든_역할은_본인의_작업만_조회한다_시스템_작업도_동일하다() {
         String buyers = insertTask("buyer", "BUYER");
         String planners = insertTask("planner", "PLANNER");
+        String bosses = insertTask("approver", "APPROVER");
+        String system = tasks.start("buyer", "PLANNER", "구매의 자동 분석 사유", "SYSTEM", List.of());
+        var own = List.of(Map.entry(BUYER, buyers), Map.entry(PLANNER, planners), Map.entry(APPROVER, bosses));
+        for (var entry : own) {
+            Jwt user = entry.getKey();
+            for (boolean mine : List.of(true, false))
+                assertThat(tasks.list(mine, user)).extracting(t -> t.get("userId")).containsOnly(user.getSubject());
+            assertThat(tasks.get(entry.getValue(), user)).containsEntry("userId", user.getSubject());
+            for (var other : own) if (!other.getKey().getSubject().equals(user.getSubject())) {
+                assertThatThrownBy(() -> tasks.get(other.getValue(), user))
+                        .isInstanceOfSatisfying(ApiError.class, e -> assertThat(e.code).isEqualTo("ROLE_NOT_ALLOWED"));
+                assertThatThrownBy(() -> tasks.stream(other.getValue(), user))
+                        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+            }
+        }
+        assertThat(tasks.list(false, BUYER)).extracting(t -> t.get("taskId")).contains(system);
+        for (Jwt other : List.of(PLANNER, APPROVER)) {
+            assertThat(tasks.list(false, other)).extracting(t -> t.get("taskId")).doesNotContain(system);
+            assertThatThrownBy(() -> tasks.get(system, other)).isInstanceOf(ApiError.class);
+            assertThatThrownBy(() -> tasks.stream(system, other)).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        }
+    }
 
-        assertThat(tasks.list(false, PLANNER)).extracting(t -> t.get("userId")).containsOnly("planner");
-        assertThat(tasks.list(false, APPROVER)).extracting(t -> t.get("taskId")).contains(buyers, planners);
-        assertThat(tasks.list(true, BUYER)).extracting(t -> t.get("userId")).containsOnly("buyer");
-
-        assertThat(tasks.get(planners, BUYER)).containsEntry("taskId", planners);
-        assertThatThrownBy(() -> tasks.get(buyers, PLANNER))
-                .isInstanceOfSatisfying(ApiError.class, e -> assertThat(e.code).isEqualTo("ROLE_NOT_ALLOWED"));
+    @Test
+    @SuppressWarnings("unchecked")
+    void 팀장은_보낸_승인의_진행만_조회하고_질문과_초안은_볼_수_없다() {
+        String task = insertTask("buyer", "BUYER");
+        String id = (String) tasks.receiveEvent(task, m("type", "APPROVAL_REQUIRED", "tool", "request_due_date_change",
+                "args", m("po_id", "PO-2609-001", "new_due_date", "2026-11-25"))).get("approvalId");
+        tasks.addEvent(task, m("type", "PROPOSAL_PROGRESS", "proposalId", "p1", "approvalId", id,
+                "proposalStatus", "PENDING", "question", "비공개 원 질문"));
+        assertThatThrownBy(() -> tasks.approvalProgress(task, APPROVER)).isInstanceOf(ApiError.class);
+        tasks.submit(task, reviewReady(task, Map.of(id, "구매 메모")), BUYER);
+        tasks.decide(task, Map.of("approvalId", id, "decision", "REJECTED", "reason", "대안 재요청"), APPROVER);
+        tasks.addEvent(task, m("type", "PROPOSAL_PROGRESS", "proposalId", "p1", "approvalId", id,
+                "proposalStatus", "REJECTED", "outcome", m("code", "NO_ALTERNATIVE", "message", "대안 없음")));
+        Map<String, Object> result = tasks.approvalProgress(task, APPROVER);
+        assertThat(result).containsOnlyKeys("progress");
+        assertThat((List<Map<String, Object>>) result.get("progress"))
+                .singleElement().satisfies(p -> assertThat(p).containsOnlyKeys("approvalId", "proposalStatus", "outcome")
+                        .containsEntry("approvalId", id).containsEntry("proposalStatus", "REJECTED"));
+        assertThatThrownBy(() -> tasks.get(task, APPROVER)).isInstanceOf(ApiError.class);
+        assertThatThrownBy(() -> tasks.approvalProgress(task, PLANNER)).isInstanceOf(ApiError.class);
+        assertThatThrownBy(() -> tasks.approvalProgress(task, jwt("other-buyer", "BUYER"))).isInstanceOf(ApiError.class);
     }
 
     @Test

@@ -84,7 +84,7 @@ class ScreenApi {
     /**
      * POST /api/analysis/options {@code {whatif, issues}} — 화면의 해결안 비교. AI 도구 compare_options와 같은 계산.
      * 화면은 지금 DB 상태(whatif 없음)의 결품·과잉에 대한 대안을 보여 준다. 실행은 여기서 하지 않는다 —
-     * 발주 변경은 AI 작업의 승인 요청 → 팀장 승인으로만 간다 (contracts.md 3.3).
+     * AI의 발주 변경은 승인 요청 → 팀장 승인을 거친다. 확정된 입고 정보의 수동 입력은 별도 화면 API다.
      */
     @PostMapping("/analysis/options")
     Map<String, Object> options(@RequestBody(required = false) Map<String, Object> body) {
@@ -92,7 +92,7 @@ class ScreenApi {
     }
 
     // ------------------------------------------------------------------
-    // 화면 변경 2개 — 승인 없이 바로 바꾸고 이력만 남긴다
+    // 화면 직접 변경 — 사용자 권한으로 저장하고 변경 이력을 남긴다
     // 요청 모양은 프론트(frontend/src/services/api.ts)가 먼저 정한 것을 그대로 따랐다
     // ------------------------------------------------------------------
 
@@ -124,6 +124,49 @@ class ScreenApi {
             approvals.history("PRODUCTION_PLAN", id, "update_plan", before, after, (String) body.get("reason"), user.getSubject(), null);
             return after;
         });
+    }
+
+    /** 구매·팀장이 확정된 입고 수량·예정일을 직접 반영한다. AI 실행 도구와는 별도다. */
+    @PutMapping("/purchase-orders/{id}")
+    Map<String, Object> updatePurchase(@PathVariable String id, @RequestBody Map<String, Object> body, @AuthenticationPrincipal Jwt user) {
+        Auth.require(user, "BUYER");
+        if (!(body.get("reason") instanceof String reason) || reason.isBlank())
+            throw ApiError.invalid("변경 사유를 입력해 주세요.", "확정된 수량·일정 변경 내용을 적어 주세요.");
+        if (body.get("due_date") == null && body.get("qty") == null)
+            throw ApiError.invalid("바꿀 값이 없습니다.", "due_date 또는 qty를 보내세요.");
+        Map<String, Object> change = tx.execute(t -> {
+            List<Map<String, Object>> rows = db.queryForList("""
+                    select po_id, item_id, qty, order_date::text as order_date, due_date::text as due_date, status
+                    from purchase_order where po_id = ? for update""", id);
+            if (rows.isEmpty()) throw new ApiError("NOT_FOUND", "발주를 찾을 수 없습니다.", "발주 목록을 다시 불러오세요.");
+            Map<String, Object> before = rows.getFirst();
+            if (!"OPEN".equals(before.get("status")))
+                throw new ApiError("PO_NOT_OPEN", "입고 완료·취소된 발주는 수정할 수 없습니다.", "입고 예정인 발주를 선택하세요.");
+            LocalDate due = body.get("due_date") == null ? LocalDate.parse((String) before.get("due_date"))
+                    : notBeforeToday(body.get("due_date"), "due_date");
+            if (due.isBefore(LocalDate.parse((String) before.get("order_date"))))
+                throw ApiError.invalid("입고 예정일이 발주일보다 앞입니다.", "발주일 이후의 날짜를 입력하세요.");
+            int qty = body.get("qty") == null ? (int) before.get("qty") : positive(body.get("qty"));
+            if (qty == (int) before.get("qty") && due.toString().equals(before.get("due_date")))
+                throw ApiError.invalid("변경된 내용이 없습니다.", "수량이나 입고 예정일을 변경하세요.");
+            Map<String, Object> after = new LinkedHashMap<>(before);
+            after.put("qty", qty); after.put("due_date", due.toString());
+            db.update("update purchase_order set qty = ?, due_date = ? where po_id = ?", qty, due, id);
+            approvals.history("PURCHASE_ORDER", id, "update_purchase", before, after, reason.trim(), user.getSubject(), null);
+            return InternalApi.m("before", before, "after", after);
+        });
+        @SuppressWarnings("unchecked") Map<String, Object> before = (Map<String, Object>) change.get("before");
+        @SuppressWarnings("unchecked") Map<String, Object> after = (Map<String, Object>) change.get("after");
+        String question = "[자동 분석] 입고 정보 수동 변경: %s(%s) 수량 %s → %s개, 예정일 %s → %s. 사유: %s. 결품·과잉 영향을 알려 주세요."
+                .formatted(id, after.get("item_id"), before.get("qty"), after.get("qty"), before.get("due_date"), after.get("due_date"), reason.trim());
+        List<Map<String, Object>> whatif = new java.util.ArrayList<>();
+        if (!before.get("qty").equals(after.get("qty")))
+            whatif.add(InternalApi.m("op", "change_po_qty", "po_id", id, "new_qty", after.get("qty")));
+        if (!before.get("due_date").equals(after.get("due_date")))
+            whatif.add(InternalApi.m("op", "request_due_date_change", "po_id", id, "new_due_date", after.get("due_date")));
+        Map<String, Object> result = new LinkedHashMap<>(after);
+        result.put("analysis_task_id", tasks.start(user.getSubject(), "PLANNER", question, "SYSTEM", whatif));
+        return result;
     }
 
     /**
@@ -174,8 +217,8 @@ class ScreenApi {
      * <ul>
      *   <li>whatif를 backend가 채운다 — 무엇이 바뀌었는지 이미 안다. 모델이 질문에서 추측할 이유가 없다 (contracts.md 2.6).
      *       변경은 이미 DB에 들어갔으므로 같은 날짜로 다시 적용해도 결과는 같다</li>
-     *   <li>역할은 <b>PLANNER</b>로 돌린다 — 이 결과는 구매와 생산관리가 같이 본다. 금액을 가장 많이 가린 쪽으로 만들어야
-     *       생산관리 담당자에게 금액이 새지 않는다 (SEC-001). 구매는 금액이 필요하면 직접 묻는다</li>
+     *   <li>역할은 <b>PLANNER</b>로 돌려 금액을 숨긴다. 작업 이력은 입력한 사람만 보며,
+     *       다른 담당자는 공통 업무 현황에서 현재 데이터의 영향을 확인한다</li>
      *   <li>작업 주인은 지연을 입력한 사람이다 (이력에 누가 시작했는지 남게)</li>
      * </ul>
      */
