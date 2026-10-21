@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, computed, watch } from "vue";
+import { ref, onBeforeUnmount, computed, watch, nextTick } from "vue";
 import ServerResult from "./ServerResult.vue";
-import { segments, sourceCards } from "../services/answer";
+import AnswerBlocks from "./AnswerBlocks.vue";
+import { sourceCards } from "../services/answer";
 import { useWorkspace } from "../stores/workspace";
 import { mode, request } from "../services/api";
 import { connect, EventAccumulator } from "../services/sse";
@@ -12,6 +13,24 @@ const w = useWorkspace();
 const question = ref("");
 // 보낸 질문 (말풍선). 입력칸은 보내면 비운다 — 일반 채팅처럼 (decisions 6.35)
 const asked = ref("");
+// 지난 대화 기록 (decisions 6.36): 새 질문을 보내거나 다른 작업을 열면 지금 대화를 위로 올린다.
+// 화면 기록일 뿐 AI가 앞 대화를 기억하는 것은 아니다 — 질문마다 따로 처리된다
+interface Turn { question: string; answer: string; status: string; taskId?: string }
+const history = ref<Turn[]>([]);
+let currentTask: string | undefined;
+const body = ref<HTMLElement>();
+function archive() {
+  if (!asked.value && !answer.value) return;
+  history.value = [...history.value, { question: asked.value, answer: answer.value, status: status.value, taskId: currentTask }].slice(-20);
+}
+function reopen(i: number) {
+  const t = history.value[i];
+  history.value = history.value.filter((_, j) => j !== i);
+  if (t.taskId) void openExisting(t.taskId);
+}
+function resetAll() {
+  clear(); history.value = []; currentTask = undefined;
+}
 const sending = ref(false);
 const answer = ref("");
 const status = ref("분석 준비");
@@ -20,7 +39,6 @@ const events = ref<AgentEvent[]>([]);
 const running = ref(false);
 const result = ref<Record<string, unknown>>();
 const sources = ref<unknown>();
-const blocks = computed(() => segments(answer.value));
 const docs = computed(() => sourceCards(sources.value));
 const approvalReasons = ref<Record<string, string>>({});
 const approvalStates = ref<Record<string, string>>({});
@@ -89,7 +107,7 @@ function clear() {
   status.value = "분석 준비"; err.value = ""; asked.value = "";
 }
 // 업무를 바꾸면 이전 답변은 지운다. 입력 중이던 질문 글은 남긴다 — 질문을 쓰고 나서 업무를 고를 수도 있다
-watch(() => w.context, () => { clear(); w.activeTask = undefined; });
+watch(() => w.context, () => { archive(); clear(); currentTask = undefined; w.activeTask = undefined; });
 // "선택한 업무" 목록: 데이터의 모든 생산계획·발주·자재 (decisions 6.32).
 // value는 각 화면에서 항목을 누를 때 넣는 문구와 같다 — 그래야 화면에서 누른 업무가 여기서 그대로 선택돼 보인다.
 // 보이는 글자에만 날짜·수량을 더한다. AI에게 보내는 문구에 수량을 넣으면 질문의 가정 변경으로 잘못 읽을 수 있다
@@ -105,8 +123,9 @@ const contextGroups = computed(() => {
   ];
 });
 const knownContexts = computed(() => new Set(contextGroups.value.flatMap((g) => g.options.map((o) => o.value))));
-window.addEventListener("close-agent", clear);
-onBeforeUnmount(() => { clear(); window.removeEventListener("close-agent", clear); });
+// 로그아웃·계정 전환이면 기록까지 지운다 — 다른 사람에게 앞 사람의 대화가 보이면 안 된다
+window.addEventListener("close-agent", resetAll);
+onBeforeUnmount(() => { clear(); window.removeEventListener("close-agent", resetAll); });
 
 function subscribe(taskId: string, g: number) {
   const acc = new EventAccumulator(taskId);
@@ -126,6 +145,8 @@ function subscribe(taskId: string, g: number) {
 interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string; question?: string;
   result?: Record<string, unknown>; sources?: unknown; }
 async function openExisting(taskId: string) {
+  if (taskId !== currentTask) archive();
+  currentTask = taskId;
   clear();
   const g = generation;
   running.value = true; status.value = "작업 불러오는 중";
@@ -159,10 +180,13 @@ function onEnter(e: KeyboardEvent) {
 async function ask() {
   const text = question.value.trim();
   if (!text || sending.value) return;
+  archive();
+  currentTask = undefined;
   clear();
   const g = generation;
   asked.value = w.context ? `${w.context}\n${text}` : text;
   question.value = "";
+  void nextTick(() => { if (body.value) body.value.scrollTop = body.value.scrollHeight; });
   if (mode === "mock") {
     answer.value = "자유 질문은 실제 분석 API가 필요합니다. 업무 화면에서 준비된 시연 결과를 확인하세요.";
     status.value = "시연 안내"; return;
@@ -170,7 +194,7 @@ async function ask() {
   running.value = true; status.value = "접수 중"; sending.value = true;
   try {
     const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: asked.value });
-    if (g === generation) w.activeTask = taskId;
+    if (g === generation) { currentTask = taskId; w.activeTask = taskId; }
   } catch (e) {
     // 접수에 실패하면 쓴 글을 돌려놓는다 — 다시 쓰지 않아도 되게
     if (g === generation) { err.value = (e as Error).message; running.value = false; question.value = text; }
@@ -191,7 +215,7 @@ async function ask() {
         <PanelRightClose :size="18" />
       </button>
     </header>
-    <div class="ai-body">
+    <div ref="body" class="ai-body">
       <span class="eyebrow">선택한 업무</span>
       <select v-model="w.context" class="context" aria-label="선택한 업무">
         <option value="">선택 없음</option>
@@ -236,25 +260,18 @@ async function ask() {
           </p>
         </details></template
       >
+      <!-- 지난 대화 (decisions 6.36). 카드·근거는 [다시 열기]로 그 작업을 열어 본다 -->
+      <div v-for="(t, i) in history" :key="i" class="chat-turn">
+        <div v-if="t.question" class="chat-question">{{ t.question }}</div>
+        <AnswerBlocks v-if="t.answer" :text="t.answer" />
+        <p v-else class="caption">{{ t.status }}</p>
+        <button v-if="t.taskId" class="text-button" @click="reopen(i)">이 작업 다시 열기 →</button>
+      </div>
       <div v-if="asked" class="chat-question">{{ asked }}</div>
       <div v-if="status !== '분석 준비'" class="progress" role="status">
         {{ status }}
       </div>
-      <div v-if="blocks.length" class="answer">
-        <template v-for="(b, i) in blocks" :key="i"
-          ><p v-if="b.kind === 'lead'" class="answer-lead">{{ b.text }}</p
-          ><p v-else-if="b.kind === 'callout'" class="answer-callout">{{ b.text }}</p
-          ><h4 v-else-if="b.kind === 'heading'" :class="b.tone">{{ b.text }}</h4
-          ><ul v-else-if="b.kind === 'list'">
-            <li v-for="(item, j) in b.items" :key="j">
-              <small v-if="item.where">{{ item.where }}</small
-              ><span>{{ item.what }}</span
-              ><em v-if="item.note" :class="item.tone">{{ item.note }}</em>
-            </li>
-          </ul
-          ><p v-else>{{ b.text }}</p></template
-        >
-      </div>
+      <AnswerBlocks :text="answer" />
       <div v-if="err" class="error">
         {{ err }}<button v-if="w.activeTask" @click="openExisting(w.activeTask)">현재 작업 다시 연결</button>
       </div>

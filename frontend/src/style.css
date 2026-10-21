@@ -2830,3 +2830,15 @@ select.context {
   line-height: 1.6;
   font-size: 12.5px;
 }
+
+/* 지난 대화 (decisions 6.36): 지금 대화보다 흐리게, 사이에 선 */
+.chat-turn {
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px dashed var(--border);
+  opacity: 0.82;
+}
+.chat-turn .text-button {
+  font-size: 11px;
+  color: var(--teal);
+}
