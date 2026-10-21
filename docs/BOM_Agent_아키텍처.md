@@ -436,14 +436,14 @@ stateDiagram-v2
 
 | 요소 | 적용 위치 | 값 (추천안, D3) | 우리 서비스에서 |
 |---|---|---|---|
-| Instructions | `agent/prompts/*.md` (버전 관리) | – | "수량·날짜는 도구 결과만 인용", 역할별 금지 사항, 출력 형식 |
-| Tools | MCP Client → 도구 변환 | 결과 최대 4,000자 | 긴 BOM 결과는 자르고 요약, 오류는 ToolMessage |
-| Context | 메시지 정리 · 근거 주입 | 토큰 예산 설정 | 오래된 대화 요약, 계산 결과는 표 형태로 압축 |
+| Instructions | `agent/prompts/*.md` (버전 관리) | 프롬프트 해시 | "수량·날짜는 도구 결과만 인용", 역할별 금지 사항, 출력 형식 |
+| Tools | MCP Client → 도구 변환 | 모델용 결과 최대 4,000자 | 원본 계산·실행 상태는 보존, 모델용 ToolMessage만 제한, 오류도 ToolMessage |
+| Context | `context_budget.py` · 모델 호출 직전 | 입력 12,000 · 출력 최대 1,500 tokens | 오래된 완결 대화 발췌 요약, 현재 질문·도구 호출 쌍 유지. 필수 입력도 초과하면 호출 중단 |
 | State · Memory | checkpointer (`agent` 스키마) | thread 단위 | 승인 대기 후 그대로 재개 |
-| Agent Loop | StateGraph 조건 | **최대 8턴 · 120초 · 같은 도구 3회** | BOM이 깊으면 값 조정 검토 |
+| Agent Loop | StateGraph · durable command worker | 일반 8턴 · ADJUST 64턴 · 실행 구간 600초 | 모델 선택 동일 도구 3회, 대상 10개·제안 30개. 사람 승인 대기 제외 (decisions 6.29) |
 | Guardrails | `approval_gate` 노드 + 결과 숨김 | 변경 도구 100% 승인 | 발주 변경 전 멈춤, 금액·단가 숨김 재확인 |
-| Recovery | LLM 호출부 · 작업 실행부 | 429·503 2회 재시도 | 대체 모델 → `FAILED` |
-| Observability | LangSmith + 로그 | trace_id 하나 | 노드·도구·토큰·시간·비용, 실패 작업에 추적 링크 |
+| Recovery | `model_runtime.py` · 작업 실행부 | 429·503 최대 2회 재시도 (SDK 중복 재시도 없음) | 설정된 대체 모델 → 실패/보류. 변경 응답 불명확 시 재실행 금지 |
+| Observability | LangSmith + JSON 로그 + 작업 이력 | 실행 회차별 traceId | task/thread로 승인 전후 연결. 노드·도구·사용량·시간·복구 횟수. 비용은 LangSmith에서 산정, 미집계는 null |
 
 **금액·단가 숨김은 두 번 막는다**
 

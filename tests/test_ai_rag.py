@@ -97,8 +97,8 @@ class Evidence(unittest.IsolatedAsyncioTestCase):
         op = W.WhatifOp(op="reschedule_plan", plan_id="PP-02", new_date="2027-01-04")
         model = Mock()
         model.with_structured_output.return_value.ainvoke = AsyncMock(side_effect=[
-            W.Classification(intent="IMPACT", whatif=[op], unclear="문제 있어와 해결 요청이 함께 있어요"),
-            W.Classification(intent="ADJUST", whatif=[op]),
+            {"raw": None, "parsed": W.Classification(intent="IMPACT", whatif=[op], unclear="문제 있어와 해결 요청이 함께 있어요")},
+            {"raw": None, "parsed": W.Classification(intent="ADJUST", whatif=[op])},
         ])
         plans = [{"plan_id": "PP-02", "product_id": "FG-DOOR", "product_name": "도어",
                   "plan_date": "2026-11-18", "qty": 800}]
@@ -110,7 +110,7 @@ class Evidence(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_resolution_is_not_lost_after_long_whatif(self):
         model = Mock()
         model.with_structured_output.return_value.ainvoke = AsyncMock(
-            return_value=W.Classification(intent="IMPACT"))
+            return_value={"raw": None, "parsed": W.Classification(intent="IMPACT")})
         with patch.object(G, "llm", model):
             result, errors, _ = await G.classify_question(
                 "스위치 수량을 바꾸면 어떻게 돼? 결품과 과잉 해결 방법 만들어 줘.", [])

@@ -12,6 +12,7 @@ from pathlib import Path
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
+import observability as O
 
 
 class ApprovalStore:
@@ -56,6 +57,10 @@ class ApprovalStore:
         return rows[0] if rows else None
 
     async def finish_command(self, key, status="DONE", error=None):
+        trace = O.current()
+        if trace and not trace.finishing:
+            trace.command_completion = (key, status, error)
+            return
         await self.query("UPDATE agent.workflow_command SET status=%s, error=%s WHERE command_id=%s",
                          (status, error, key))
 
@@ -96,10 +101,19 @@ class ApprovalStore:
                                        None if ok else str(result), approval_id))
 
     async def event(self, task_id, payload):
+        trace = O.current()
+        if trace and not trace.finishing and payload.get("type") in {"DONE", "FAILED"}:
+            trace.terminal_event = (task_id, payload)
+            return
         # Stable key makes replay after a graph checkpoint crash harmless.
         key = hashlib.sha256(json.dumps([task_id, payload], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         await self.query("""INSERT INTO agent.workflow_outbox (event_key,task_id,payload)
-            VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (key, task_id, Jsonb(payload)))
+            VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (key, task_id, Jsonb(O.enrich(payload))))
+
+    async def previous_trace(self, task_id):
+        rows = await self.query("""SELECT payload->>'traceId' AS trace_id FROM agent.workflow_outbox
+            WHERE task_id=%s AND payload->>'type'='TRACE' ORDER BY id DESC LIMIT 1""", (task_id,))
+        return rows[0]["trace_id"] if rows else None
 
     async def pending_events(self):
         # One event per task at a time preserves progress-before-DONE ordering.

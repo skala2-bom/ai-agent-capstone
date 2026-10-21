@@ -176,6 +176,26 @@ class TasksTest {
                 .isInstanceOfSatisfying(ApiError.class, e -> assertThat(e.code).isEqualTo("ROLE_NOT_ALLOWED"));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void 추적은_재시작_뒤에도_회차별로_남고_업무_상태를_바꾸지_않는다() {
+        String id = insertTask("buyer", "BUYER");
+        tasks.addEvent(id, m("type", "TRACE", "traceId", "R1", "outcome", "RUNNING",
+                "traceUrl", "https://smith.langchain.com/r/R1", "api_key", "must-not-return"));
+        assertThat(tasks.find(id).status()).isEqualTo("QUEUED");
+        tasks.addEvent(id, m("type", "TRACE", "traceId", "R1", "outcome", "WAITING_APPROVAL"));
+        tasks.addEvent(id, m("type", "TRACE", "traceId", "R2", "previousTraceId", "R1", "outcome", "ERROR",
+                "traceUrl", "https://evil.test/"));
+        tasks.addEvent(id, m("type", "FAILED", "message", "test", "traceId", "R2"));
+        Map<String, Object> detail = newTasks().get(id, BUYER);
+        List<Map<String, Object>> traces = (List<Map<String, Object>>) detail.get("traces");
+        assertThat(traces).extracting(t -> t.get("traceId")).containsExactly("R1", "R2");
+        assertThat(traces.getFirst()).containsEntry("outcome", "WAITING_APPROVAL");
+        assertThat(traces.getLast()).doesNotContainKeys("traceUrl", "api_key");
+        assertThat((Map<String, Object>) detail.get("trace")).containsEntry("traceId", "R2");
+        assertThat(detail).containsEntry("status", "FAILED");
+    }
+
     // ------------------------------------------------------------------
 
     private static String insertTask(String user, String role) {

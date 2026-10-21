@@ -60,6 +60,8 @@ services:
       RAG_MCP_URL: http://rag-mcp:9102/mcp
       SERVICE_TOKEN: test-agent-token
       OPENAI_API_KEY: ""
+      AGENT_MODEL_MODE: fake
+      LANGSMITH_TRACING: "false"
       AGENT_DB_URL: postgresql://agent:agent@postgres:5432/capstone_ai_test
     depends_on:
       postgres: {condition: service_healthy}
@@ -73,6 +75,8 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       OPENAI_API_KEY: ""
+      AGENT_MODEL_MODE: fake
+      LANGSMITH_TRACING: "false"
       BACKEND_URL: http://backend:8080
       BUSINESS_MCP_URL: http://business-mcp:9101/mcp
       RAG_MCP_URL: http://rag-mcp:9102/mcp
