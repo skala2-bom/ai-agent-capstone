@@ -1,4 +1,5 @@
 import type { Command, Session, Workspace, Role, Option, Issue, Grade } from "../types";
+import { sourceCards } from "./answer";
 import { environmentFixture } from "../mocks/environments";
 import { mutate } from "./workflow";
 export const mode = import.meta.env.VITE_DATA_MODE === "api" ? "api" : "mock";
@@ -146,6 +147,7 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       reason: (c.reason as string) ?? undefined,
       beforeQty: Number(before.qty),
       beforeDate: String(before.due_date),
+      evidence: sourceCards(c.evidence),
     });
     options.push({
       action: split ? "split" : "due-date",

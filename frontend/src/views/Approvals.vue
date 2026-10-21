@@ -139,7 +139,22 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       {{ option.po }} → {{ option.qty }}개 · {{ option.date }}
       <p>{{ option.impact }}</p>
     </div>
-    <details open class="evidence">
+    <!-- API 모드: AI가 검색해 실제로 읽은 조항 (승인 카드의 evidence). 목데이터 모드만 시연용 고정 문구 -->
+    <details v-if="mode === 'api'" open class="evidence sources">
+      <summary>근거 문서 {{ selected.evidence?.length ?? 0 }}건</summary>
+      <article v-for="d in selected.evidence" :key="d.uri" class="source">
+        <b>{{ d.title ?? d.doc_id }}</b>
+        <small
+          >제{{ d.clause_no }}조 · {{ d.version
+          }}<template v-if="d.effective_date"> · {{ d.effective_date }} 시행</template></small
+        >
+        <blockquote v-if="d.excerpt">{{ d.excerpt }}</blockquote>
+        <code>{{ d.uri }}</code>
+      </article>
+      <p v-if="!selected.evidence?.length">이 카드에는 근거 문서가 붙어 있지 않습니다.</p>
+      <p v-if="option.role !== 'PLANNER' && option.costEvidence">{{ option.costEvidence }}</p>
+    </details>
+    <details v-else open class="evidence">
       <summary>근거 확인 · 가상 공급계약 v1 / 5.1</summary>
       <p>
         분할 납품은 협력사 확약과 별도 비용 검토 후 승인받아 실행합니다. (시연용

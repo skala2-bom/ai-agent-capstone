@@ -88,6 +88,8 @@ export interface Approval {
   reason?: string;
   beforeQty?: number;
   beforeDate?: string;
+  /** AI가 검색해 실제로 읽은 조항 (API 모드). 목데이터는 없음 */
+  evidence?: import("./services/answer").Source[];
 }
 export interface History {
   id: string;
