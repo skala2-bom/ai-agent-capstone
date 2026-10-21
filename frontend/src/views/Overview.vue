@@ -58,8 +58,9 @@ function approvalSummary(optionId: string) {
     ? o.risk
     : `추가비용 ${o.addedCost.toLocaleString()}원 · ${o.risk}`;
 }
+// 해결안 비교로 가는 할 일은 팀장에게만 남긴다 (decisions 6.25)
 const todos = computed(() =>
-  role.value === "PLANNER"
+  (role.value === "PLANNER"
     ? [
         {
           title: "해결안 우선순위 결정",
@@ -103,7 +104,8 @@ const todos = computed(() =>
               .length,
             to: "/approvals",
           },
-        ],
+        ]
+  ).filter((t) => t.to !== "/solutions" || w.approver),
 );
 </script>
 <template>
@@ -188,8 +190,8 @@ const todos = computed(() =>
               : "가까운 생산 일정"
           }}<span v-if="risks.length" class="count">{{ risks.length }}</span>
         </h2>
-        <RouterLink :to="risks.length ? '/solutions' : '/plans'"
-          >{{ risks.length ? "해결안 비교" : "캘린더 보기" }} →</RouterLink
+        <RouterLink :to="risks.length && w.approver ? '/solutions' : '/plans'"
+          >{{ risks.length && w.approver ? "해결안 비교" : "캘린더 보기" }} →</RouterLink
         >
       </div>
       <section v-if="risks.length" class="card flush">

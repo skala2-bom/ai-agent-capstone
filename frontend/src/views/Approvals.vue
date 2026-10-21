@@ -85,7 +85,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
         생산관리에서 1순위 선정 후, 구매 담당자가 발주 변경을 요청하면 이곳에
         표시됩니다.
       </p>
-      <RouterLink class="button" to="/solutions"
+      <RouterLink v-if="w.approver" class="button" to="/solutions"
         >해결안 비교로 이동 →</RouterLink
       >
     </div>

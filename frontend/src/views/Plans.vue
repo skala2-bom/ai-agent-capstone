@@ -261,7 +261,7 @@ async function save() {
         @select="(i) => (w.context = i.item)"
       />
       <p class="caption">{{ result.policy_version }}</p>
-      <RouterLink class="button primary" to="/solutions"
+      <RouterLink v-if="w.approver" class="button primary" to="/solutions"
         >해결안 비교로 이동 →</RouterLink
       >
     </div>

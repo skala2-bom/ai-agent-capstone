@@ -18,6 +18,8 @@ export const useWorkspace = defineStore("workspace", () => {
   const panel = ref(false);
   const epoch = ref(0);
   const buyer = computed(() => session.value?.role !== "PLANNER");
+  // 해결안 비교 화면은 구매팀장만 본다 (팀 토의, decisions 6.25). 구매 담당자는 AI 채팅으로 승인을 요청한다
+  const approver = computed(() => session.value?.role === "APPROVER");
   let generation = 0;
   async function load() {
     const g = ++generation;
@@ -96,6 +98,7 @@ export const useWorkspace = defineStore("workspace", () => {
     panel,
     epoch,
     buyer,
+    approver,
     load,
     enter,
     clear,

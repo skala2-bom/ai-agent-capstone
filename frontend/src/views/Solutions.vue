@@ -180,7 +180,7 @@ async function prioritize() {
         <dd>{{ selected.priority === 1 ? selected.reason : "추천 아님" }}</dd>
       </dl>
       <p class="caption">
-        실행은 이 화면에서 하지 않습니다. 구매 담당자가 "승인 요청"을 누르면 AI가 다시 검증한 뒤 팀장 승인함에 카드를 올립니다.
+        실행은 이 화면에서 하지 않습니다. "승인 요청"을 누르면 AI가 다시 검증한 뒤 승인함에 카드를 올립니다.
       </p>
     </div>
     <form v-else-if="w.buyer" @submit.prevent="review(true)">

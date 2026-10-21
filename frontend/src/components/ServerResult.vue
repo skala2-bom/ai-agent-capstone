@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Badge from "./Badge.vue";
+import { useWorkspace } from "../stores/workspace";
+const w = useWorkspace();
 const props = defineProps<{ result: unknown }>();
 // agent의 DONE.result는 {intent, whatif, impact}이고 결품·주의·과잉은 impact 안에 있다 (contracts.md 3.2).
 // impact가 없으면 result 자체를 본다 — 영향 분석 결과를 바로 넣어 주는 경우도 그대로 그려지게
@@ -45,6 +47,6 @@ function records(key: string) {
     <p v-if="!groups.some(([key]) => records(key).length)" class="caption">
       서버가 구조화된 영향 항목을 제공하지 않았습니다.
     </p>
-    <RouterLink to="/solutions" class="button wide">해결안 확인 →</RouterLink>
+    <RouterLink v-if="w.approver" to="/solutions" class="button wide">해결안 확인 →</RouterLink>
   </section>
 </template>

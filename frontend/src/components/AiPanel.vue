@@ -160,7 +160,7 @@ async function ask() {
         <p class="caption">
           {{ w.data?.policyVersion }}<br />사전 정의된 예시 · 실시간 계산 아님
         </p>
-        <RouterLink class="button primary wide" to="/solutions"
+        <RouterLink v-if="w.approver" class="button primary wide" to="/solutions"
           >해결안 비교하기 →</RouterLink
         >
         <details class="evidence">
