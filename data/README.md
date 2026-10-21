@@ -24,6 +24,8 @@ docker compose --profile indexing run --rm --no-deps --build rag-index python in
 env -u OPENAI_API_KEY docker compose --env-file .env --profile indexing run --rm --build rag-index
 ```
 
+> ⚠️ `docker compose down -v`는 업무 DB와 함께 RAG 색인도 지운다 (같은 postgres 볼륨). 다시 띄운 뒤 위 `rag-index`를 다시 실행한다.
+
 `rag-mcp/sql/001_documents.sql`을 indexer가 `rag` 계정으로 적용한다. 업무 테이블·시드 초기화는 필요 없다.
 `rag.document`는 원문·버전·시행일·해시, `rag.doc_chunk`는 조항·벡터, `rag.index_meta`는 모델·차원을 저장한다.
 같은 원문/메타데이터는 건너뛰고, 삭제된 문서·조항은 재색인 때 지운다. 중간 오류는 전체 트랜잭션을 되돌린다.

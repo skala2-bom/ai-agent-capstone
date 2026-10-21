@@ -38,6 +38,38 @@ docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -u
 
 프론트 검사는 `frontend/`에서 `npm ci`, `npm test`, `npm run build`로 실행한다. 카드별 동시 결정, 오래된 조회의 상태 덮어쓰기, 로그아웃 뒤 응답, 진행 이벤트 중복/역순 수신도 포함한다.
 
+## Harness 검사 (비용 0)
+
+Harness(입력 예산·모델 재시도·추적·재시작 복구) 검사다. 결과·근거는 [docs/harness-validation.md](../docs/harness-validation.md).
+위와 같은 `tests/compose.yml`을 쓰되 프로젝트 이름만 다르다. LLM 키를 비우고 `AGENT_MODEL_MODE=fake`, `LANGSMITH_TRACING=false`를 강제한다.
+
+```bash
+docker compose -p capstone-harness-check -f tests/compose.yml up -d --build --wait
+docker compose -p capstone-harness-check -f tests/compose.yml run --rm tests python -m unittest -v test_harness test_ai_rag test_approval_runner
+docker compose -p capstone-harness-check -f tests/compose.yml run --rm tests python -u integration_scenarios.py
+docker compose -p capstone-harness-check -f tests/compose.yml run --rm tests python /repo/agent/eval_harness.py /repo/eval/golden.json
+```
+
+- `test_harness.py`: 외부 키 없이 도구 결과 제한, 입력 예산·요약, 재시도·대체 모델, 추적 기록을 모의 응답으로 검사한다.
+- `serve_rag_fixture.py`: 테스트 DB(`capstone_ai_test`)에만 가짜 벡터를 색인하고 실제 RAG MCP 서버를 띄운다. `tests/compose.yml`의 rag-mcp가 이걸로 뜬다. 다른 DB면 실행을 거부한다.
+- `compose.harness.yml`: `tests/compose.yml` 위에 덮어 쓰는 설정. Agent는 fake 모드, RAG는 fixture를 유지하고 화면을 `http://localhost:3100`에 연다(시연 계정 `buyer` / `1234`). `.env`의 LangSmith 설정만 넘겨 추적 링크를 확인할 수 있다.
+
+```bash
+docker compose --env-file .env -p capstone-harness-current -f tests/compose.yml -f tests/compose.harness.yml up -d --build --wait
+```
+
+- `check_observability.py`: 위 환경에서 작업 하나를 돌려 작업 이력의 추적(`traces`)에 LangSmith 링크·도구 호출 수가 붙는지, LLM 호출·비용이 0인지 확인한다. `--failure`를 주면 실패 작업의 추적을 본다. `.env`에 LangSmith 설정이 있어야 링크가 붙는다.
+
+```bash
+docker compose --env-file .env -p capstone-harness-current -f tests/compose.yml -f tests/compose.harness.yml run --rm tests python check_observability.py
+```
+
+- `agent/tests/`: `adjust_tools`(해결안 경로의 읽기 전용 도구 규칙) 단위 테스트. 네트워크·DB가 필요 없다.
+
+```bash
+docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -m unittest discover -v -s /repo/agent/tests
+```
+
 ## 실제 모델 검사
 
 `.env`에 키가 필요하다. 다음 명령은 데모 문서 6개와 시나리오 질문/데이터를 **OpenAI API**로 전송하며 비용이 발생한다.

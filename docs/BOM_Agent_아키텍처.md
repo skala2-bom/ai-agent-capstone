@@ -1,6 +1,8 @@
 # BOM Agent 아키텍처
 
-> **작성일**: 2026-10-19 · **수정일**: 2026-10-20 · **상태**: 초안 v0.3 (10/20 오전 스크럼 반영) · **관련 문서**: [결정 기록](decisions.md), [Walking Skeleton 근거](walking-skeleton.md), BOM Agent PRD, BOM Agent DB 스키마, 기획안(A1~A3)
+> **작성일**: 2026-10-19 · **수정일**: 2026-10-21 · **상태**: v0.4 (10/21 구현 반영) · **관련 문서**: [결정 기록](decisions.md), [계약](contracts.md), [Walking Skeleton 근거](walking-skeleton.md), BOM Agent PRD, BOM Agent DB 스키마, 기획안(A1~A3)
+>
+> **서비스 형태**: 제조사 생산관리·구매 부서가 쓰는 **사내 업무 도구 (B2B)**. 시연 회사는 스마트홈(IoT) 기기 4종을 만드는 가상 중소 제조사 "가온스마트"(가상 직원 48명), 사용자는 생산관리 담당자·구매 담당자·구매팀장 3역할 (기획안 A2·A3)
 >
 > **기준**: 교재 5장 레퍼런스 아키텍처, 6장 Harness
 >
@@ -26,6 +28,19 @@
 | 10 | 인증·권한 | 누가 무엇을 할 수 있고 어디서 막나 |
 | 11 | 품질 | ISO/IEC 25010 특성별로 어떻게 대응했나 |
 | 12 | 미결 사항 | |
+
+### v0.4 변경 이력 (10/21, 구현 반영)
+
+> 설계안이던 부분을 **지금 코드**에 맞췄다. 결정 근거는 [decisions.md](decisions.md) 6.24~6.43, 계약은 [contracts.md](contracts.md) "최근 변경".
+
+| # | 위치 | 바꾼 내용 | 이유 |
+|---|---|---|---|
+| 1 | 머리말 | 서비스 형태(제조사 사내 업무 도구, B2B) 한 줄 추가 | 기획안 "사용 부서: 제조사의 생산관리팀·구매팀 (B2B)" |
+| 2 | 4.4·4.5 | 구매 검토(초안) 단계, 부품별 팀장 결정, 재제안 직접 전달, 거절 뒤 결과 안내, 카드가 남으면 승인 대기 | decisions 6.29~6.31·6.33·6.39·6.40 |
+| 3 | 7.1 | 대기열을 **backend가 넣고 꺼내는** 구현 그대로. agent 소비자 안은 버린 안으로 | decisions 6.24 |
+| 4 | 9.1 | 작업 목록·상세·SSE는 **작업 소유자만**. 검토·승인 진행 API 추가 | decisions 6.39·6.42·6.43 |
+| 5 | 11 | 증빙을 계획("시연·캡처")에서 실제 코드·테스트·로그로 | 구현·검증 완료 |
+| 6 | 12.2 | D3 Harness 값을 코드 값으로, 6.24 이후 결정 추가 | decisions 6.29·6.37 등 |
 
 ### v0.3 변경 이력 (10/20 오전 스크럼)
 
@@ -58,7 +73,7 @@
 | 7 | 4.4, 9.1 | 팀장 승인 대기함 API 추가 | 작업 SSE는 요청자만 구독하므로 팀장이 카드를 받을 길이 없었음 |
 | 8 | 4.4, 9.1 | 승인 API 요청에 approvalId 포함 | 한 작업에 승인이 여러 건일 수 있음 (SC3) |
 | 9 | 5장 | 영향 분석 경로에서도 문서 검색 가능 | SC3 정답에 설계변경 통지서 인용이 있음 |
-| 10 | 9.1 | 전체 작업 목록 API 추가 | 권한표상 구매·팀장은 작업 기록 전체 조회 |
+| 10 | 9.1 | 전체 작업 목록 API 추가 | 권한표상 구매·팀장은 작업 기록 전체 조회. **v0.4에서 바뀜**: 모든 역할이 본인 작업만 (decisions 6.43) |
 | 11 | 9.3 | DONE payload에 answer·result·sources 추가 | 4.3 시퀀스와 맞춤 |
 | 12 | 6장 | 요청자 정보를 HTTP 헤더로 MCP·백엔드까지 전달 | 1차 숨김에 필요한 역할 정보 경로가 없었음 |
 | 13 | 4.4, 10장 | 승인 요청 생성 시 요청자 BUYER 확인 | 권한표상 발주 조정 요청은 구매만 가능 |
@@ -250,7 +265,7 @@ flowchart TB
 | AI 서버 → rag-mcp 검색 1회 | 0.3~1초 | 5초 | "근거 없음"으로 돌려줌 (근거 없이 단정하지 않음) |
 | AI 서버 → 백엔드 진행 이벤트 | 0.05초 | 2초 | 3회 재시도, 실패해도 작업은 계속 |
 | SSE 연결 유지 | – | 15초마다 heartbeat | 화면이 다시 연결, 지난 이벤트 재전송 |
-| **작업 전체** (승인 대기 시간 제외) | **20~40초** | **120초** | `FAILED`, 추적 링크 저장 |
+| **작업 실행 한 번** (접수 또는 결정 1건 처리, 승인 대기 시간 제외) | 실측 (실제 모델, 10/21): 영향 분석 약 9초, 해결안 카드 3장 준비(SC2) 약 12초 | **600초** (`AGENT_WORK_TIMEOUT_S`, 처음 설계 120초에서 늘림 — decisions 6.7) | `FAILED`, 추적 링크 저장 |
 | 승인 대기 | 사람에 따라 다름 | **없음** | 만료시키지 않는다. 승인·거절할 때까지 `WAITING_APPROVAL` 유지 (10/20 스크럼) |
 
 > 시퀀스 그림의 구간별 시간은 이 표를 따른다.
@@ -295,7 +310,10 @@ sequenceDiagram
     BE-->>FE: SSE DONE → 스트림 종료
 ```
 
-### 4.4 시퀀스 ②: 해결 방법 → 승인 → 발주 변경
+### 4.4 시퀀스 ②: 해결 방법 → 구매 검토 → 팀장 결정 → 발주 변경
+
+> 구매 검토는 **작업 단위**, 팀장 결정은 **부품 단위**다 (decisions 6.33·6.39). AI는 부품마다 해결안을 먼저 다 준비해 카드로 올리고, 카드는 서로 독립으로 결정·실행된다 (6.29).
+> backend → agent 호출(접수·재개)은 모두 RabbitMQ 대기열을 거친다 (7.1).
 
 ```mermaid
 sequenceDiagram
@@ -312,33 +330,45 @@ sequenceDiagram
     BY->>FE: "부족한 MCU 해결 방법 만들어 줘"
     FE->>BE: POST /api/ai/tasks
     BE-->>FE: 202 {taskId}
-    BE->>AG: 작업 실행
-    AG->>BM: compare_options (해결 방법 후보 비교)
-    BM->>BE: POST /internal/analysis/options
-    BE-->>BM: 후보 3개 + 비용·위험·다른 제품 영향
-    BM-->>AG: 도구 결과 (역할에 맞게 금액 숨김)
-    AG->>LLM: 추천안 선택
-    LLM-->>AG: request_due_date_change(PO-2609-001 → 11/25)
-    AG->>BM: analyze_impact (추천안 적용 후 검증)
-    BM-->>AG: 새 결품 없음 ✅
-    Note over AG: 변경 도구 → Guardrails가 멈춤<br/>checkpointer에 상태 저장 (thread_id)
-    AG->>BE: 이벤트 APPROVAL_REQUIRED (도구·인자·요약·금액·근거)
-    Note over BE: 요청자 역할 BUYER 또는 APPROVER 확인 (아니면 403)<br/>approval 저장 (PENDING) → approvalId 생성<br/>작업 WAITING_APPROVAL
-    BE-->>FE: SSE APPROVAL_REQUIRED (approvalId 포함) → 요청자 화면 "승인 대기 중"
+    BE->>AG: 작업 실행 (대기열 경유)
+    loop 문제 부품마다 (최대 10개)
+        AG->>BM: compare_options (해결 방법 후보 비교)
+        BM->>BE: POST /internal/analysis/options
+        BE-->>BM: 후보 + 비용·위험·다른 제품 영향
+        BM-->>AG: 도구 결과 (역할에 맞게 금액 숨김)
+        AG->>LLM: 추천안 선택
+        LLM-->>AG: 계산이 만든 tool·args 그대로 선택
+        AG->>BM: analyze_impact (추천안 적용 후 검증)
+        BM-->>AG: 대상 결품 해소 + 새 결품 없음 ✅
+    end
+    Note over AG: 조합 검증 후 변경 도구 앞에서 멈춤<br/>checkpointer에 상태 저장 (thread_id)
+    AG->>BE: 부품마다 APPROVAL_REQUIRED (도구·인자·요약·금액·근거·problem)
+    Note over BE: 요청자 BUYER·APPROVER 확인 (아니면 403)<br/>구매 요청 카드 = DRAFT (팀장 요청이면 바로 PENDING)<br/>작업 WAITING_APPROVAL
+    AG->>BE: TASK_REVIEW_READY (모든 카드 등록 끝)
+    BE-->>FE: SSE → 채팅창에 초안 카드 묶음
+    BY->>FE: 전체 문제 설명 + 부품별 메모 작성
+    alt 보낸다
+        FE->>BE: POST /api/ai/tasks/{id}/review/submit
+        Note over BE: 초안 전부 DRAFT → PENDING (한 트랜잭션, 요청 ID로 재시도 안전)
+    else 보내지 않는다
+        FE->>BE: POST /api/ai/tasks/{id}/review/withdraw
+        Note over BE: DRAFT → WITHDRAWN, AI에 decision WITHDRAWN 전달<br/>AI는 그 품목을 재제안 없이 끝냄
+    end
     AP->>FE: 승인 대기함 열기
     FE->>BE: GET /api/approvals?status=PENDING
-    BE-->>FE: 대기 중인 승인 카드 목록
-    AP->>FE: 승인 카드 확인 → 승인
+    BE-->>FE: 보낸 카드만 (DRAFT·WITHDRAWN은 팀장에게 안 보임)
+    AP->>FE: 카드 하나 확인 → 승인
     FE->>BE: POST /api/ai/tasks/{id}/approval (approvalId, APPROVED)
-    Note over BE: 팀장(APPROVER) 역할 확인<br/>approval APPROVED
+    Note over BE: 팀장(APPROVER) 확인, approval APPROVED<br/>DRAFT·PENDING 카드가 남으면 WAITING_APPROVAL 유지 (6.31)
     BE-->>FE: 202
-    BE->>AG: POST /agent/tasks/{id}/resume (thread_id, approvalId, 결정)
+    BE->>AG: resume (threadId, approvalId, 결정) — 대기열 경유
     AG->>BM: tools/call request_due_date_change (approval_id 포함)
     BM->>BE: POST /internal/purchase-orders/PO-2609-001/due-date
     Note over BE: 승인 상태·도구·인자 일치 확인<br/>발주 OPEN 확인, 리드타임 검사
     BE->>DB: 발주 변경 + change_history + approval EXECUTED (한 트랜잭션)
     BE-->>BM: 변경 완료
     BM-->>AG: 결과
+    Note over AG,BE: 남은 카드는 계속 대기. 모든 카드가 끝나면
     AG->>BE: 이벤트 DONE
     BE-->>FE: SSE DONE
 ```
@@ -347,11 +377,18 @@ sequenceDiagram
 
 | 순서 | 일 |
 |:-:|---|
-| 1 | 팀장이 승인 카드에서 **거절**하고 사유를 입력한다 (사유 필수) |
-| 2 | 백엔드가 `approval.status = REJECTED`, 사유를 저장하고 AI 서버에 재개를 요청한다 |
-| 3 | AI 서버는 사유를 상태에 넣고 해결 방법 단계로 돌아가 **다른 방법**을 만든다 |
-| 4 | 새 방법도 검증을 거쳐 다시 승인 요청을 올린다 |
-| 5 | 거절이 **2회** 반복되면 더 제안하지 않고 "남은 방법과 거절 사유"를 정리해 `DONE` (추천안, B5) |
+| 1 | 팀장이 카드 하나를 **거절**하고 사유를 입력한다 (사유 필수). 다른 카드는 영향 없이 계속 기다린다 |
+| 2 | 백엔드가 `approval.status = REJECTED`, 사유를 저장하고 재개를 대기열에 넣는다. 남은 카드가 있으면 작업은 `WAITING_APPROVAL` 그대로 (6.31) |
+| 3 | AI는 그 부품만 다시 분석해 **계산된 후보 중 아직 안 쓴 안**을 고른다. 거절 사유로 새 수량을 지어내지 않는다 (6.30) |
+| 4 | 새 안은 검증을 거쳐 `previousApprovalId`를 달고 올라온다. 백엔드는 같은 작업·요청자·품목의 실제 거절 카드인지 확인하고 **바로 `PENDING`**(팀장에게)으로 저장한다. 구매 재검토는 없고, 전체 문제·이전 구매 메모를 이어받는다 (6.40) |
+| 5 | 거절한 카드에는 결과(`outcome`)가 붙어 승인 대기함의 그 카드 바로 아래에 보인다 (6.30). `GET /api/ai/tasks/{id}/approval-progress`로 읽는다 |
+
+| `outcome` | 뜻 | 다음 행동 |
+|---|---|---|
+| `REPROPOSED` | 다른 대안을 다시 제안 | 바로 아래 새 카드 결정 |
+| `NO_ALTERNATIVE` | 계산된 후보가 더 없음 (예: SC3 옛 케이스 취소 거절) | 담당자가 수량 조건 검토. "줄이기만 하는" 부분 해결안은 내지 않는다 |
+| `REVIEW_FAILED` | 도구·검색 오류로 재검토 실패 (대안이 없다는 뜻은 아님) | 다시 요청 |
+| `LIMIT` | 부품당 재제안 2회 다 씀(3번째 거절) 또는 작업당 제안 30개 | 담당자가 조건을 정해 새로 요청 |
 
 ### 4.6 시퀀스 ④: 협력사 입고 지연 입력 (SC4)
 
@@ -498,8 +535,8 @@ flowchart LR
     AG --> DB
     RM --> DB
     AG --> EXT
-    BE -. P2 .-> MQ
-    MQ -. P2 .-> AG
+    BE -. "P2 넣기" .-> MQ
+    MQ -. "P2 꺼내기 (7.1)" .-> BE
 ```
 
 | 서비스 | 기술 | 포트 | 공개 | 먼저 떠 있어야 하는 것 | healthcheck |
@@ -529,15 +566,22 @@ flowchart LR
 | Tool | AI | business-mcp, rag-mcp | 9101, 9102 · 내부 | agent |
 | Data | Data | postgres | 5432 · 내부 | backend, agent (checkpointer), rag-mcp, indexer |
 
-### 7.1 대기열과 재시도 (P2, 가산점)
+### 7.1 대기열과 재시도 (P2, 가산점) — 구현됨 (decisions 6.24)
 
-| 항목 | 설계 (추천안) |
+| 항목 | 구현 |
 |---|---|
-| 위치 | backend(작업 접수) → **RabbitMQ `ai.tasks` 큐** → agent(소비자) |
-| 메시지 | `{ taskId, threadId, userId, role, question, whatif, attempt }` |
-| 재시도 | 실패하면 지연 큐로 보내 30초 · 2분 뒤 재시도 (최대 3회) |
-| 최종 실패 | DLQ(`ai.tasks.dlq`)로 이동, 작업 `FAILED`, 작업 목록에 재시도 버튼 |
-| 중복 방지 | agent는 `taskId` 기준으로 이미 처리 중·완료인 작업이면 건너뜀 |
+| 위치 | backend(넣기) → **RabbitMQ `ai.tasks` 큐** → **backend 소비자(`Tasks.deliver`)** → agent에 HTTP (`/agent/tasks`, `/resume`). agent는 그대로 HTTP만 받는다 |
+| 대상 | 작업 접수(`start`)와 승인 후 재개(`resume`) 둘 다 |
+| 메시지 | `{ kind, taskId, attempt, body }` — body는 agent에 보낼 요청 그대로 |
+| 재시도 | 30초(`ai.tasks.retry.30s`) · 2분(`ai.tasks.retry.2m`) 뒤 다시. 재시도 큐는 소비자 없이 TTL + dead-letter로 `ai.tasks`에 되돌아온다 (최대 3번 시도) |
+| 최종 실패 | DLQ(`ai.tasks.dlq`)에 마지막 오류와 함께 남기고 작업 `FAILED`(`AGENT_UNAVAILABLE`). 재시도 버튼은 없다 — 같은 질문을 다시 한다 |
+| 넣기 실패 | RabbitMQ에도 못 넣으면 바로 `FAILED`(`QUEUE_UNAVAILABLE`) |
+| 중복 방지 | **backend가 작업 상태로** 거른다. 접수는 `QUEUED`일 때만, 재개는 작업이 끝나지 않았을 때만 보낸다 |
+| agent 호출 제한 | 3초 (4.2 표). 소비자가 하나라 agent가 멈추면 뒤가 밀리기 때문 |
+| 코드·테스트 | `TaskQueue.java`(큐 설정), `Tasks.java`(넣기·꺼내기), `TasksTest`(30초·2분 뒤 재시도·3번째 DLQ, 중복 미전송) |
+
+**버린 안: agent가 소비자** (이 문서 v0.3 원안). agent(C 파트) 코드가 HTTP 대신 대기열을 읽게 바뀌어야 해서 버렸다. backend가 꺼내도 "유실 없음 · 시간 두고 재시도 · 끝내 실패하면 DLQ"는 같다.
+대신 **몰린 작업을 하나씩 실행하지는 못한다** — agent가 받자마자 202를 주고 뒤에서 돌리기 때문이다. 필요해지면 agent를 소비자로 바꾸고 backend는 `deliver`만 지운다.
 
 ---
 
@@ -623,25 +667,37 @@ flowchart LR
 
 ### 9.1 화면이 부르는 API
 
-**AI 작업 API (교재 표5-8의 5개 + 전체 목록)**
+**AI 작업 API (교재 표5-8의 5개 + 검토·진행)** — 코드: `Tasks.java`
 
 | Method | Path | 설명 | 응답 |
 |---|---|---|---|
 | POST | `/api/ai/tasks` | 질문으로 작업 생성 | `202 { taskId }` |
-| GET | `/api/ai/tasks/{id}` | 상태와 결과 조회 | `{ status, answer, result, sources }` |
-| GET | `/api/ai/tasks/{id}/stream` | 진행 이벤트 구독 | `text/event-stream` |
-| POST | `/api/ai/tasks/{id}/approval` | 승인·거절 (팀장만). body `{ "approvalId": "…", "decision": "APPROVED" 또는 "REJECTED", "reason": "…" }` | `202` |
-| GET | `/api/ai/tasks?mine=true` | 내 작업 목록 | 목록 |
-| GET | `/api/ai/tasks` | 전체 작업 목록 (BUYER·APPROVER만, 백엔드가 역할 검사) | 목록 |
+| GET | `/api/ai/tasks/{id}` | 상태와 결과 조회. **작업 소유자만** | `{ status, answer, result, sources, progress, traces, reviewReady }` |
+| GET | `/api/ai/tasks/{id}/stream` | 진행 이벤트 구독. **작업 소유자만** (아니면 403) | `text/event-stream` |
+| GET | `/api/ai/tasks` | 작업 목록, 최근 50개. **모든 역할이 본인 작업만** (SYSTEM 작업도 시작한 사람 것). `mine`은 예전 화면 호환용이라 값과 무관 | 목록 |
+| GET | `/api/ai/tasks/{id}/approval-progress` | 승인 대기함용. 내가 볼 수 있는 카드의 진행·거절 결과(`outcome`)만. 질문·답변은 안 줌 | `{ progress }` |
+| POST | `/api/ai/tasks/{id}/review/submit` | 구매 검토: 그 작업의 초안 전체를 팀장에게 (BUYER, 작업 요청자만). body `{ requestId, reviewId, taskProblem, memos }` | `{ cards }` |
+| POST | `/api/ai/tasks/{id}/review/withdraw` | 구매 검토: 초안 전체를 보내지 않음 (같은 body) | `{ cards }` |
+| POST | `/api/ai/tasks/{id}/approval` | 부품별 승인·거절 (팀장만, `PENDING` 카드만). body `{ "approvalId": "…", "decision": "APPROVED" 또는 "REJECTED", "reason": "…" }`, 거절은 사유 필수 | `202` |
 
-**승인 대기함 API (팀장)**
+> 작업 이력은 v0.2에서 "구매·팀장 전체"였지만 **decisions 6.43으로 본인만**이 됐다. 팀장은 질문·답변 대신 승인 카드(전체 문제·구매 메모 포함)와 `approval-progress`로 본다.
+> 예전 카드별 검토 API `POST /api/approvals/{id}/submit|withdraw`는 주소만 남아 있고 늘 오류(`INVALID_ARGUMENT`)를 돌려준다 — 작업 단위로 바뀌었다 (decisions 6.39).
+
+**승인 대기함 API** — 코드: `Approvals.java`
 
 | Method | Path | 설명 | 응답 |
 |---|---|---|---|
-| GET | `/api/approvals?status=PENDING` | 승인 대기 목록 (팀장은 전부, 다른 역할은 자기가 요청한 것만) | 목록 |
-| GET | `/api/approvals/{approvalId}` | 승인 카드 상세 (도구·인자·요약·금액·근거) | 카드 |
+| GET | `/api/approvals?status=PENDING` | 승인 카드 목록 (status 빼면 전부). 팀장은 보낸 카드 전부(`DRAFT`·`WITHDRAWN` 제외), 다른 역할은 자기가 요청한 것만 | 목록 |
+| GET | `/api/approvals/{approvalId}` | 승인 카드 상세 (도구·인자·요약·금액·근거·문제·메모). 남의 카드·남의 초안은 403 | 카드 |
 
 - 작업 SSE는 질문한 사람만 구독하므로, 팀장은 승인 대기함으로 카드를 받는다.
+
+**화면용 분석 API** (AI 도구와 같은 계산, 로그인 역할대로 금액 가림, decisions 6.23)
+
+| Method | Path | 설명 | 권한 |
+|---|---|---|---|
+| POST | `/api/analysis/impact` | 영향 분석 `{whatif}` — 업무 현황 위험, 생산계획 영향 미리보기 | 모두 |
+| POST | `/api/analysis/options` | 해결 대안 비교 `{whatif}`. 해결안 비교 화면은 없앴지만(6.38) API는 남아 있다 | 모두 |
 
 **업무 API (동기)**
 
@@ -653,7 +709,12 @@ flowchart LR
 | GET | `/api/inventory?type=FG\|PART` | 재고 (완제품·부품) | 모두 (금액 숨김 적용) |
 | GET | `/api/purchase-orders` | 발주·입고 일정 | 모두 (단가 숨김 적용) |
 | PUT | `/api/purchase-orders/{id}/due-date` | 협력사 지연 입고일 변경 (F3) | BUYER |
+| PUT | `/api/purchase-orders/{id}` | OPEN 발주의 예정 수량·날짜 수동 수정, 사유 필수, 이력 + 자동 영향 분석 (decisions 6.42) | BUYER |
 | GET | `/api/items/{id}/bom` | BOM 조회 | 모두 |
+| GET | `/api/suppliers/metrics` | 협력사 평가지표 | 모두 (금액 숨김 적용) |
+| PUT | `/api/suppliers/{supplierId}/items/{itemId}/metrics` | 평가지표 입력 — AI 도구로는 열지 않는다 (decisions 2.4) | BUYER |
+
+> 권한 BUYER는 구매팀장(APPROVER)도 포함한다 (decisions 1.4).
 
 ### 9.2 백엔드 ↔ AI 서버 (내부)
 
@@ -701,14 +762,14 @@ flowchart LR
 
 | 특성 | 요구 | 대응 구조 | 증빙 |
 |---|---|---|---|
-| **기능 적합성** | 수량·날짜 100% 정확 | 계산은 백엔드 계산 서비스, AI는 인용만 | SC0~SC4 정답 테스트 |
-| **성능 효율성** | 즉시 접수, 진행 실시간 표시 | 202 + SSE, 구간별 시간 제한 (4.2) | 이벤트 화면 캡처, 시간 측정 |
-| **신뢰성** | 일시 오류 자동 복구, 작업 유실 없음 | 재시도 · 대체 모델 · checkpointer · (대기열·DLQ) | 장애 시연 (도구 서버 중단, LLM 오류) |
-| **보안성** | 인증·권한·승인·숨김 | JWT, 역할 검사, 승인 재확인, 2단계 숨김, DB 계정 분리 | 401·403 테스트, 역할별 화면 비교 |
-| 사용성 | 결과를 이해하기 쉽게 | 문제 부품 표, 재고 흐름, 승인 카드, 근거 패널 | 화면 |
-| 유지보수성 | 규칙 한 곳, 계약 고정 | 업무 규칙은 백엔드만, `docs/` 계약 문서, 프롬프트 버전 관리 | 금지사항 위반 없음 |
-| 호환성 | 표준 연결 | MCP 표준, REST, SSE | 도구 목록 조회 |
-| 이식성 | 어디서나 같은 실행 | docker compose, `.env` | 새 PC 실행 |
+| **기능 적합성** | 수량·날짜 100% 정확 | 계산은 백엔드 계산 서비스, AI는 인용만. 답변의 결품 목록도 코드가 씀 (decisions 6.27) | 정답 파일 `eval/golden.json`, backend `ImpactAnalysisTest`·`ApprovalFlowTest`, 통합 시나리오 `tests/integration_scenarios.py` (golden·SC1~SC4·reject·mixed·draft·system·qa·manual-private) |
+| **성능 효율성** | 즉시 접수, 진행 실시간 표시, 비용 통제 | 202 + SSE, 구간별 시간 제한 (4.2), 입력 12,000·출력 1,500 tokens·도구 결과 4,000자 예산 | `TRACE` 이벤트(노드·도구·사용량·시간), LangSmith 실행별 추적, `docs/harness-validation.md`, `eval/reports/harness-before.json`·`harness-after.json` |
+| **신뢰성** | 일시 오류 자동 복구, 작업 유실 없음 | 대기열 재시도 30초·2분 → DLQ (`TaskQueue.java`), 모델 429·503 재시도 + 대체 모델, checkpointer로 재개, 서비스별 healthcheck + 앞 서비스 healthy 대기 (`docker-compose.yml`, decisions 6.41) | `TasksTest`(재시도·DLQ·중복 미전송), 통합 시나리오 `recovery-prepare`/`recovery-finish` + `eval/reports/restart-recovery.log`(agent 재시작 뒤 카드 3건 재개, 중복 실행 없음), postgres 재시작 회복 확인 (6.41) |
+| **보안성** | 인증·권한·승인·숨김 | JWT, 역할 검사, 작업은 소유자만 (6.43), 승인 재확인, 2단계 숨김(`Masking.java` + Harness), 서비스·경로별 토큰(`ServiceTokens.java`), 스키마별 DB 계정 3개(`db/init.sql`) | `MaskingTest`, `TasksTest`(본인 작업만·팀장은 보낸 카드 진행만), `TaskReviewTest`, 통합 시나리오 `manual-private` |
+| 사용성 | 결과를 이해하기 쉽게 | 결론 → 목록 모양의 평문 답변, 근거 문서 카드, 색은 뜻으로만 (6.27). 채팅창 Enter 전송·말풍선·대화 기록 (6.35·6.36). 채팅창 안에서 검토 (6.34·6.39) | decisions 6.27·6.35·6.36 확인 기록 |
+| 유지보수성 | 규칙 한 곳, 계약 고정 | 업무 규칙은 백엔드만, 계약은 `contracts.md`, 근거는 `decisions.md`, 프롬프트 파일 버전 관리 | backend 테스트 6개 파일, agent·통합 Python 테스트 (`tests/test_*.py`, `eval/reports/python-tests.log`) |
+| 호환성 | 표준 연결 | MCP Streamable HTTP(`/mcp`, FastMCP `transport="http"`), REST, SSE | agent가 `StreamableHttpTransport`로 두 MCP Server에 붙음 (`agent/graph.py`) |
+| 이식성 | 어디서나 같은 실행 | docker compose, `.env`, healthcheck는 Dockerfile `HEALTHCHECK` | `docker compose up -d --build --wait`로 6개 healthy (decisions 6.41), 테스트용 `tests/compose.yml` |
 
 **비기능 수치 (추천안, D1)**
 
@@ -716,15 +777,15 @@ flowchart LR
 |---|---|
 | 작업 접수 응답 | 1초 이내 |
 | 첫 진행 이벤트 | 3초 이내 |
-| 영향 분석 완료 | 60초 이내 (제한 120초) |
+| 영향 분석 완료 | 60초 이내 (실행 제한 600초, 화면 SSE 연결 120초 — 끊기면 처음부터 다시 받음) |
 | 동시 사용자 (시연) | 3명 |
-| 월초 일정 변경 몰림 | 작업 20건 동시 접수 시 대기열로 순서 처리 (P2) |
+| 월초 일정 변경 몰림 | 작업 20건 동시 접수 시 RabbitMQ 대기열로 받아 순서대로 넘김. 실행은 agent에서 동시에 일어난다 (decisions 6.24) |
 
 ---
 
 ## 12. 미결 사항
 
-> **갱신**: 2026-10-20 (기술 안건은 교재·평가표 기준으로 결정 완료)
+> **갱신**: 2026-10-21 (10/21 구현 결정 6.24~6.43 반영)
 > 지켜야 할 계약은 [contracts.md](contracts.md), 결정 근거는 [decisions.md](decisions.md).
 
 ### 12.1 남은 것
@@ -749,7 +810,7 @@ flowchart LR
 | C2 오류 코드 | 9개 + `{error, message, retry_hint}` 형식 | [contracts.md 2.5](contracts.md) |
 | C3 문서 체계 | 3종, `doc://{doc_id}/{clause_no}`, 조항 단위 청킹 | [decisions.md 6.9](decisions.md) |
 | D1 비기능 수치 | **4.2 표 그대로** | 바꿀 이유가 없다. 시연 동시 사용자 3명 기준 |
-| D3 Harness 값 | **교재 권장값 그대로** (8턴·120초·같은 도구 3회·2회 재시도) | [decisions.md 6.7](decisions.md) |
+| D3 Harness 값 | 처음엔 교재 권장값(8턴·120초). **지금 코드**: 일반 모델 호출 8턴(`MAX_TURNS`), ADJUST 64턴(`MAX_ADJUST_TURNS`), 실행 구간 600초(`AGENT_WORK_TIMEOUT_S`), 그래프 600단계(`AGENT_RECURSION_LIMIT`), 같은 도구 3회, 429·503 2회 재시도. 부품 여러 개를 한 작업에서 준비·결정하고 사람 승인을 기다리기 때문에 늘렸다. 사람 대기 시간은 한도에 넣지 않는다 | [decisions.md 6.7·6.29·6.37](decisions.md), [harness-validation.md](harness-validation.md) |
 | E 기술 선택 | pgvector · JWT · StateGraph A안 · RabbitMQ(후순위) | [contracts.md 5](contracts.md) |
 | DB 스키마·계정 | 스키마 3개 + 계정 3개 | [contracts.md 1.3](contracts.md) |
 | 요청자 역할 전달 | 헤더 4개 (`X-Task-Id`·`X-User-Id`·`X-Role`·`X-Service-Token`) | [contracts.md 1.1](contracts.md) |
@@ -761,4 +822,18 @@ flowchart LR
 | 승인·변경 | 승인과 도구·인자가 같을 때만 실행, 변경·이력·승인 상태 한 트랜잭션, 화면 변경은 승인 없이 이력만 | [decisions.md 6.18](decisions.md) |
 | 작업 저장 | `ai_task`·`task_event`, 재시작해도 승인 대기 작업이 이어짐 | [decisions.md 6.20](decisions.md) |
 | 9단계 | 서비스 토큰(서비스·경로별), 자동 분석(SYSTEM, PLANNER 역할), 2차 도구 5개, 과잉 대안, 평가지표 입력 | [decisions.md 6.21](decisions.md) |
-| 대기열 (P2) | RabbitMQ `ai.tasks` → 30초·2분 재시도 → DLQ. 7.1과 달리 **소비자도 backend**(agent는 그대로 HTTP) | [decisions.md 6.24](decisions.md) |
+| 대기열 (P2) | RabbitMQ `ai.tasks` → 30초·2분 재시도 → DLQ + `FAILED`. **소비자도 backend**(agent는 그대로 HTTP), 중복은 작업 상태로 거름, 재시도 버튼 없음 (7.1) | [decisions.md 6.24](decisions.md) |
+| 로그인 유지 | 탭 저장소(sessionStorage), 탭 닫으면 사라짐 | [decisions.md 6.26](decisions.md) |
+| 답변 형식 | 목록·숫자는 코드가 계산 결과에서 쓰고 모델은 결론만, 평문, 근거는 문서 카드 | [decisions.md 6.27](decisions.md) |
+| 승인 대기함 범위 | 팀장은 보낸 카드 전부, 다른 역할은 내가 요청한 카드만 (backend가 거름) | [decisions.md 6.28](decisions.md) |
+| 다건 해결안 | 부품마다 먼저 준비 → 카드 각각 등록 → 독립 결정·실행. 대상 10개·제안 30개 | [decisions.md 6.29](decisions.md) |
+| 거절 뒤 안내 | "줄이기만 하는" 부분 해결안은 내지 않음. 카드별 `outcome` (재제안·대안 없음·검토 실패·한도) | [decisions.md 6.30](decisions.md) |
+| 작업 상태 규칙 | `DRAFT`·`PENDING` 카드가 남으면 `WAITING_APPROVAL` 유지, 마지막 결정 뒤에만 `RUNNING` | [decisions.md 6.31](decisions.md) |
+| 채팅창 | 질문 대상 업무를 사용자가 고름, Enter 전송·말풍선, 화면 메모리에만 대화 기록 | [decisions.md 6.32·6.35·6.36](decisions.md) |
+| 구매 검토 (초안) | 구매 요청 카드는 `DRAFT`로 시작. **작업 단위**로 전체 문제 + 부품별 메모를 달아 보내거나 보내지 않음, 채팅창에서 바로. 팀장 결정은 부품 단위 | [decisions.md 6.33·6.34·6.39](decisions.md) |
+| Harness 관측·예산 | `TRACE` 이벤트(업무 상태 안 바꿈), LangSmith, 입력·출력·도구 결과 예산, SDK 재시도 끄고 앱에서 2회 + 대체 모델 | [decisions.md 6.37](decisions.md) |
+| 해결안 비교 화면 | **없앴다** (6.25 팀장 전용 결정을 대체). `compare_options`·`/api/analysis/options`는 그대로 | [decisions.md 6.38](decisions.md) |
+| 거절 재제안 | 구매 재검토 없이 바로 팀장에게 (`PENDING`). backend가 실제 거절 카드·품목 일치 확인 | [decisions.md 6.40](decisions.md) |
+| healthcheck | 서비스마다 자기 것만 보는 healthcheck, `depends_on: service_healthy`. checkpointer를 연결 풀로 | [decisions.md 6.41](decisions.md) |
+| 입고 정보 수동 수정 | OPEN 발주 수량·날짜를 사람이 직접 저장 (사유 필수, 이력 + 자동 분석). AI 실행은 계속 승인 필요 | [decisions.md 6.42](decisions.md) |
+| 작업 이력 범위 | **모든 역할이 본인 작업만** (목록·상세·SSE). 팀장은 승인 카드와 `approval-progress`로 | [decisions.md 6.43](decisions.md) |

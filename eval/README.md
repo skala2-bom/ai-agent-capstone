@@ -43,6 +43,8 @@
 
 ## 문항 늘리기 (기획안 D4: 10~20개)
 
+지금은 8문항이다: `question` 5개(SC1~SC4 질문), `verify` 3개.
+
 1. **C 파트**가 질문을 쓴다. 기존 시나리오의 날짜·수량을 바꾼 변형이면 된다 (예: "허브를 11/28로 당기면?").
 2. `whatif`까지 적고 `expected`는 비워 둔 채(`{}`) B 파트에 넘긴다.
 3. **B 파트**가 계산으로 `expected`를 채우고 `mvn test`로 확인한 뒤 커밋한다.
@@ -54,7 +56,29 @@
 
 ```bash
 docker compose down -v && docker compose up -d --build
+env -u OPENAI_API_KEY docker compose --env-file .env --profile indexing run --rm --build rag-index
 ```
+
+`down -v`는 RAG 색인도 같이 지운다. 문서 근거가 필요한 문항을 돌리려면 `rag-index`를 다시 실행한다 ([data/README.md](../data/README.md)).
+
+## AI Harness 평가
+
+backend 테스트와 같은 `golden.json`을 agent 쪽에서도 읽는다. 자세한 결과·재현은 [docs/harness-validation.md](../docs/harness-validation.md).
+
+| 파일 | 하는 일 | 모델 호출 |
+|---|---|---|
+| `agent/eval_golden.py` | 질문 문항마다 `classify_intent`가 뽑은 whatif가 정답과 같은지, verify 문항의 판정이 맞는지 | 키가 있으면 실제 모델(비용 발생), 없으면 규칙 분류 |
+| `agent/eval_harness.py` | 질문 5개 × 다른 표현 3개 + verify 3개 = 18문항. 정답 숫자는 복제하지 않고 `golden.json`을 참조 | 없음 (실제 모델 모드는 거부) |
+| `reports/` | 보완 전후 평가(`harness-before.json`·`harness-after.json`), 검증 요약, 추적·재시작 기록 | — |
+
+비용 없는 실행 (격리 테스트 환경, [tests/README.md](../tests/README.md)):
+
+```bash
+docker compose -p capstone-harness-check -f tests/compose.yml up -d --build --wait
+docker compose -p capstone-harness-check -f tests/compose.yml run --rm tests python /repo/agent/eval_harness.py /repo/eval/golden.json
+```
+
+실제 모델로 `eval_golden.py`를 돌리는 명령은 [tests/README.md](../tests/README.md)의 "실제 모델 검사"에 있다. `eval_harness.py`의 점수는 가짜 모델의 규칙 처리 결과이며 실제 LLM 정답률이 아니다.
 
 ## 쓰는 곳
 

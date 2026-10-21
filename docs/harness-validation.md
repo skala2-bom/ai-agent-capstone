@@ -45,6 +45,26 @@ LangSmith 연결과 실패 추적의 도착은 실제 서비스로 확인했다.
 | LLM 복구 검증 | SDK 설정 중심 | 재시도/대체/최종 실패 모의 검증 |
 | 실제 실패 작업의 LangSmith 링크 | 없음 | 기록·조회 및 외부 오류 span 확인 |
 
+### 한도 초과·재시도·대체 모델 발생 건수
+
+교재 평가 기준은 전후 결과표와 함께 **한도 초과·재시도·대체 모델 발생 건수**를 요구한다. 아래 숫자는 저장된 실행 기록(`eval/reports/*`의 `TRACE` 통계)과 장애를 일부러 넣은 시험(`tests/test_harness.py`)의 단정문에서 그대로 옮겼다. 새로 만든 숫자는 없다.
+
+| 구분 | 상황 | 재시도 | 대체 모델 | 한도 초과(차단) | 도구 오류 | 근거 |
+|---|---|---:|---:|---:|---:|---|
+| 실제 실행 기록 | 정상 작업 | 0 | 0 | 0 | 0 | [tracing-success.json](../eval/reports/tracing-success.json) (도구 10회) |
+| 실제 실행 기록 | 실패 작업 | 0 | 0 | 0 | 1 | [tracing-failure.json](../eval/reports/tracing-failure.json) (도구 1회 실패를 그대로 기록) |
+| 실제 실행 기록 | 승인 대기 중 컨테이너 재시작 → 재개(4회차) | 0 | 0 | 0 | 0 | [restart-traces.json](../eval/reports/restart-traces.json) |
+| 장애 주입 | 429가 2번 난 뒤 성공 | **2** | 0 | 0 | – | `test_429_twice_then_success…` (호출 3회, 대기 2회) |
+| 장애 주입 | 주 모델 503이 3번 → 대체 모델 성공 | **2** | **1** | 0 | – | `test_503_exhaustion_binds_tools_on_fallback` (모델 호출 4회) |
+| 장애 주입 | 주·대체 모두 503 | 2+2 | 1 | – | – | `test_all_models_fail…` (각 3회 후 최종 실패). 401은 재시도 0회 |
+| 장애 주입 | 같은 도구 4번째 호출 | – | – | **1** | – | `test_same_tool_fourth_call_never_reaches_mcp` (MCP에 닿지 않음) |
+| 장애 주입 | 턴 한도 (일반 8 / 해결안 64) | – | – | **1씩** | – | `test_path_specific_turn_limits_and_fake_mode` |
+| 장애 주입 | 입력 예산 초과 | – | – | **1** | – | `test_context_failure_never_calls_model` (모델 호출 0회) |
+| 장애 주입 | 도구가 실패를 값으로 돌려줌 | – | – | – | **1** | `test_tool_error_is_counted_even_when_returned_as_false` |
+
+- 저장된 실제 기록은 무료 실행(`AGENT_MODEL_MODE=fake`)이라 모델 재시도·대체가 일어날 수 없어 0이다. 실제 공급자 장애에서의 건수는 예산 $0이라 측정하지 않았다 (아래 미검증 항목).
+- 한도 값 자체(일반 8턴, 해결안 64턴, 실행 600초)를 바꾼 이유는 [decisions 6.7](decisions.md)에 있다.
+
 18문항은 정답 숫자를 복제하지 않고 `eval/golden.json`의 5개 질문에 대한 3개 표현과 기존 verify 3개를 참조한다.
 가짜 모델의 규칙 처리 성능이며 **실제 LLM 정답률 개선을 의미하지 않는다**.
 

@@ -15,9 +15,13 @@ npm run build
 
 기본은 mock입니다. `frontend/.env.local`에 `VITE_DATA_MODE=api`를 설정하고 개발 서버를 다시 실행하면 API 모드입니다. 오류 시 mock으로 전환하지 않습니다. 개발 `/api` 프록시 대상은 `localhost:8080`입니다.
 
-Docker는 기존 루트 compose를 그대로 사용합니다. 프론트 Dockerfile에 Vite 빌드 단계가 있으며 nginx는 SPA fallback·Authorization 전달·SSE buffering 해제를 포함합니다. API 이미지: `docker build --build-arg VITE_DATA_MODE=api -t bom-frontend ./frontend`. 이번 개편에서는 Docker 실행을 검증하지 않았습니다.
+Docker는 루트 compose를 그대로 사용합니다. 프론트 Dockerfile의 기본값은 mock(`ARG VITE_DATA_MODE=mock`)이지만, compose는 `VITE_DATA_MODE=api`로 빌드합니다(루트 `.env`에 `VITE_DATA_MODE=mock`을 넣으면 목데이터). Dockerfile에 Vite 빌드 단계가 있으며 nginx는 SPA fallback·Authorization 전달·SSE buffering 해제를 포함합니다. 단독 API 이미지: `docker build --build-arg VITE_DATA_MODE=api -t bom-frontend ./frontend`.
 
-## 진입과 시연
+## 화면
+
+업무 현황(`/`)·생산계획(`/plans`)·자재 · BOM(`/materials`)·발주 · 입고(`/purchasing`)·승인 대기함(`/approvals`)·작업 이력(`/history`) 6개입니다. 해결안 비교 화면은 없습니다. 구매 담당자는 AI 채팅으로 해결 방법을 요청하고, 작업 카드에서 검토해 팀장에게 보냅니다.
+
+## 진입과 시연 (mock)
 
 데모 시작 → 역할 3개 중 선택 → 업무 환경 5개 중 선택 → 업무현황. 로그인 폼은 실제 API용이며 데모 역할 선택과 구분합니다.
 
@@ -39,13 +43,13 @@ Case 2·3의 조달 후보는 영향 검증 전이므로 비용등급을 입력�
 
 ## 백엔드 연동
 
-현재 실제 공개 코드에는 `POST /api/ai/tasks` → `202 {taskId}`와 `GET /api/ai/tasks/{id}/stream`이 있습니다. 요청은 `{question}` 문자열 하나입니다. fetch SSE는 JWT Authorization 헤더를 사용하며 URL에 JWT를 넣지 않습니다. taskId/seq replay 중복 제거, TOKEN→DONE 교체, 다중 승인, 재연결, 종료·작업/역할/환경 전환 정리를 지원합니다. 승인 대기에 자동 만료를 두지 않습니다.
+현재 실제 공개 코드에는 `POST /api/ai/tasks` → `202 {taskId}`와 `GET /api/ai/tasks/{id}/stream`이 있습니다. 요청은 `{question}` 문자열 하나입니다. fetch SSE는 JWT Authorization 헤더를 사용하며 URL에 JWT를 넣지 않습니다. taskId/seq replay 중복 제거, 다중 승인, 재연결, 종료·작업/역할/환경 전환 정리를 지원합니다. 승인 대기에 자동 만료를 두지 않습니다. agent는 `TOKEN`을 보내지 않으며 최종 답변은 `DONE`의 `answer`에 옵니다(화면의 `TOKEN` 처리는 호환용으로만 남아 있습니다).
 
-문서에만 있는 로그인·업무 조회/저장·승인함 API는 아직 실제 연결이 필요합니다. 현재 backend의 로그인 미구현 때문에 API 모드 로그인 실패가 정상입니다. 잠정 로그인 DTO는 `{token,role,name}`이며 서버 응답과 합의해야 합니다. 기본 조회/저장 필드는 `src/types.ts`, 변환 경계는 `services/api.ts`에 있습니다. 미구현 mutation은 명시적 오류입니다. API 목록에서 아직 연결되지 않은 해결안/승인/이력은 빈 상태로 표시됩니다.
+API 모드에서는 실제 backend에 연결됩니다. 로그인은 `POST /api/auth/login`(시연 계정 `planner`·`buyer`·`approver`, 비밀번호 `1234`)입니다. 업무 조회·저장(`/api/plans`·`/api/inventory`·`/api/purchase-orders`·`/api/suppliers/metrics`), 영향 분석·대안 비교(`/api/analysis/impact`·`/api/analysis/options`), 승인 대기함(`/api/approvals`, `POST /api/ai/tasks/{id}/approval`), 구매 검토 전송·철회(`POST /api/ai/tasks/{id}/review/submit`·`/review/withdraw`), 작업 이력(`GET /api/ai/tasks`)이 연결되어 있습니다. 기본 조회/저장 필드는 `src/types.ts`, 변환 경계는 `services/api.ts`에 있습니다.
 
 추가 합의: 후보 버전·검수 확정·생산 우선순위·발주 변경 요청·실행 완료 이벤트/상태 재조회·입고 검수·문서 원문·예상재고 흐름 DTO. 비용등급, 생산 우선순위, 협력사×부품 평가지표는 독립 모델입니다. 운영 권한/금액 마스킹은 서버 책임이며 목데이터의 역할 선택은 실제 인증이 아닙니다.
 
-정책/데이터: `data/`가 없어 최소 fixture를 사용합니다. 실제 응답의 PP-04 2026-11-26을 수정하지 않으며 데모는 기획안의 11-30입니다. SC2·3 과잉은 `demo-A1-A3-30d-v0.1`의 이전 30일 결과입니다. 최신 `N=max(리드타임,30일)`은 서버 재분석이 필요합니다. 재고/BOM 판정 엔진은 프론트에 구현하지 않습니다. MCU 재고 흐름은 Case 1에서만 표시하는 별도 시연 fixture입니다. 견적·근거 원문은 가상 문구이며 실제 계약/ISO 원문이 아닙니다.
+정책/데이터: 근거 문서는 저장소 루트 `data/`에 있고 API 모드에서는 서버(RAG)가 사용합니다. `src/mocks/`의 fixture는 mock 모드 전용입니다. 실제 응답의 PP-04 2026-11-26을 수정하지 않으며 데모는 기획안의 11-30입니다. SC2·3 과잉은 `demo-A1-A3-30d-v0.1`의 이전 30일 결과입니다. 최신 `N=max(리드타임,30일)`은 서버 재분석이 필요합니다. 재고/BOM 판정 엔진은 프론트에 구현하지 않습니다. MCU 재고 흐름은 Case 1에서만 표시하는 별도 시연 fixture입니다. 견적·근거 원문은 가상 문구이며 실제 계약/ISO 원문이 아닙니다.
 
 ## 확인
 

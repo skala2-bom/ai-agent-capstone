@@ -4,9 +4,9 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-21 — 최신 main과 병합: 작업 단위 구매 검토(40번)·팀장 직접 재제안(41번) 추가. 이전 기록: 아래 "최근 변경" 표 31~34번 (해결안 비교 팀장 전용, 답변 가독성, 승인 대기함 요청자 조회, AI·프론트 다건 승인)
+> **갱신**: 2026-10-21 — 아래 "최근 변경" 표의 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
 
-## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~밤, B 파트)
+## 최근 변경 — 각 파트가 확인할 것 (10/20~10/21, 모든 파트)
 
 > 맨 위에 두는 이유: 계약이 바뀐 줄이 문서 곳곳에 흩어져 있어서, 무엇이 바뀌었고 **누가 무엇을 해야 하는지**를 한 번에 보게 하려는 것이다. 다음 변경이 생기면 이 표를 새로 쓴다.
 
@@ -18,43 +18,43 @@
 | 40 | **작업 단위 구매 검토** — 전체 문제 설명 + 고정된 품목 문제 + 부품별 메모. 현재 작업의 초안 전체를 전송/철회. 팀장에게 DRAFT·WITHDRAWN 비노출 | 3.1·3.3, decisions 6.39, [구현·검증 기록](task-review-changes.md) | 공통 작업 검토 UI와 task API 사용. 카드별 전송 API 폐기 | 모든 카드 등록 뒤 TASK_REVIEW_READY. 기존 승인/거절·실행은 부품별 유지. DB 스키마 변경 없음 |
 | 39 | **해결안 비교 화면 삭제** (팀장 포함 모두), AI 채팅창에 업무 검색·너비 조절 | decisions 6.38 | ✅ B가 반영함. 해결안은 채팅창 카드와 승인 대기함에서만 | 없음 (`compare_options`·`/api/analysis/options`는 그대로) |
 | 38 | **Harness 관측·예산·모델 복구** (harness 브랜치, MaJaeHyun00) — `TRACE` 이벤트(업무 상태는 안 바뀜), 작업 목록 `trace`·상세 `traces[]`, 도구 결과·입력 토큰 예산, 모델 재시도·대체(`FALLBACK_MODEL`), LangSmith 추적(기본 꺼짐) | 아래 "Harness 관측 추가 계약", decisions 6.37, [harness-validation.md](harness-validation.md) | 작업 이력에 trace 표시 (반영됨) | 반영됨. `.env`에 `AGENT_MODEL_MODE`·`LANGSMITH_*`·예산 변수 추가 (`.env.example`) |
-| 37 | **구매 담당자 검토 단계** — 구매 요청 카드는 `DRAFT`(초안)로 시작. 요청자가 문제 정의(AI가 채움)·메모를 달아 `submit`하면 팀장에게, `withdraw`하면 보내지 않음. 반려 뒤 재제안도 다시 초안으로. `APPROVAL_REQUIRED`에 `problem` 추가, resume `decision`에 `WITHDRAWN` 추가 | 2.7·3.1·3.3, decisions 6.33 | ✅ B가 반영함: **AI 채팅창 카드**와 승인 대기함 양쪽에서 초안에 문제 정의·메모를 달아 보내기/보내지 않기(6.34), 팀장 화면의 요청자 검토 표시, 구매 할 일 "승인 요청 보내기 (초안)" | ✅ B가 반영함: `problem_text`, `approval_gate`의 WITHDRAWN 처리, `approval_summary.WITHDRAWN`. 통합 테스트는 초안을 먼저 보내고 결정, 새 시나리오 `draft` |
+| 37 | **구매 담당자 검토 단계** — 구매 요청 카드는 `DRAFT`(초안)로 시작. 요청자가 문제 정의(AI가 채움)·메모를 달아 `submit`하면 팀장에게, `withdraw`하면 보내지 않음. 반려 뒤 재제안도 다시 초안으로. `APPROVAL_REQUIRED`에 `problem` 추가, resume `decision`에 `WITHDRAWN` 추가 (→ 검토 단위는 40번, 재제안 경로는 41번에서 바뀜) | 2.7·3.1·3.3, decisions 6.33 | ✅ B가 반영함: **AI 채팅창 카드**와 승인 대기함 양쪽에서 초안에 문제 정의·메모를 달아 보내기/보내지 않기(6.34), 팀장 화면의 요청자 검토 표시, 구매 할 일 "승인 요청 보내기 (초안)" | ✅ B가 반영함: `problem_text`, `approval_gate`의 WITHDRAWN 처리, `approval_summary.WITHDRAWN`. 통합 테스트는 초안을 먼저 보내고 결정, 새 시나리오 `draft` |
 | 36 | **카드가 남아 있으면 작업 상태는 `WAITING_APPROVAL`** — 여러 장 중 하나를 결정해도 "승인 대기" 유지, 마지막 결정 뒤에만 `RUNNING` | 3.1, decisions 6.31 | 없음 (작업 이력·필터가 그대로 맞게 나온다) | 없음 |
 | 35 | **거절 뒤 재검토 결과 안내** — 거절한 제안에 `outcome`(재제안 생성 / 대안 없음 / 검토 실패 / 재제안 한도 + 안내 + 다음 행동). `GET /api/ai/tasks/{id}`에 `progress`(제안별 최신 진행) 추가. 부분 해결안(줄이기만)은 내지 않는다 | 3.1, decisions 6.30 | ✅ B가 반영함 (사용자 지시): 승인 대기함의 거절 카드 바로 아래에 결과 표시 (팀장·요청자 모두) | ✅ B가 반영함 (사용자 지시): `graph.py`의 `skip_target`·`save_proposal`·`replan_prepare`가 결과를 붙이고 `PROPOSAL_PROGRESS`·`DONE.result.proposals`에 실린다. `blocked_targets`는 그대로. 확인 부탁 |
-| 34 | 해결안을 모두 준비한 뒤 개별 카드 등록, 독립 승인·실행. AI의 영구 접수함과 실행 기록 추가 | 2.7, 3.2, decisions 6.29, [검증 기록](ai-rag-integration-changes.md) | 작업별 승인 그룹·개별 접수·3초 갱신·진행 이벤트·기존 작업 다시 열기 구현 | 체크포인트와 카드 연결 보존, 최신 상태 재검증, 모호한 응답은 자동 재실행 금지 |
+| 34 | 해결안을 모두 준비한 뒤 개별 카드 등록, 독립 승인·실행. AI의 영구 접수함과 실행 기록 추가 (→ 구매 검토는 37·40번에서 추가됨) | 2.7, 3.2, decisions 6.29, [검증 기록](ai-rag-integration-changes.md) | 작업별 승인 그룹·개별 접수·3초 갱신·진행 이벤트·기존 작업 다시 열기 구현 | 체크포인트와 카드 연결 보존, 최신 상태 재검증, 모호한 응답은 자동 재실행 금지 |
 | 33 | **승인 대기함: 팀장 외에는 내가 요청한 카드만** — `GET /api/approvals`가 요청자 기준으로 거르고, 화면이 모든 역할에서 대기함을 불러온다. 승인·거절은 그대로 팀장만 | 3.1, decisions 6.28 | ✅ B가 반영함 (사용자 지시) | 없음 |
 | 32 | **답변 가독성** — ① `analyze_impact` 항목에 `item_name`·`product_name` 추가 ② 영향 분석 답변의 결품·주의·과잉 목록과 연쇄 결품 줄은 **코드가 계산 결과에서 그대로** 쓰고, 모델은 결론 1~2문장만 ③ 프롬프트에 평문 규칙 ④ 화면이 답변을 결론·제목·목록으로, 근거를 문서 카드로 그림 | 2.2·3.2, decisions 6.27 | ✅ B가 반영함 (사용자 지시). QA 결과(`impact: null`)에 빈 영향 결과를 안 그리고, 실행한 해결안은 `post_execution_impact`를 보여 준다 (C 변경 기록 2·9번) | 확인 필요: `graph.py`의 `lead_text`·`chain_note`·`describe_impact`, `prompts/impact.md`·`qa.md`를 B가 고쳤다. 남은 것: 검색 근거의 관련성(SC2 질문에 도어센서 문서가 붙음) |
-| 31 | **해결안 비교 화면은 구매팀장(APPROVER)만** — 메뉴·주소·링크·할 일 카드 모두. 구매 담당자는 AI 채팅으로 승인을 요청한다 (팀 토의) | decisions 6.25 | ✅ B가 반영함 (사용자 지시). 목데이터 모드의 검수·우선순위 단계는 생산관리·구매가 더 못 쓴다 — 확인 필요 | 없음. 구매 담당자의 해결 요청은 채팅으로만 들어온다 |
+| 31 | **해결안 비교 화면은 구매팀장(APPROVER)만** — 메뉴·주소·링크·할 일 카드 모두. 구매 담당자는 AI 채팅으로 승인을 요청한다 (팀 토의) (→ 39번에서 화면 자체를 삭제) | decisions 6.25 | ✅ B가 반영함 (사용자 지시). 목데이터 모드의 검수·우선순위 단계는 생산관리·구매가 더 못 쓴다 — 확인 필요 | 없음. 구매 담당자의 해결 요청은 채팅으로만 들어온다 |
 | 30 | AI 결품·과잉 순차 승인 및 실제 RAG 연결. `DONE.result` 기본 3칸 유지, ADJUST 실행 내역·실행 후 분석 필드 추가 | 3.2, [변경 기록](ai-rag-integration-changes.md) | 감량·취소 승인 카드의 `tool`별 표시, 순차 승인 대기함 갱신 확인 필요 | 구현·회귀 검사. 변경 내역은 A·B 공유 필요 |
-| 1 | **평가셋 정답은 `eval/golden.json`** (기획안 PDF 아님) | 2.8 | 시연 질문 예시에 `question` 사용 가능 | 🔴 **Harness 평가가 이 파일을 읽게** |
-| 2 | `analyze_impact` whatif 연산 6개 | 2.2 | – | 🔴 **business-mcp 도구 설명에 6개 모두 적기**, `classify_intent` 출력 형식 |
-| 3 | `compare_options` 요청에 `whatif` 추가, 응답에 `item_id`·`resolves`·`recommended`·`cost_level` | 2.3 | – | verify가 `{"op": tool, **args}`로 다시 계산 |
-| 4 | **`X-Role`이 없으면 금액이 전부 가려진다** (생산관리 기준) | 1.1 | – | 🔴 **agent → business-mcp → backend로 `X-Role`·`X-User-Id` 헤더 전달**. backend가 `/agent/tasks`에 `userId`·`role`을 넣어 준다 |
-| 5 | 로그인 생김. `/api/**`는 JWT 필수, SSE는 `?access_token=` | 3.1 | 🔴 **로그인 화면, 모든 요청에 `Authorization` 헤더** (지금 화면에 임시 버튼을 넣어 뒀다) | – |
-| 6 | 생산관리 담당자에게 추가 비용은 금액 대신 등급(`cost_level`) | 1.2 | 생산관리 화면에서 `cost_level` 표시 | – |
-| 7 | 오류 코드 `INVALID_ARGUMENT` 추가 | 2.5 | – | 없음 (그대로 전달) |
-| 8 | `analyze_impact` 응답에서 `evidence_uri` 제거, `compare_options`의 `evidence`는 빈 목록 | 2.2·2.3 | – | 근거는 `search_docs`로 |
-| 9 | 새 발주(추가 발주·대체 협력사 구매)는 **도구로 열지 않는다** (B 제안, 이견 있으면 뒤집기) | decisions 6.16 | – | – |
-| 10 | **승인 흐름이 실제로 동작한다**: 카드 저장·대기함·승인/거절·agent 재개 요청, 변경 도구는 승인과 도구·인자가 같을 때만 저장 | 3.1·3.3 | 승인 대기함·승인 카드 화면을 실제 API로 | 🔴 **`agent-draft`를 main에 합치기** — 지금 main의 agent엔 `/resume`이 없어 승인 후 FAILED가 난다 |
-| 11 | `APPROVAL_REQUIRED` 이벤트 응답이 `{approvalId}`, SSE 이벤트에 `before`·`after` 추가 | 3.2·3.3 | 승인 카드에 변경 전후 표시 | (참고) 같은 이벤트를 다시 보내도 카드는 하나 |
-| 12 | 화면 변경 API 2개 — **프론트가 정한 요청 모양 그대로**: `PUT /api/plans/{id} {date, qty}`, `PUT /api/purchase-orders/{id}/due-date {due_date, reason}` | 3.1 | API 모드에서 바로 쓸 수 있다 | – |
-| 13 | **로그인 요청 칸은 `user_id`** (프론트 잠정안은 `username`) | 3.1 | 🔴 **`services/api.ts`의 `username` → `user_id`** | – |
-| 14 | 조회 응답은 `{plans: [...]}`처럼 감싸져 있고 snake_case | 2.1 | 🔴 **`services/api.ts`에서 화면 타입으로 변환** (`plan_id`→`id`, `on_hand`→`stock` 등) | – |
-| 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
-| 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
-| 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
 | 29 | **AI 작업이 RabbitMQ 대기열을 거친다** (`ai.tasks`, 실패하면 30초·2분 뒤 다시, 3번째 실패는 DLQ + `FAILED`). 접수·승인 후 재개 둘 다. **꺼내 보내는 것도 backend**라 agent 쪽 HTTP 경로(`/agent/tasks`, `/resume`)는 그대로 | decisions 6.24 | 없음. 재시도 중에는 작업이 `QUEUED`로 최대 2분 30초 머문다. 새 오류 코드 `QUEUE_UNAVAILABLE`(대기열에도 못 넣음) | 없음. 같은 작업을 두 번 받지 않게 backend가 막는다 (이미 시작한 작업은 다시 안 보냄) |
-| 28 | 화면용 분석 API `POST /api/analysis/impact`·`POST /api/analysis/options` `{whatif}` — AI 도구와 같은 계산, 로그인 역할대로 금액 가림 | 3.1 | ✅ 반영함: 업무 현황 위험, 해결안 비교, 생산계획 영향 미리보기 | 없음 |
+| 28 | 화면용 분석 API `POST /api/analysis/impact`·`POST /api/analysis/options` `{whatif}` — AI 도구와 같은 계산, 로그인 역할대로 금액 가림 (→ 해결안 비교 화면은 39번에서 삭제) | 3.1 | ✅ 반영함: 업무 현황 위험, 해결안 비교, 생산계획 영향 미리보기 | 없음 |
 | 27 | **RAG 근거 문서 6개** (`data/docs/`, `data/documents.json`) — 시스템 ID·결정에 맞춘 v1.2. 조항 단위 `doc://{doc_id}/{clause_no}` | 2.2 근거 | – | ✅ indexer·`search_docs`·pgvector·실제 원문 조회 구현, 하드코딩 삭제. 환경마다 최초 색인 필요 (`data/README.md`) |
 | 26 | `compare_options` 대안에 **`side_effects` 명세 형식**(NEW·WORSENED, 전후 결품량, `product_id`)과 **`remaining_issues`** 추가 | 2.3 | – | verify가 `remaining_issues`로 "왜 안 풀렸는지"를 설명할 수 있다. 기존 `resolves`는 그대로 |
-| 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
-| 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |
-| 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | 감량·취소 승인 카드 표시 확인 (30번) | ✅ `INV-003`도 개별 검증→승인→실행 흐름 연결 |
-| 24 | **협력사 지연 입력 → 자동 분석 작업** (`trigger = SYSTEM`, `whatif`를 backend가 채움, PLANNER 역할로 돌아 금액 없음). 응답에 `analysis_task_id` | 2.6·3.1 | 지연 입력 뒤 `analysis_task_id`로 결과 보여 주기, 생산관리 작업 목록에도 나옴 | 없음 (그대로 동작 확인) |
 | 25 | 화면 API: `GET /api/items/{id}/bom`, `GET /api/suppliers/metrics`, `PUT /api/suppliers/{s}/items/{i}/metrics` (평가지표 입력, BUYER) | 3.1 | 평가지표 표·입력 연결됨 (반영됨) | 없음 |
+| 24 | **협력사 지연 입력 → 자동 분석 작업** (`trigger = SYSTEM`, `whatif`를 backend가 채움, PLANNER 역할로 돌아 금액 없음). 응답에 `analysis_task_id` | 2.6·3.1 | 지연 입력 뒤 `analysis_task_id`로 결과 보여 주기, 생산관리 작업 목록에도 나옴 | 없음 (그대로 동작 확인) |
+| 23 | `compare_options`가 **과잉 대안**도 낸다 (`CHANGE_QTY`·`CANCEL_PO`·입고 미루기), 대안에 `target_rule`(INV-001/INV-003)·`saved_amount` 추가 | 2.3 | 감량·취소 승인 카드 표시 확인 (30번) | ✅ `INV-003`도 개별 검증→승인→실행 흐름 연결 |
+| 22 | **2차 도구 5개 동작** (`explode_bom`·`where_used`·`get_supplier_metrics`·`change_po_qty`·`cancel_po`) | 2.1 | – | ✅ business-mcp에 등록함. 🔴 **그래프가 언제 쓸지는 C가 정한다** (지금 그래프는 결품 대안만 실행) |
+| 21 | **`/internal/**`에 서비스 토큰 필수** (`X-Service-Token`). agent 토큰은 이벤트 경로(`/internal/tasks/**`)만, business-mcp 토큰은 업무 경로만 열린다 | 1.1 | – | ✅ 반영함: business-mcp는 넘겨받은 토큰을 버리고 자기 토큰을, agent는 이벤트에 토큰을 싣는다 (`SERVICE_TOKEN` 환경변수) |
 | 20 | **`DONE.result`는 `{intent, whatif, impact}`** — 결품은 `result.impact` 안 | 3.2 | 화면이 `result.impact`를 읽게 고침 (반영됨) | 지금 모양 그대로 (바꾸면 알려 주기) |
-| 19 | **작업·이벤트가 DB에 남는다** (재시작해도 승인 대기 작업이 이어짐). `GET /api/ai/tasks/{id}`, `GET /api/ai/tasks?mine=true` 생김 | 3.1 | 작업 이력 화면을 실제 목록으로 (반영됨) | 없음 |
+| 19 | **작업·이벤트가 DB에 남는다** (재시작해도 승인 대기 작업이 이어짐). `GET /api/ai/tasks/{id}`, `GET /api/ai/tasks?mine=true` 생김 (→ 작업 목록·조회 권한은 43번에서 "본인만"으로 바뀜) | 3.1 | 작업 이력 화면을 실제 목록으로 (반영됨) | 없음 |
 | 18 | 재고 응답에 `supplier_id`·`supplier_name`·`lead_time_days`·`used_in`(들어가는 완제품 이름), 발주 응답에 `supplier_name` — **칸 추가만** | 2.1 | 자재 화면의 협력사·리드타임·공용 제품 표시에 쓴다 (반영됨) | 없음 |
+| 17 | 오류 코드 추가: `ROLE_NOT_ALLOWED`(403) · `APPROVAL_NOT_PENDING`(409) · `PLAN_NOT_OPEN`(409) | 2.5 | 403 문구가 이미 있다 | `ROLE_NOT_ALLOWED`를 받으면 "구매 담당자에게 요청" 안내로 끝내기 |
+| 16 | `compare_options`는 `whatif`가 있어야 대안이 나온다 | 2.3 | – | 🔴 **`agent-draft`의 business-mcp `compare_options`에 `whatif` 인자 추가** — 없으면 대안 0개 |
+| 15 | compose가 프론트를 **목데이터 모드**로 빌드한다 (프론트 Dockerfile 기본값) | – | 12·13·14번 뒤 compose에 `VITE_DATA_MODE=api` 빌드 인자를 넣기 (B와 같이) | – |
+| 14 | 조회 응답은 `{plans: [...]}`처럼 감싸져 있고 snake_case | 2.1 | 🔴 **`services/api.ts`에서 화면 타입으로 변환** (`plan_id`→`id`, `on_hand`→`stock` 등) | – |
+| 13 | **로그인 요청 칸은 `user_id`** (프론트 잠정안은 `username`) | 3.1 | 🔴 **`services/api.ts`의 `username` → `user_id`** | – |
+| 12 | 화면 변경 API 2개 — **프론트가 정한 요청 모양 그대로**: `PUT /api/plans/{id} {date, qty}`, `PUT /api/purchase-orders/{id}/due-date {due_date, reason}` | 3.1 | API 모드에서 바로 쓸 수 있다 | – |
+| 11 | `APPROVAL_REQUIRED` 이벤트 응답이 `{approvalId}`, SSE 이벤트에 `before`·`after` 추가 | 3.2·3.3 | 승인 카드에 변경 전후 표시 | (참고) 같은 이벤트를 다시 보내도 카드는 하나 |
+| 10 | **승인 흐름이 실제로 동작한다**: 카드 저장·대기함·승인/거절·agent 재개 요청, 변경 도구는 승인과 도구·인자가 같을 때만 저장 | 3.1·3.3 | 승인 대기함·승인 카드 화면을 실제 API로 | 🔴 **`agent-draft`를 main에 합치기** — 지금 main의 agent엔 `/resume`이 없어 승인 후 FAILED가 난다 |
+| 9 | 새 발주(추가 발주·대체 협력사 구매)는 **도구로 열지 않는다** (B 제안, 이견 있으면 뒤집기) | decisions 6.16 | – | – |
+| 8 | `analyze_impact` 응답에서 `evidence_uri` 제거, `compare_options`의 `evidence`는 빈 목록 | 2.2·2.3 | – | 근거는 `search_docs`로 |
+| 7 | 오류 코드 `INVALID_ARGUMENT` 추가 | 2.5 | – | 없음 (그대로 전달) |
+| 6 | 생산관리 담당자에게 추가 비용은 금액 대신 등급(`cost_level`) | 1.2 | 생산관리 화면에서 `cost_level` 표시 | – |
+| 5 | 로그인 생김. `/api/**`는 JWT 필수, SSE는 `?access_token=` | 3.1 | 🔴 **로그인 화면, 모든 요청에 `Authorization` 헤더** (지금 화면에 임시 버튼을 넣어 뒀다) | – |
+| 4 | **`X-Role`이 없으면 금액이 전부 가려진다** (생산관리 기준) | 1.1 | – | 🔴 **agent → business-mcp → backend로 `X-Role`·`X-User-Id` 헤더 전달**. backend가 `/agent/tasks`에 `userId`·`role`을 넣어 준다 |
+| 3 | `compare_options` 요청에 `whatif` 추가, 응답에 `item_id`·`resolves`·`recommended`·`cost_level` | 2.3 | – | verify가 `{"op": tool, **args}`로 다시 계산 |
+| 2 | `analyze_impact` whatif 연산 6개 | 2.2 | – | 🔴 **business-mcp 도구 설명에 6개 모두 적기**, `classify_intent` 출력 형식 |
+| 1 | **평가셋 정답은 `eval/golden.json`** (기획안 PDF 아님) | 2.8 | 시연 질문 예시에 `question` 사용 가능 | 🔴 **Harness 평가가 이 파일을 읽게** |
 
 > ✅ **10/20 밤 통합 확인** — AI 팀원의 `integration-draft`(agent + 프론트 API 연결) 위에 B 변경을 얹어 **질문 → 영향 분석 → 대안 비교 → 검증 → 승인 요청 → 팀장 승인 → agent 재개 → 분할 실행 → 답변**이 실제로 끝까지 도는 것을 확인했다 (가짜 모델 기준).
 > 이 통합으로 **2·3·4·10·13·14·15·16번은 해결됐다.** 남은 것: 1번(Harness 평가가 `eval/golden.json`을 읽는지 — `agent/eval_golden.py`가 읽음, C 확인), 6번(생산관리 화면의 `cost_level` 표시, A).
@@ -480,7 +480,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | GET | `/api/ai/tasks?mine=true` | ✅ 본인 작업 목록, 최근 50개. `mine` 생략·false도 본인만. 본인이 시작한 SYSTEM 작업 포함 | 로그인 |
 | GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3). **APPROVER에게 DRAFT·WITHDRAWN은 제외, 다른 역할은 자기가 요청한 카드만** (남의 카드 하나를 열면 403 `ROLE_NOT_ALLOWED`, decisions 6.28) | 전부 (요청자 기준으로 거름) |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` · `/api/suppliers/metrics` (응답 모양은 2.1 `/internal`과 같다) | 조회 | 로그인 (금액 마스킹) |
-| POST | ✅ `/api/analysis/impact` · `/api/analysis/options` `{whatif, issues?}` | AI 도구 2.2·2.3과 같은 모양. `whatif`를 비우면 지금 DB 상태 그대로 (업무 현황·해결안 비교), 넣으면 미리보기 (DB는 안 바뀜) | 로그인 (금액 마스킹) |
+| POST | ✅ `/api/analysis/impact` · `/api/analysis/options` `{whatif, issues?}` | AI 도구 2.2·2.3과 같은 모양. `whatif`를 비우면 지금 DB 상태 그대로 (업무 현황 위험), 넣으면 미리보기 (생산계획 영향 미리보기) (DB는 안 바뀜) | 로그인 (금액 마스킹) |
 | PUT | ✅ `/api/suppliers/{supplier_id}/items/{item_id}/metrics` `{on_time_rate?, quality_score?, unit_price?, lead_time_days?, expedite_cost_per_day?, split_fee?, delay_penalty?}` | 바뀐 지표 한 줄. 보낸 칸만 바꾸고 `evaluated_at`·`evaluated_by`를 남긴다 | BUYER·APPROVER (AI 도구로는 안 연다) |
 | PUT | `/api/plans/{id}` `{date?, qty?, reason?}` | ✅ 바뀐 계획 한 건 (목록과 같은 모양) | PLANNER만 (팀장도 안 됨) |
 | PUT | `/api/purchase-orders/{id}/due-date` `{due_date, reason}` | ✅ 바뀐 발주 한 건 (목록과 같은 모양) + `analysis_task_id`(자동 분석 작업). 사유 필수 | BUYER·APPROVER |
@@ -511,18 +511,20 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 - 응답의 `role`·`name`은 화면 표시에만 쓴다. 권한 판단은 backend가 한다 (교재 5장).
 - 시연 계정: `planner`(김계획) · `buyer`(박구매) · `approver`(정팀장), 비밀번호 `1234`.
 
-### 3.2 SSE 이벤트 (기존 6종 + AI 진행 2종)
+### 3.2 SSE 이벤트 (실제로 보내는 9종 + 예약 1종)
 
 공통 필드: `type`, `taskId`, `seq`, `ts`
 
 | type | 추가 필드 | 화면 |
 |---|---|---|
-| `TOKEN` | `text` | 답변 영역에 이어 붙임 |
+| `TOKEN` | `text` | **예약만 하고 보내지 않는다.** 답변은 완성된 뒤 `DONE.answer`로 한 번에 보낸다 — 목록·숫자를 코드가 계산 결과에서 붙이는 구조(decisions 6.27)라 토큰 단위로 흘려보낼 중간 글이 없다. 화면은 받을 준비만 되어 있다 |
 | `TOOL_START` | `tool`, `label` | 진행 상태 |
 | `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
 | `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence`, ✅ `before`, `after` | 승인 카드 |
 | `PROPOSAL_PROGRESS` | `proposalId`, `approvalId`, `revision`, `replaces`, `itemId`, `summary`, `proposalStatus`, `message`, `eventId`, `version` | 요청자 화면의 카드별 승인 대기·실행 중·완료·거절·보류·확인 필요 |
 | `WORKFLOW_NOTICE` | `message`, 선택 `approvalId`/`errorCode`, `eventId`, `version` | 종료로 간주하지 않는 복구/확인 안내 |
+| `TASK_REVIEW_READY` | `reviewId`, `approvalIds` | 구매가 작업 단위로 검토할 카드가 모두 등록됨 (아래 "작업 단위 구매 검토 계약") |
+| `TRACE` | `traceId`, `previousTraceId`, `executionKind`, `outcome`, `traceUrl`, 실행 통계 | 업무 상태는 안 바뀜. 작업 이력의 실행 기록 (아래 "Harness 관측 추가 계약") |
 | `DONE` | `status`, `answer`, `result`, `sources` — `result` 모양은 아래 | 스트림 닫고 목록 갱신 |
 | `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
 
@@ -590,7 +592,7 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
   "after": [ { "po_id": "PO-2609-001", "qty": 400, "due_date": "2026-12-12" },
              { "po_id": "(신규)", "qty": 100, "due_date": "2026-11-25" } ],   // 실행 후엔 실제 새 번호로 바뀐다
   "status": "PENDING",                 // DRAFT → PENDING | WITHDRAWN, PENDING → APPROVED | REJECTED, APPROVED → EXECUTED.
-                                       // 구매 요청은 DRAFT로 시작, 팀장 요청은 바로 PENDING. 남의 DRAFT·WITHDRAWN은 팀장에게도 안 보인다
+                                       // 구매의 최초 요청은 DRAFT로 시작, 팀장 요청과 거절 뒤 재제안(41번)은 바로 PENDING. 남의 DRAFT·WITHDRAWN은 팀장에게도 안 보인다
   "requested_by": "buyer", "requested_at": "…", "decided_by": null, "decided_at": null,
   "reason": null, "executed_at": null }
 ```
@@ -634,6 +636,12 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 | LLM | **주 모델 1 + 대체 모델 1** | Harness Recovery 증빙에 둘이 필요하다. 제공자를 다르게 두면 더 강한 증빙이 된다 |
 | 대기열 | **RabbitMQ** (가산점, 후순위) | 큐·재시도·DLQ 설정이 단순하다. Kafka는 이 규모에 과하다 |
 | Harness 한도 | 일반 경로 8턴, ADJUST 기본 64턴(`MAX_ADJUST_TURNS`), 작업 실행 구간 기본 600초(`AGENT_WORK_TIMEOUT_S`), 그래프 600단계(`AGENT_RECURSION_LIMIT`), 같은 도구 3회·429/503 2회 재시도 | 다건 준비·재제안을 포함하도록 조정. 사람 승인 대기는 시간 제한에서 제외. 대상 최대 10개, 최초+재제안 최대 30개 |
+| 통합 발주 (A4) | **MVP 제외** | 도구·계산·승인이 한 벌 더 필요한데 평가표에 해당 항목이 없다. 장표에 향후 과제로 |
+| 자동 분석 (B1) | **넣는다** | 작업 생성 한 번이면 되고, SC4 시연이 완성되며 대기열 가산점과 이어진다 |
+| 근거 문서 (C3) | **3종** — 구매 규정 / 협력사 계약 조건 / ECN 3~5건 | 통합 발주를 뺐으므로 통합 발주 기준 문서도 뺀다 |
+| 문서 주소 | `doc://{doc_id}/{clause_no}` · 조항 단위 청킹 | 뼈대에 이미 들어 있다 |
+
+근거는 [decisions.md 6절](decisions.md)에 적었다.
 
 ### Harness 관측 추가 계약 (2026-10-21)
 
@@ -642,12 +650,6 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 - `taskId`/`threadId`로 승인 전후를 묶고, 재개 command마다 새 root trace를 만든다. trace 정보는 업무 이벤트 중복 제거 키에 넣지 않는다.
 - 토큰 수를 확보하지 못하면 null, LLM 호출이 없을 때만 비용 0이다. 실제 모델 비용은 LangSmith에서 확인하며 임의 단가 계산을 하지 않는다.
 - 전체 기준·검증 결과·재현법: [harness-validation.md](harness-validation.md).
-| 통합 발주 (A4) | **MVP 제외** | 도구·계산·승인이 한 벌 더 필요한데 평가표에 해당 항목이 없다. 장표에 향후 과제로 |
-| 자동 분석 (B1) | **넣는다** | 작업 생성 한 번이면 되고, SC4 시연이 완성되며 대기열 가산점과 이어진다 |
-| 근거 문서 (C3) | **3종** — 구매 규정 / 협력사 계약 조건 / ECN 3~5건 | 통합 발주를 뺐으므로 통합 발주 기준 문서도 뺀다 |
-| 문서 주소 | `doc://{doc_id}/{clause_no}` · 조항 단위 청킹 | 뼈대에 이미 들어 있다 |
-
-근거는 [decisions.md 6절](decisions.md)에 적었다.
 
 ### 작업 단위 구매 검토 계약 (6.39)
 

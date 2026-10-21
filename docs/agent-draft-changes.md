@@ -1,5 +1,7 @@
 # `agent-draft` 브랜치 변경 사항
 
+> 📜 **역사 문서** — 2026-10-20 `agent-draft` 브랜치 시점의 기록이다. 이 브랜치는 main에 합쳐졌고, "아직 없는 것"으로 적힌 승인 API·`search_docs`·2차 도구·LangSmith 추적은 그 뒤 구현됐다. **지금 상태는 [contracts.md](contracts.md)·[decisions.md](decisions.md)를 본다.**
+
 > **브랜치**: [`agent-draft`](https://github.com/skala2-bom/ai-agent-capstone/tree/agent-draft) · 커밋 `06168cb` (2026-10-20 16:25)
 >
 > **비교 기준**: `main`의 `7cea93e` ("Move SC golden answers into eval/golden.json") — 이 커밋에서 갈라졌다
