@@ -38,7 +38,19 @@ export const useWorkspace = defineStore("workspace", () => {
     clear();
     session.value = s;
     scenario.value = environment;
+    remember();
     await load();
+  }
+  // 새로고침해도 로그인을 잇는다. sessionStorage라 탭을 닫으면 지워지고, 토큰이 만료되면(8시간)
+  // 첫 요청의 401 → session-expired → clear()로 지워진다. 저장소를 못 쓰는 브라우저면 예전처럼 메모리만 쓴다
+  const KEY = "bom-session";
+  function remember() {
+    try {
+      if (session.value) sessionStorage.setItem(KEY, JSON.stringify({ session: session.value, scenario: scenario.value }));
+      else sessionStorage.removeItem(KEY);
+    } catch {
+      /* 저장 못 해도 지금 탭은 그대로 쓴다 */
+    }
   }
   function clear() {
     generation++;
@@ -50,6 +62,7 @@ export const useWorkspace = defineStore("workspace", () => {
     context.value = "";
     panel.value = false;
     busy.value = false;
+    remember();
     window.dispatchEvent(new Event("close-agent"));
   }
   async function save(c: Command) {
@@ -85,6 +98,16 @@ export const useWorkspace = defineStore("workspace", () => {
     await enter({ ...session.value }, id);
   }
   const issues = computed(() => data.value?.issues ?? []);
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(KEY) ?? "null");
+    if (saved?.session) {
+      session.value = saved.session;
+      scenario.value = saved.scenario ?? scenario.value;
+      void load();
+    }
+  } catch {
+    /* 저장된 값이 깨졌으면 로그인 화면부터 */
+  }
   return {
     switchEnvironment,
     issues,
