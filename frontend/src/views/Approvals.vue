@@ -1,31 +1,82 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useWorkspace } from "../stores/workspace";
-import type { Approval } from "../types";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
 import { mode } from "../services/api";
-const w = useWorkspace(),
-  selected = ref<Approval>(),
-  reason = ref(""),
-  filter = ref("");
-const rows = computed(() =>
-  w.data!.approvals.filter((a) => !filter.value || a.status === filter.value),
-);
-const option = computed(() =>
-  w.data!.options.find((o) => o.id === selected.value?.optionId),
-);
-async function decide(decision: "APPROVED" | "REJECTED") {
-  if (
-    await w.save({
-      type: "approval",
-      id: selected.value!.id,
-      decision,
-      reason: reason.value,
-    })
-  )
-    selected.value = undefined;
+import type { Approval } from "../types";
+const w = useWorkspace();
+const selectedId = ref<string>();
+const reason = ref("");
+const filter = ref("");
+const pollError = ref("");
+const selected = computed(() => w.data?.approvals.find((a) => a.id === selectedId.value));
+const rows = computed(() => (w.data?.approvals ?? []).filter((a) => !filter.value || a.status === filter.value));
+const optionsById = computed(() => new Map(w.data?.options.map((o) => [o.id, o]) ?? []));
+function approvalTitle(text = "") {
+  return text.replace(/\s*\(실제 발주 변경입니다\.\s*협력사 협의·확약 여부를 확인한 뒤 승인하세요\.\)/g, "").trim();
 }
+function withReproposals(all: Approval[]) {
+  const byId = new Map(all.map((a) => [a.id, a]));
+  const children = new Map<string, Approval[]>();
+  const childIds = new Set<string>();
+  for (const a of all) {
+    // 승인 API는 이전 요청 ID를 summary에 담으므로, 품목명이 아닌 정확한 요청으로 연결한다.
+    const previousId = optionsById.value.get(a.optionId)?.name
+      .match(/^\[재제안 \d+차 · 이전 요청 ([^\]\s]+)\]/)?.[1];
+    if (previousId && previousId !== a.id && byId.has(previousId)) {
+      const siblings = children.get(previousId) ?? [];
+      siblings.push(a);
+      children.set(previousId, siblings);
+      childIds.add(a.id);
+    }
+  }
+  const ordered: Approval[] = [];
+  const visited = new Set<string>();
+  function append(a: Approval) {
+    if (visited.has(a.id)) return;
+    visited.add(a.id);
+    ordered.push(a);
+    for (const child of children.get(a.id) ?? []) append(child);
+  }
+  for (const a of all) if (!childIds.has(a.id)) append(a);
+  // 잘못된 순환 참조가 있어도 카드가 누락되지 않도록 한다.
+  for (const a of all) append(a);
+  return ordered;
+}
+const groups = computed(() => {
+  const approvals = w.data?.approvals ?? [];
+  return [...new Set(approvals.map((a) => a.taskId))].map((taskId) => {
+    const all = approvals.filter((a) => a.taskId === taskId)
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    const task = w.data?.history.find((h) => h.id === taskId);
+    return {
+      taskId,
+      all,
+      rows: withReproposals(all).filter((a) => !filter.value || a.status === filter.value),
+      title: task?.title ?? `발주 변경 요청 · ${taskId.slice(0, 8)}`,
+      // 필터·재제안에 따라 작업 순서가 바뀌지 않도록 생성 시각을 기준으로 한다.
+      createdAt: Date.parse(task?.at ?? "") || Date.parse(all[0]?.at ?? "") || 0,
+    };
+  }).filter((group) => group.rows.length)
+    .sort((a, b) => b.createdAt - a.createdAt);
+});
+const option = computed(() => w.data?.options.find((o) => o.id === selected.value?.optionId));
+async function decide(decision: "APPROVED" | "REJECTED") {
+  if (selected.value) await w.decide(selected.value.id, decision, reason.value);
+}
+let timer: ReturnType<typeof setTimeout> | undefined;
+let mounted = false;
+async function poll() {
+  if (!mounted) return;
+  if (document.visibilityState !== "hidden") {
+    try { await w.refreshApprovals(); pollError.value = ""; }
+    catch (e) { pollError.value = (e as Error).message; }
+  }
+  if (mounted) timer = setTimeout(poll, 3000);
+}
+onMounted(() => { mounted = true; void poll(); });
+onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
 </script>
 <template>
   <p v-if="w.session?.role !== 'APPROVER'" class="caption">
@@ -40,6 +91,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       <option value="EXECUTED">실행 완료</option>
     </select>
   </div>
+  <p v-if="pollError" class="error">승인 상태 갱신 실패: {{ pollError }}</p>
   <section class="card flush table-wrap">
     <table>
       <thead>
@@ -52,9 +104,15 @@ async function decide(decision: "APPROVED" | "REJECTED") {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="a in rows" :key="a.id">
+        <template v-for="group in groups" :key="group.taskId">
+        <tr class="approval-group"><td colspan="5">
+          <b>{{ group.title }}</b>
+          <p class="caption">{{ group.all.length }}건 · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
+          <button v-if="mode === 'api'" @click="w.openTask(group.taskId)">작업 결과</button>
+        </td></tr>
+        <tr v-for="a in group.rows" :key="a.id">
           <td>
-            <b>{{ w.data?.options.find((o) => o.id === a.optionId)?.name }}</b
+            <b>{{ approvalTitle(optionsById.get(a.optionId)?.name) }}</b
             ><small>{{
               w.data?.options.find((o) => o.id === a.optionId)?.item
             }}</small>
@@ -69,7 +127,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
           <td>
             <button
               @click="
-                selected = a;
+                selectedId = a.id;
                 reason = '';
               "
             >
@@ -77,6 +135,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
             </button>
           </td>
         </tr>
+        </template>
       </tbody>
     </table>
     <div v-if="!rows.length" class="empty">
@@ -99,9 +158,9 @@ async function decide(decision: "APPROVED" | "REJECTED") {
   <Drawer
     v-if="selected && option"
     title="발주 변경 승인 상세"
-    @close="selected = undefined"
+    @close="selectedId = undefined"
     ><Badge :text="selected.status" />
-    <h2>{{ option.name }}</h2>
+    <h2>{{ approvalTitle(option.name) }}</h2>
     <dl>
       <dt>요청자</dt>
       <dd>{{ selected.requester }}</dd>
@@ -116,7 +175,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       <dt>대상 발주</dt>
       <dd>{{ option.po }}</dd>
       <dt>선정 사유</dt>
-      <dd>{{ option.reason }}</dd>
+      <dd>{{ approvalTitle(option.reason) }}</dd>
       <template v-if="option.role !== 'PLANNER'"
         ><dt>추가비용</dt>
         <dd>{{ option.addedCost.toLocaleString() }}원</dd></template
@@ -142,32 +201,26 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       </div></template
     >
     <div v-else class="card">
-      {{ option.po }} → {{ option.qty }}개 · {{ option.date }}
-      <p>{{ option.impact }}</p>
+      <template v-if="option.action === 'cancel'">{{ option.po }} · 발주 취소</template>
+      <template v-else-if="option.action === 'qty'">{{ option.po }} · {{ selected.beforeQty }}개 → {{ option.qty }}개<br />입고일 {{ option.date }} 유지</template>
+      <template v-else>{{ option.po }} · {{ option.qty }}개<br />입고일 {{ selected.beforeDate }} → {{ option.date }}</template>
     </div>
-    <!-- API 모드: AI가 검색해 실제로 읽은 조항 (승인 카드의 evidence). 목데이터 모드만 시연용 고정 문구 -->
+    <!-- API 모드: AI가 검색해 실제로 읽은 조항 (승인 카드의 evidence). AI 패널 근거 카드와 같은 모양 -->
     <details v-if="mode === 'api'" open class="evidence sources">
       <summary>근거 문서 {{ selected.evidence?.length ?? 0 }}건</summary>
-      <article v-for="d in selected.evidence" :key="d.uri" class="source">
+      <article v-for="(d, index) in selected.evidence" :key="d.uri ?? index" class="source">
         <b>{{ d.title ?? d.doc_id }}</b>
         <small
           >제{{ d.clause_no }}조 · {{ d.version
           }}<template v-if="d.effective_date"> · {{ d.effective_date }} 시행</template></small
         >
-        <blockquote v-if="d.excerpt">{{ d.excerpt }}</blockquote>
+        <blockquote v-if="d.excerpt ?? d.content">{{ d.excerpt ?? d.content }}</blockquote>
         <code>{{ d.uri }}</code>
       </article>
-      <p v-if="!selected.evidence?.length">이 카드에는 근거 문서가 붙어 있지 않습니다.</p>
+      <p v-if="!selected.evidence?.length" class="caption">서버가 제공한 근거가 없습니다.</p>
       <p v-if="option.role !== 'PLANNER' && option.costEvidence">{{ option.costEvidence }}</p>
     </details>
-    <details v-else open class="evidence">
-      <summary>근거 확인 · 가상 공급계약 v1 / 5.1</summary>
-      <p>
-        분할 납품은 협력사 확약과 별도 비용 검토 후 승인받아 실행합니다. (시연용
-        원문)
-      </p>
-      <p v-if="option.role !== 'PLANNER'">{{ option.costEvidence }}</p>
-    </details>
+    <p v-else class="caption">시연용 승인 카드입니다.</p>
     <form
       v-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER'"
       @submit.prevent="decide('REJECTED')"
@@ -180,28 +233,28 @@ async function decide(decision: "APPROVED" | "REJECTED") {
         />
       </label>
       <div class="action-row">
-        <button :disabled="w.busy || !reason.trim()">거절 · 대안 재요청</button
+        <button :disabled="w.deciding[selected.id] || !reason.trim()">거절 · 대안 재요청</button
         ><button
           type="button"
           class="primary"
-          :disabled="w.busy"
+          :disabled="w.deciding[selected.id]"
           @click="decide('APPROVED')"
         >
-          {{ w.busy ? "접수 중…" : "승인 접수" }}
+          {{ w.deciding[selected.id] ? "접수 중…" : "승인 접수" }}
         </button>
       </div>
     </form>
     <div v-if="selected.status === 'APPROVED'">
       <p class="warning-box">
-        승인은 접수되었으며 발주는 아직 변경되지 않았습니다.
+        승인은 접수되었습니다. 실행 완료가 확인되면 자동 갱신됩니다. 오래 대기하면 작업 결과에서 보류 여부를 확인하세요.
       </p>
       <button
         v-if="mode === 'mock' && w.session?.role === 'APPROVER'"
-        :disabled="w.busy"
+        :disabled="w.deciding[selected.id]"
         @click="
           async () => {
             if (await w.save({ type: 'execution', id: selected!.id }))
-              selected = undefined;
+              selectedId = undefined;
           }
         "
       >
@@ -211,7 +264,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
     <p v-if="selected.status === 'REJECTED'">
       거절 사유: {{ selected.reason }}<br />{{
         mode === "api"
-          ? "AI가 사유를 반영해 다른 대안을 다시 승인 요청합니다."
+          ? "AI가 기존 후보 중 다른 대안을 검토합니다. 가능한 안이 없으면 보류하며, 수량을 임의로 고치지는 않습니다."
           : "보완 대안이 생성되었습니다. 구매 검수부터 다시 진행하세요."
       }}
     </p>
@@ -219,3 +272,10 @@ async function decide(decision: "APPROVED" | "REJECTED") {
     <p v-if="w.error" class="error">{{ w.error }}</p></Drawer
   >
 </template>
+<style scoped>
+.approval-group > td {
+  background: #f9fcf6;
+  border-top: 1px solid #e9eee4;
+  border-bottom: 1px solid #e9eee4;
+}
+</style>

@@ -79,7 +79,19 @@ services:
       SERVICE_TOKEN: test-agent-token
       RAG_TEST_DB_URL: postgresql://rag:rag@postgres:5432/capstone_ai_test
       TEST_DB_URL: postgresql://postgres:test-only@postgres:5432/capstone_ai_test
+      AGENT_TEST_DB_URL: postgresql://agent:agent@agent-test-db:5432/capstone_ai_test
+    depends_on:
+      agent-test-db: {condition: service_healthy}
     command: ["python", "-u", "integration_scenarios.py"]
+  agent-test-db:
+    profiles: [tools]
+    image: pgvector/pgvector:pg16
+    environment: {POSTGRES_DB: capstone_ai_test, POSTGRES_PASSWORD: test-only}
+    volumes: ["../db/init.sql:/docker-entrypoint-initdb.d/001-roles.sql:ro"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d capstone_ai_test"]
+      interval: 2s
+      retries: 30
 volumes:
   testdata:
   testmq:

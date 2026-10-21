@@ -78,6 +78,7 @@ export interface Source {
   effective_date?: string;
   uri?: string;
   excerpt?: string;
+  content?: string;
 }
 
 /** DONE.sources → 화면 카드. 같은 조항이 여러 번 오면 하나만 */

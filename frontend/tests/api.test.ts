@@ -38,8 +38,22 @@ describe("API 모드 응답 변환", () => {
       { taskId: "T-1", userId: "buyer", question: "MCU 해결 방법", trigger: "USER", status: "WAITING_APPROVAL", answer: null, createdAt: "2026-11-02 10:00" },
       { taskId: "T-2", userId: "buyer", question: "릴레이 지연 영향", trigger: "SYSTEM", status: "DONE", answer: "릴레이 1,000개 부족", createdAt: "2026-11-02 11:00" },
     ]);
-    expect(h[0]).toEqual({ id: "T-1", at: "2026-11-02 10:00", title: "MCU 해결 방법", target: "AI 질문 · 박구매", status: "승인 대기", detail: "" });
+    expect(h[0]).toEqual({ id: "T-1", at: "2026-11-02 10:00", title: "MCU 해결 방법", target: "AI 질문 · 박구매", status: "승인 대기", detail: "", userId: "buyer", trigger: "USER" });
     expect(h[1]).toMatchObject({ target: "자동 분석", status: "완료", detail: "릴레이 1,000개 부족" });
+  });
+
+  it("수량 변경·취소 카드를 날짜 변경으로 표시하지 않고 실제 근거를 보존한다", () => {
+    const base = { task_id: "T-1", requested_by: "buyer", requested_at: "2026-11-02", status: "PENDING",
+      before: { item_id: "CASE", qty: 800, due_date: "2026-11-23" },
+      evidence: [{ uri: "doc://CONTRACT/2.1", title: "공급계약", version: "v1.2", excerpt: "취소 조건" }] };
+    const got = toApprovals([
+      { ...base, approval_id: "A1", tool: "change_po_qty", args: { po_id: "PO-1", new_qty: 500 } },
+      { ...base, approval_id: "A2", tool: "cancel_po", args: { po_id: "PO-2" } },
+    ], new Map());
+    expect(got.options[0]).toMatchObject({ action: "qty", qty: 500, date: "2026-11-23", confirmed: false });
+    expect(got.options[1]).toMatchObject({ action: "cancel", impact: "발주 취소 (CANCELLED)" });
+    expect(JSON.stringify(got)).not.toContain("undefined");
+    expect(got.approvals[1].evidence).toEqual(base.evidence);
   });
 
   it("협력사 평가지표를 화면 표로 바꾸고 저장용 ID를 남긴다", () => {

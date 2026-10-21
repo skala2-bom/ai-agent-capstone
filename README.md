@@ -74,7 +74,7 @@ backend :8080 ── ② RabbitMQ → backend 소비자 → POST /agent/tasks �
 
 1. 화면이 질문을 보내면 backend가 작업을 만들고 바로 `202 {taskId}`를 돌려준다.
 2. backend가 RabbitMQ에 작업을 넣고, backend 소비자가 agent에 HTTP로 실행을 요청한다. 승인 후 재개도 같은 대기열을 거치며, 전달 실패 시 30초·2분 뒤 재시도한다.
-3. 영향 분석은 `analyze_impact`, 문서 근거는 `search_docs`로 찾고 해당 URI의 원문을 읽는다. 해결 요청은 품목·규칙별 비교 → 재계산 검증 → 근거 확인 → 승인 → 실행 → 남은 문제 분석을 반복한다.
+3. 영향 분석은 `analyze_impact`, 문서 근거는 `search_docs`로 찾고 해당 URI의 원문을 읽는다. 해결 요청은 모든 대상의 비교 → 검증 → 근거 확인을 먼저 마치고 개별 승인 카드를 함께 올린다. 승인된 건부터 최신 조건을 재검증해 실행하며, 미결정 건은 따로 기다린다.
 4. 도구 실행 전후와 끝날 때 agent가 backend로 이벤트를 보내고, backend가 SSE로 화면에 넘긴다. 구독 전에 쌓인 이벤트는 구독할 때 다시 보낸다.
 
 `OPENAI_API_KEY`가 없으면 agent의 분류·선택은 **가짜 모델**로 동작한다. 운영 RAG의 색인·검색에는 임베딩 키가 필요하며, 문서 근거를 못 읽으면 발주 변경 승인 요청을 보류한다. 외부 API 없는 테스트는 [tests/README.md](tests/README.md)를 따른다.
@@ -92,7 +92,9 @@ env -u OPENAI_API_KEY docker compose --env-file .env --profile indexing run --rm
 
 `.env`에 키를 입력한 뒤 실행한다. `env -u OPENAI_API_KEY`는 터미널에 남은 옛 키가 `.env`보다 우선하는 것을 막는다. 색인은 `rag` 스키마에만 테이블을 만들므로 업무 DB 초기화가 필요 없다. 자세한 재색인 방법은 [data/README.md](data/README.md).
 
-http://localhost:3000 이 화면이다. 시연 계정 `planner`·`buyer`·`approver`(비밀번호 `1234`)로 로그인하면 실제 backend 데이터가 보인다. 구매 계정으로 "허브를 12/14에서 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘"라고 물으면 승인 요청까지 가고, 팀장 계정의 승인 대기함에서 승인하면 발주가 실제로 나뉜다. 감량·취소 카드의 프론트 표시에는 후속 작업이 남아 있다([변경·검증 기록](docs/ai-rag-integration-changes.md)). 목데이터 화면만 보려면 `.env`에 `VITE_DATA_MODE=mock`.
+http://localhost:3000 이 화면이다. 시연 계정 `planner`·`buyer`·`approver`(비밀번호 `1234`)로 로그인하면 실제 backend 데이터가 보인다. 구매 계정으로 "허브를 12/14에서 11/25로 당기면 부족한 MCU 해결 방법 만들어 줘"라고 물으면 승인 요청까지 가고, 팀장 계정의 승인 대기함에서 승인하면 발주가 실제로 나뉜다. 여러 부품 요청은 작업별로 묶어 각각 승인·거절하며, 상태가 자동 갱신된다([변경·검증 기록](docs/ai-rag-integration-changes.md)). 목데이터 화면만 보려면 `.env`에 `VITE_DATA_MODE=mock`.
+
+AI는 `AGENT_DB_URL`로 접수·승인 연결·실행 기록을 영구 저장한 뒤 202를 반환한다. 기본 compose가 이 값을 제공한다. 10/21 이전 버전에서 승인 대기 중인 작업은 기존 버전에서 마무리한 뒤 AI·프론트를 업데이트한다. 업무 DB를 지울 필요는 없다.
 
 backend 흐름은 직접 확인할 수 있다 (시연 계정 `planner`·`buyer`·`approver`, 비밀번호 `1234`):
 

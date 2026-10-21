@@ -29,6 +29,20 @@ describe("SSE lifecycle", () => {
     expect(a.terminal).toBe(false);
     expect(a.status).toBe("승인 대기");
   });
+  it("restores independent proposal states on replay and ignores duplicate/out-of-order progress", () => {
+    const a = new EventAccumulator("T1");
+    a.accept(event(1, "APPROVAL_REQUIRED", { approvalId: "A1", proposalId: "P1" }));
+    a.accept(event(2, "APPROVAL_REQUIRED", { approvalId: "A2", proposalId: "P2" }));
+    const done = { approvalId: "A2", proposalId: "P2", proposalStatus: "EXECUTED", version: 20, eventId: "outbox-20" };
+    a.accept(event(3, "PROPOSAL_PROGRESS", done));
+    expect(a.accept(event(4, "PROPOSAL_PROGRESS", done))).toBe(false);
+    a.accept(event(5, "PROPOSAL_PROGRESS", { ...done, proposalStatus: "PENDING", version: 10, eventId: "outbox-10" }));
+    a.accept(event(6, "PROPOSAL_PROGRESS", { proposalId: "P1", proposalStatus: "PENDING", version: 21 }));
+    expect(a.proposals.P2.proposalStatus).toBe("EXECUTED");
+    expect(a.status).toBe("실행 완료 1건 · 승인 대기 1건");
+    expect(a.terminal).toBe(false);
+    expect(parseFrame(`data: ${JSON.stringify(event(7, "WORKFLOW_NOTICE", { message: "확인 필요" }))}`)?.type).toBe("WORKFLOW_NOTICE");
+  });
   it("rejects malformed JSON and ignores heartbeats", () => {
     expect(parseFrame(": heartbeat")).toBeNull();
     expect(() => parseFrame("data: {bad")).toThrow();

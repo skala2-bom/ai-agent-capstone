@@ -3,7 +3,7 @@ import { computed } from "vue";
 import Badge from "./Badge.vue";
 import { useWorkspace } from "../stores/workspace";
 const w = useWorkspace();
-const props = defineProps<{ result: unknown }>();
+const props = defineProps<{ result: unknown; title?: string }>();
 // agent의 DONE.result는 {intent, whatif, impact}이고 결품·주의·과잉은 impact 안에 있다 (contracts.md 3.2).
 // impact가 없으면 result 자체를 본다 — 영향 분석 결과를 바로 넣어 주는 경우도 그대로 그려지게.
 // 해결안을 실행했으면 처음 분석(impact)이 아니라 실행 후 상태(post_execution_impact)를 보여 준다 (contracts 3.2)
@@ -39,7 +39,7 @@ function records(key: string) {
 </script>
 <template>
   <section>
-    <h3>{{ after ? "실행 후 상태" : "영향 결과" }}</h3>
+    <h3>{{ title ?? (after ? "실행 후 상태" : "영향 결과") }}</h3>
     <p class="caption">정책 버전: {{ data.policy_version || "서버 미제공" }}</p>
     <template v-for="[key, label] in groups"
       ><article

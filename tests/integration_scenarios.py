@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import psycopg
@@ -35,6 +36,14 @@ def request(method, path, role="buyer", **kwargs):
 
 
 def reset_seed():
+    # Wait for the command that emitted DONE to finish its durable bookkeeping.
+    for _ in range(100):
+        with psycopg.connect(DSN) as conn:
+            if not conn.execute("select count(*) from agent.workflow_command where status='PENDING'").fetchone()[0]:
+                break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("진행 중인 테스트 작업이 남아 있어 초기화하지 않습니다.")
     with psycopg.connect(DSN) as conn:
         if conn.execute("select current_database()").fetchone()[0] != "capstone_ai_test":
             raise RuntimeError("테스트 DB 확인 실패")
@@ -81,7 +90,7 @@ def planner_expected(value):
     return value
 
 
-def finish_task(task_id, *, approve=False, reject_first=False, timeout=180):
+def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, timeout=240):
     decided = set()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -97,7 +106,14 @@ def finish_task(task_id, *, approve=False, reject_first=False, timeout=180):
             assert events[-1]["type"] == "DONE", events[-1]
             assert events[-1]["result"] == task["result"]
             return task, decided
-        cards = request("GET", "/api/approvals?status=PENDING", "approver")
+        cards = [c for c in request("GET", "/api/approvals?status=PENDING", "approver") if c["task_id"] == task_id]
+        if not decided and len(cards) < initial_cards:
+            time.sleep(0.2)
+            continue
+        if not decided and initial_cards:
+            with psycopg.connect(DSN) as conn:
+                assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
+        cards.reverse()  # Independent approvals must not depend on preparation order.
         for card in cards:
             if card["task_id"] != task_id or card["approval_id"] in decided:
                 continue
@@ -142,7 +158,8 @@ def scenario(case_id):
     check_money_hidden(task["result"])
     assert task["sources"], "영향 분석의 실제 문서 근거가 비었습니다."
     original_impact = request("POST", "/api/analysis/impact", json={"whatif": case["whatif"]})
-    task, decisions = finish_task(start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘."), approve=True)
+    task, decisions = finish_task(start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘."), approve=True,
+                                  initial_cards={"SC1": 1, "SC2": 3, "SC3": 2, "SC4": 1}[case_id])
     result = task["result"]
     assert result["intent"] == "ADJUST", result
     assert result["impact"] == original_impact, "DONE.result.impact는 최초 분석이어야 합니다."
@@ -154,6 +171,7 @@ def scenario(case_id):
     }[case_id]
     assert sorted(e["tool"] for e in result["executions"]) == sorted(expected_tools), task["answer"]
     assert len(decisions) == len(expected_tools)
+    assert all(p["status"] == "EXECUTED" for p in result["proposals"]), result["proposals"]
     assert not result["blocked_targets"], result["blocked_targets"]
     assert not W.actionable(result["post_execution_impact"]), result["post_execution_impact"]
     with psycopg.connect(DSN) as conn:
@@ -182,6 +200,79 @@ def rejection():
     print("PASS 거절 후 다른 대안 재승인 (거절한 분할 실행 없음)", flush=True)
 
 
+def wait_cards(task_id, count, status=None):
+    for _ in range(600):
+        cards = [c for c in request("GET", "/api/approvals", "approver") if c["task_id"] == task_id]
+        selected = [c for c in cards if status is None or c["status"] == status]
+        if len(selected) >= count:
+            return selected
+        time.sleep(0.2)
+    raise AssertionError(f"승인 카드 {count}건 대기 시간 초과: {cards}")
+
+
+def decide_card(task_id, card, decision):
+    return request("POST", f"/api/ai/tasks/{task_id}/approval", "approver", json={
+        "approvalId": card["approval_id"], "decision": decision,
+        "reason": "테스트: 분할 대신 다른 대안 요청" if decision == "REJECTED" else None})
+
+
+def mixed_approvals():
+    reset_seed()
+    case = next(c for c in CASES if c["id"] == "SC2")
+    task_id = start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘.")
+    cards = wait_cards(task_id, 3, "PENDING")
+    first, reject, last = sorted(cards, key=lambda c: c["args"]["po_id"])
+    decide_card(task_id, first, "APPROVED")
+    wait_cards(task_id, 1, "EXECUTED")
+    assert len(wait_cards(task_id, 2, "PENDING")) == 2, "미결정 카드가 독립적으로 대기해야 합니다."
+    assert request("GET", f"/api/ai/tasks/{task_id}")["status"] != "DONE"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(decide_card, task_id, reject, "REJECTED"), pool.submit(decide_card, task_id, last, "APPROVED")]
+        for f in futures:
+            f.result()
+    wait_cards(task_id, 2, "EXECUTED")
+    revised = wait_cards(task_id, 1, "PENDING")
+    assert len(revised) == 1 and revised[0]["tool"] == "request_due_date_change"
+    task, _ = finish_task(task_id, approve=True)
+    assert task["result"]["approval_summary"] == {"EXECUTED": 3, "REJECTED": 1, "BLOCKED": 0}
+    assert len(task["result"]["executions"]) == 3
+    assert any(p.get("replaces") for p in task["result"]["proposals"])
+    # Backend delivery retries an identical decision after it has already executed.
+    with psycopg.connect(DSN) as conn:
+        payload = conn.execute("select payload from agent.workflow_command where command_id=%s",
+                               ("decision:" + first["approval_id"],)).fetchone()[0]
+        count = conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0]
+    for _ in range(2):
+        reply = HTTP.post(f"http://agent:8000/agent/tasks/{task_id}/resume", json=payload)
+        assert reply.status_code == 202 and reply.json()["duplicate"]
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == count == 3
+    print("PASS 3건 선등록 → 1건만 승인·실행 → 동시 승인/거절 → 해당 품목만 재제안 → 중복 재개 무시", flush=True)
+
+
+def recovery_prepare():
+    reset_seed()
+    case = next(c for c in CASES if c["id"] == "SC2")
+    task_id = start(case["question"] + " 결품과 과잉 해결 방법 만들어 줘.")
+    wait_cards(task_id, 3, "PENDING")
+    print("READY restart agent, then run recovery-finish:", task_id, flush=True)
+
+
+def recovery_finish():
+    # Intentionally no reset. Called after an actual test-agent container restart.
+    for role in ("planner", "buyer", "approver"):
+        r = HTTP.post(BASE + "/api/auth/login", json={"user_id": role, "password": "1234"})
+        r.raise_for_status()
+        TOKENS[role] = r.json()["token"]
+    with psycopg.connect(DSN) as conn:
+        task_id = conn.execute("select task_id from ai_task where status='WAITING_APPROVAL' order by created_at desc limit 1").fetchone()[0]
+    assert len(wait_cards(task_id, 3, "PENDING")) == 3
+    task, _ = finish_task(task_id, approve=True)
+    assert len(task["result"]["executions"]) == 3
+    assert len(wait_cards(task_id, 3, "EXECUTED")) == 3
+    print("PASS 실제 컨테이너 재시작 뒤 기존 3건 재개, 중복 카드·중복 실행 없음", flush=True)
+
+
 def system_delay():
     reset_seed()
     updated = request("PUT", "/api/purchase-orders/PO-2610-106/due-date",
@@ -205,7 +296,7 @@ def qa():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "system", "qa"])
+    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "system", "qa", "recovery-prepare", "recovery-finish"])
     args = parser.parse_args()
     for _ in range(60):
         try:
@@ -215,8 +306,9 @@ def main():
             pass
         time.sleep(1)
     checks = {"golden": golden_read_only, **{s: lambda s=s: scenario(s) for s in ("SC1", "SC2", "SC3", "SC4")},
-              "reject": rejection, "system": system_delay, "qa": qa}
-    for name in args.only or checks:
+              "reject": rejection, "mixed": mixed_approvals, "system": system_delay, "qa": qa,
+              "recovery-prepare": recovery_prepare, "recovery-finish": recovery_finish}
+    for name in args.only or [k for k in checks if not k.startswith("recovery-")]:
         checks[name]()
     print("ALL REQUESTED CHECKS PASSED", flush=True)
 

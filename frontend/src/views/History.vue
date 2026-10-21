@@ -4,6 +4,7 @@ import { useWorkspace } from "../stores/workspace";
 import Badge from "../components/Badge.vue";
 import Drawer from "../components/Drawer.vue";
 import type { History } from "../types";
+import { mode } from "../services/api";
 const w = useWorkspace(),
   q = ref(""),
   status = ref(""),
@@ -72,8 +73,9 @@ const rows = computed(() =>
     <h2>{{ selected.title }}</h2>
     <p>{{ selected.target }}</p>
     <p>{{ selected.detail }}</p>
-    <h3>연결 근거</h3>
-    <details open class="evidence">
+    <button v-if="mode === 'api'" @click="w.openTask(selected.id); selected = undefined">현재 작업 · 승인 진행과 결과 보기</button>
+    <h3 v-if="mode === 'mock'">연결 근거</h3>
+    <details v-if="mode === 'mock'" open class="evidence">
       <summary>시연 업무 규정 · v1 · WF-001</summary>
       <p>
         구매 검수로 해결안의 비용등급을 확정하고, 생산관리 담당자가 우선순위를

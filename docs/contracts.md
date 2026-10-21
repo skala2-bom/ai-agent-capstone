@@ -4,7 +4,7 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-20 저녁 — 아래 "최근 변경" 표 참고
+> **갱신**: 2026-10-21 — 아래 "최근 변경" 표 31~34번 (해결안 비교 팀장 전용, 답변 가독성, 승인 대기함 요청자 조회, AI·프론트 다건 승인)
 
 ## 최근 변경 — 각 파트가 확인할 것 (10/20 오후~밤, B 파트)
 
@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 34 | 해결안을 모두 준비한 뒤 개별 카드 등록, 독립 승인·실행. AI의 영구 접수함과 실행 기록 추가 | 2.7, 3.2, decisions 6.29, [검증 기록](ai-rag-integration-changes.md) | 작업별 승인 그룹·개별 접수·3초 갱신·진행 이벤트·기존 작업 다시 열기 구현 | 체크포인트와 카드 연결 보존, 최신 상태 재검증, 모호한 응답은 자동 재실행 금지 |
 | 33 | **승인 대기함: 팀장 외에는 내가 요청한 카드만** — `GET /api/approvals`가 요청자 기준으로 거르고, 화면이 모든 역할에서 대기함을 불러온다. 승인·거절은 그대로 팀장만 | 3.1, decisions 6.28 | ✅ B가 반영함 (사용자 지시) | 없음 |
 | 32 | **답변 가독성** — ① `analyze_impact` 항목에 `item_name`·`product_name` 추가 ② 영향 분석 답변의 결품·주의·과잉 목록과 연쇄 결품 줄은 **코드가 계산 결과에서 그대로** 쓰고, 모델은 결론 1~2문장만 ③ 프롬프트에 평문 규칙 ④ 화면이 답변을 결론·제목·목록으로, 근거를 문서 카드로 그림 | 2.2·3.2, decisions 6.27 | ✅ B가 반영함 (사용자 지시). QA 결과(`impact: null`)에 빈 영향 결과를 안 그리고, 실행한 해결안은 `post_execution_impact`를 보여 준다 (C 변경 기록 2·9번) | 확인 필요: `graph.py`의 `lead_text`·`chain_note`·`describe_impact`, `prompts/impact.md`·`qa.md`를 B가 고쳤다. 남은 것: 검색 근거의 관련성(SC2 질문에 도어센서 문서가 붙음) |
 | 31 | **해결안 비교 화면은 구매팀장(APPROVER)만** — 메뉴·주소·링크·할 일 카드 모두. 구매 담당자는 AI 채팅으로 승인을 요청한다 (팀 토의) | decisions 6.25 | ✅ B가 반영함 (사용자 지시). 목데이터 모드의 검수·우선순위 단계는 생산관리·구매가 더 못 쓴다 — 확인 필요 | 없음. 구매 담당자의 해결 요청은 채팅으로만 들어온다 |
@@ -128,7 +129,7 @@ agent ──(헤더 4개)──▶ business-mcp ──(그대로 전달)──�
 | 스키마 | 테이블 | 쓰는 파트 | 계정 |
 |---|---|---|---|
 | `public` | 업무·작업·승인 | B | `app` |
-| `agent` | LangGraph checkpointer | C | `agent` |
+| `agent` | LangGraph checkpointer + `workflow_command`, `approval_binding`, `execution_attempt`, `workflow_outbox` | C | `agent` |
 | `rag` | `doc_chunk` | C | `rag` |
 
 - **B가 `init.sql`로 스키마 3개와 계정 3개를 만든다.** 각 계정은 자기 스키마에만 권한을 갖는다.
@@ -434,6 +435,8 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 ```
 
 - agent는 같은 `threadId`로 checkpointer에서 상태를 꺼내 이어간다.
+- 10/21부터 agent는 시작·결정을 `agent.workflow_command`에 저장한 뒤 `202`를 반환한다. 그래프가 다른 카드를 등록/실행 중이어도 접수한다. 시작은 task ID, 결정은 approval ID로 중복을 거르며 같은 ID의 다른 payload는 409다. `AGENT_DB_URL`이 없으면 503으로 거부한다.
+- 동일 thread의 처리는 PostgreSQL 잠금으로 직렬화한다. 대기 중인 다른 카드의 사람 결정을 기다릴 필요는 없다. 준비된 대안에 대응하는 `approvalId`만 실행하며, 거절 재제안에는 새 proposal/revision과 새 승인이 필요하다.
 - 변경 도구를 부를 때 `approval_id`를 인자에 넣는다. backend는 그 승인이 `APPROVED`이고 **도구·인자가 승인 카드와 같을 때만** 실행한다.
 
 ### 2.8 평가셋 파일 `eval/golden.json` (10/20 오후 추가)
@@ -491,7 +494,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 - 응답의 `role`·`name`은 화면 표시에만 쓴다. 권한 판단은 backend가 한다 (교재 5장).
 - 시연 계정: `planner`(김계획) · `buyer`(박구매) · `approver`(정팀장), 비밀번호 `1234`.
 
-### 3.2 SSE 이벤트 6종
+### 3.2 SSE 이벤트 (기존 6종 + AI 진행 2종)
 
 공통 필드: `type`, `taskId`, `seq`, `ts`
 
@@ -501,10 +504,13 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | `TOOL_START` | `tool`, `label` | 진행 상태 |
 | `TOOL_END` | `tool`, `ok`, `ms` | 진행 상태 |
 | `APPROVAL_REQUIRED` | `approvalId`, `tool`, `args`, `summary`, `amount`, `evidence`, ✅ `before`, `after` | 승인 카드 |
+| `PROPOSAL_PROGRESS` | `proposalId`, `approvalId`, `revision`, `replaces`, `itemId`, `summary`, `proposalStatus`, `message`, `eventId`, `version` | 요청자 화면의 카드별 승인 대기·실행 중·완료·거절·보류·확인 필요 |
+| `WORKFLOW_NOTICE` | `message`, 선택 `approvalId`/`errorCode`, `eventId`, `version` | 종료로 간주하지 않는 복구/확인 안내 |
 | `DONE` | `status`, `answer`, `result`, `sources` — `result` 모양은 아래 | 스트림 닫고 목록 갱신 |
 | `FAILED` | `errorCode`, `message`, `traceId` | 오류 표시 |
 
 - 화면이 늦게 구독하거나 다시 연결하면 backend가 **처음부터 다시 보낸다.** A는 `seq`로 중복만 거르면 된다.
+- 영구 발행함 재전송은 `seq`가 달라도 같은 `eventId`일 수 있다. 프론트는 둘 다 중복 제거하고 proposal별 큰 `version`만 반영한다. 추가 이벤트는 기존 backend가 jsonb로 그대로 저장·중계하므로 backend 수정이 없다. 전체 작업 상태를 이 이벤트로 바꾸지는 않는다.
 - `amount`는 받는 사람의 역할에 맞춰 backend가 가린 뒤 보낸다.
 
 **`DONE.result` 모양** (10/20 밤 확정 — 그동안 칸만 있고 안의 모양을 정하지 않아 화면이 결품을 못 찾았다)
@@ -527,12 +533,15 @@ ADJUST의 `impact`는 **해결안 실행 전 최초 영향 분석**이고 `whati
 | 추가 필드 | 의미 |
 |---|---|
 | `executions` | 성공한 실행 전부: `{tool, args, target_rule, item_id, approval_id, result}` 목록 |
-| `post_execution_impact` | 마지막 DB 상태 + 남은 가정으로 계산한 영향. 실행 후 재분석에 실패하면 마지막으로 확인한 상태이므로 답변의 실패 안내도 확인 |
+| `post_execution_impact` | 마지막 DB 상태 + 남은 가정으로 계산한 영향. 실행 후 재분석에 실패하면 `null`로 두고 답변에 안내 |
 | `remaining_whatif` | 실행으로 덮어쓴 발주 가정을 제거한 목록. 실행한 split을 다시 가정으로 더하지 않음 |
 | `blocked_targets` | `"INV-001|MCU"` / `"INV-003|CASE-PLUG"`별 보류 이유 |
+| `proposals` | proposal ID·revision·이전 제안/승인 ID·원본 대안·검증·승인 ID·상태·실행 결과 목록 |
+| `approval_summary` | 완료 시 `EXECUTED`, `REJECTED`, `BLOCKED` 제안 수. 거절된 이전 revision도 이력으로 계산 |
 
 한 작업에 승인 카드가 여러 번 생길 수 있다. **카드 하나의 승인은 그 카드의 tool·args 한 건에만 적용**한다.
-현재 대상이 끝나면 같은 작업에서 다음 대상의 새 승인을 요청한다. 자동 신규 발주는 만들지 않는다.
+10/21부터 최초 범위의 안들을 각각 검증·근거 확인하고 조합 검증 후 카드들을 등록한다. 다른 카드가 아직 미결정이어도 승인된 카드부터 실행한다.
+같은 발주를 두 번 건드리는 안은 동시에 올리지 않는다. 각 실행 전 최신 후보·인자·비용·위험·영향을 다시 검사한다. 자동 신규 발주는 만들지 않는다.
 `sources`와 승인 카드 `evidence`에는 검색 결과의 원문을 실제로 읽은
 `{doc_id, title, clause_no, version, effective_date, uri, excerpt}`만 넣는다.
 
@@ -567,6 +576,7 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 
 - 요청자 역할이 BUYER·APPROVER가 아니면 카드를 만들지 않는다 → agent에 `403 ROLE_NOT_ALLOWED`.
 - 같은 작업·도구·인자로 PENDING 카드가 있으면 새로 만들지 않고 그 `approvalId`를 준다 (agent 이벤트 재전송 대비). 화면에도 다시 보내지 않는다.
+- 이 중복 제거는 **PENDING에만** 적용된다. AI는 카드 등록 HTTP 요청을 자동 재시도하지 않는다. 응답 유실/재시작으로 등록 여부가 모호하면 `REGISTRATION_UNKNOWN`으로 보류하며, 기존 카드 확인 없이 새로 만들지 않는다.
 - 변경 도구는 승인이 `APPROVED`이고 **도구·인자가 카드와 정확히 같을 때만** 실행한다. 실행되면 `EXECUTED` — 같은 승인으로 두 번 실행할 수 없다.
 - 변경 + 변경 이력 + 승인 `EXECUTED`는 **한 트랜잭션**이다 (AUD-001). 하나라도 실패하면 아무것도 안 바뀐다.
 - 팀장 결정은 agent 재개와 묶지 않는다. agent가 죽어 있어도 결정은 저장되고, 재개 요청은 대기열에서 30초·2분 뒤 다시 보낸다. 3번 다 실패하면 화면에 `FAILED`(`AGENT_UNAVAILABLE`)가 간다 (decisions 6.24).
@@ -577,6 +587,9 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 - 팀장은 자기가 요청한 건을 자기가 승인할 수 있다 (요청자 ≠ 승인자 규칙 없음).
 - 승인 대기는 **만료되지 않는다.**
 - 거절되면 agent가 사유를 반영해 다른 대안을 낸다. **2회**까지.
+- 재제안 한도는 품목·규칙별로 적용한다. 후보는 기존 `compare_options` 결과에서만 선택한다. 거절 사유로 새 수량 후보를 만드는 기능은 이번 범위에서 제외한다.
+- backend 승인 상태는 `PENDING/APPROVED/REJECTED/EXECUTED` 그대로다. `BLOCKED` 등은 AI 제안 상태로 요청자 SSE와 최종 결과에 표시한다. 다른 사람이 만든 작업의 SSE는 팀장도 구독할 수 없으며, 팀장은 승인 목록 갱신 및 작업 최종 결과 조회를 사용한다.
+- 등록/실행 여부를 확정하지 못한 건은 `DONE` 처리하지 않는다. 다른 정상 카드의 결정·실행은 계속 처리한다. 업무 변경 응답이 불명확할 때는 journal을 보고 자동 재실행을 막는다.
 
 ---
 
@@ -599,7 +612,7 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 | Agent 구현 | **A안 (직접 StateGraph)** | 설계도의 노드 이름과 코드가 1:1로 맞아 평가 증빙이 쉽다 |
 | LLM | **주 모델 1 + 대체 모델 1** | Harness Recovery 증빙에 둘이 필요하다. 제공자를 다르게 두면 더 강한 증빙이 된다 |
 | 대기열 | **RabbitMQ** (가산점, 후순위) | 큐·재시도·DLQ 설정이 단순하다. Kafka는 이 규모에 과하다 |
-| Harness 한도 | **교재 권장값 그대로** — 8턴 · 120초 · 같은 도구 3회 · 429·503 2회 재시도 | 바꾸면 명세에 이유를 남겨야 한다. 바꿀 이유가 아직 없다 |
+| Harness 한도 | 일반 경로 8턴, ADJUST 기본 64턴(`MAX_ADJUST_TURNS`), 작업 실행 구간 기본 600초(`AGENT_WORK_TIMEOUT_S`), 그래프 600단계(`AGENT_RECURSION_LIMIT`), 같은 도구 3회·429/503 2회 재시도 | 다건 준비·재제안을 포함하도록 조정. 사람 승인 대기는 시간 제한에서 제외. 대상 최대 10개, 최초+재제안 최대 30개 |
 | 통합 발주 (A4) | **MVP 제외** | 도구·계산·승인이 한 벌 더 필요한데 평가표에 해당 항목이 없다. 장표에 향후 과제로 |
 | 자동 분석 (B1) | **넣는다** | 작업 생성 한 번이면 되고, SC4 시연이 완성되며 대기열 가산점과 이어진다 |
 | 근거 문서 (C3) | **3종** — 구매 규정 / 협력사 계약 조건 / ECN 3~5건 | 통합 발주를 뺐으므로 통합 발주 기준 문서도 뺀다 |
