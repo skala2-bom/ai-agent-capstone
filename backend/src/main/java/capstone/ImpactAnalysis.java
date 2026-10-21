@@ -46,7 +46,7 @@ class ImpactAnalysis {
     record Use(String planId, LocalDate date, int qty) {}
 
     /** 계산에 필요한 전부. plans·pos는 whatif가 고치므로 매번 새로 읽는다. */
-    record State(Map<String, String> types, Map<String, Part> parts, Map<String, Integer> onHand,
+    record State(Map<String, String> types, Map<String, String> names, Map<String, Part> parts, Map<String, Integer> onHand,
                  Map<String, Plan> plans, Map<String, Po> pos, Map<String, List<BomLine>> bom) {}
 
     private final JdbcTemplate db;
@@ -71,13 +71,14 @@ class ImpactAnalysis {
 
     /** DB에서 지금 상태를 읽고 whatif를 메모리에 적용한다. */
     State load(List<Map<String, Object>> whatif) {
-        Map<String, String> types = new HashMap<>();
+        Map<String, String> types = new HashMap<>(), names = new HashMap<>();
         Map<String, Part> parts = new TreeMap<>();
         db.query("""
-                select i.item_id, i.type, i.lead_time_days, i.safety_stock, i.high_value, m.unit_price
+                select i.item_id, i.type, i.lead_time_days, i.safety_stock, i.high_value, m.unit_price, i.name
                 from item i left join supplier_metric m on m.supplier_id = i.supplier_id and m.item_id = i.item_id""",
                 rs -> {
                     types.put(rs.getString(1), rs.getString(2));
+                    names.put(rs.getString(1), rs.getString(7));
                     if ("PART".equals(rs.getString(2)))
                         parts.put(rs.getString(1), new Part(rs.getString(1), rs.getInt(3), rs.getInt(4),
                                 rs.getBoolean(5), (Integer) rs.getObject(6)));
@@ -97,7 +98,7 @@ class ImpactAnalysis {
                         rs.getObject(4, LocalDate.class), rs.getObject(5, LocalDate.class))); });
 
         if (whatif != null) for (Map<String, Object> op : whatif) apply(op, plans, pos);
-        return new State(types, parts, onHand, plans, pos, bom);
+        return new State(types, names, parts, onHand, plans, pos, bom);
     }
 
     /** 생산계획을 펼친 부품별 소요 (F-02). 대안 비교가 "다음에 언제 쓰나"를 볼 때도 쓴다 */
@@ -127,6 +128,13 @@ class ImpactAnalysis {
         shortages.sort(byDate);
         warnings.sort(byDate);
         excesses.sort(Comparator.comparing((Map<String, Object> e) -> (String) e.get("date")).thenComparing(e -> (String) e.get("item_id")));
+        // 이름 칸: AI가 ID(CASE-SWITCH)를 제멋대로 번역하지 않고, 화면도 사람이 읽는 이름을 쓰게 (decisions 6.27)
+        for (List<Map<String, Object>> list : List.of(shortages, warnings, excesses))
+            for (Map<String, Object> e : list) {
+                e.put("item_name", st.names().get((String) e.get("item_id")));
+                Plan plan = st.plans().get((String) e.get("plan_id"));
+                if (plan != null) e.put("product_name", st.names().get(plan.product()));
+            }
         return m("policy_version", POLICY_VERSION, "shortages", shortages, "warnings", warnings, "excesses", excesses);
     }
 

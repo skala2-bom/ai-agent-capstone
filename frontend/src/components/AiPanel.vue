@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch } from "vue";
 import ServerResult from "./ServerResult.vue";
+import { segments, sourceCards } from "../services/answer";
 import { useWorkspace } from "../stores/workspace";
 import { mode, request } from "../services/api";
 import { connect, EventAccumulator } from "../services/sse";
@@ -16,6 +17,13 @@ const events = ref<AgentEvent[]>([]);
 const running = ref(false);
 const result = ref<unknown>();
 const sources = ref<unknown>();
+const blocks = computed(() => segments(answer.value));
+const docs = computed(() => sourceCards(sources.value));
+// 문서 질문(QA)은 impact가 null이다. 그때 빈 "영향 결과"를 그리지 않는다
+const hasImpact = computed(() => {
+  const r = result.value as Record<string, unknown> | undefined;
+  return !!r && (r.intent !== "QA" || !!r.impact);
+});
 const approvalReasons = ref<Record<string, string>>({});
 const approvalStates = ref<Record<string, string>>({});
 const submitting = ref(false);
@@ -175,14 +183,36 @@ async function ask() {
       <div v-if="status !== '분석 준비'" class="progress" role="status">
         {{ status }}
       </div>
-      <p class="answer">{{ answer }}</p>
+      <div v-if="blocks.length" class="answer">
+        <template v-for="(b, i) in blocks" :key="i"
+          ><p v-if="b.kind === 'lead'" class="answer-lead">{{ b.text }}</p
+          ><p v-else-if="b.kind === 'callout'" class="answer-callout">{{ b.text }}</p
+          ><h4 v-else-if="b.kind === 'heading'" :class="b.tone">{{ b.text }}</h4
+          ><ul v-else-if="b.kind === 'list'">
+            <li v-for="(item, j) in b.items" :key="j">
+              <small v-if="item.where">{{ item.where }}</small
+              ><span>{{ item.what }}</span
+              ><em v-if="item.note" :class="item.tone">{{ item.note }}</em>
+            </li>
+          </ul
+          ><p v-else>{{ b.text }}</p></template
+        >
+      </div>
       <div v-if="err" class="error">
         {{ err }}<button @click="ask">다시 분석</button>
       </div>
-      <ServerResult v-if="result" :result="result" />
-      <details v-if="sources">
-        <summary>서버 근거 · 원문</summary>
-        <pre>{{ JSON.stringify(sources, null, 2) }}</pre>
+      <ServerResult v-if="hasImpact" :result="result" />
+      <details v-if="docs.length" class="sources">
+        <summary>근거 문서 {{ docs.length }}건 · 원문 보기</summary>
+        <article v-for="d in docs" :key="d.uri" class="source">
+          <b>{{ d.title ?? d.doc_id }}</b>
+          <small
+            >제{{ d.clause_no }}조 · {{ d.version
+            }}<template v-if="d.effective_date"> · {{ d.effective_date }} 시행</template></small
+          >
+          <blockquote v-if="d.excerpt">{{ d.excerpt }}</blockquote>
+          <code>{{ d.uri }}</code>
+        </article>
       </details>
       <article
         v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED')"
@@ -210,12 +240,6 @@ async function ask() {
           </button></template
         ><RouterLink to="/approvals">승인 대기함 열기</RouterLink>
       </article>
-      <details v-if="events.length">
-        <summary>수신 이벤트 · 개발 상세</summary>
-        <p v-for="e in events" :key="e.seq">
-          {{ e.seq }} · {{ e.type }} {{ e.tool }} {{ e.traceId }}
-        </p>
-      </details>
     </div>
     <form class="ai-input" @submit.prevent="ask">
       <label for="question">선택한 업무에 질문</label

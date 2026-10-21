@@ -321,19 +321,56 @@ def plan_label(plans: list[dict], plan_id: str | None, plan_date: str | None = N
     return f"{p['product_name']} 생산({plan_id}, {plan_date or p['plan_date']})" if p else str(plan_id)
 
 
+def item_label(e: dict) -> str:
+    """부품 이름. backend가 item_name을 주면 그걸, 없으면 ID 그대로 — ID를 번역해 지어내지 않는다."""
+    return e.get("item_name") or e["item_id"]
+
+
 def describe_shortage(s: dict, plans: list[dict]) -> str:
-    when = "지금 발주하면 제때 도착 (추가 발주 안내)" if s.get("orderable") else "새 발주로는 늦음 → 기존 발주 조정 필요"
-    return (f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))}: {s['item_id']} "
-            f"{abs(s['projected_stock'])}개 부족 — {when}")
+    when = "지금 발주하면 제때 도착" if s.get("orderable") else "새 발주로는 늦음, 기존 발주 조정 필요"
+    return (f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))}: {item_label(s)} "
+            f"{abs(s['projected_stock']):,}개 부족 · {when}")
+
+
+def lead_text(text: str) -> str:
+    """모델 답변의 첫 문단만, 목록·표·제목 줄이 나오기 전까지. 지시를 어기고 목록이나 마크다운 표를 써도
+    (실제 gpt-4o-mini가 그랬다) 시스템 목록과 겹치지 않고, 틀린 숫자가 화면에 나가지 않게"""
+    out = []
+    for line in text.strip().splitlines():
+        t = line.strip()
+        if not t or t.startswith(("- ", "* ", "• ", "|", "#")) or (t.endswith(":") and len(t) <= 30):
+            break
+        out.append(t)
+    return " ".join(out).replace("**", "")
+
+
+def chain_note(impact: dict, ops: list[dict], plans: list[dict]) -> str:
+    """연쇄 결품 = 질문에서 바꾸지 않은 계획에 생긴 결품. 계산으로 정확히 알 수 있어 모델에게 맡기지 않는다"""
+    changed = {o.get("plan_id") for o in ops or [] if o.get("plan_id")}
+    if not changed:
+        return ""   # 발주 지연 같은 가정은 바꾼 계획이 없다 — 모든 결품이 그 지연 때문이다
+    hit = []
+    for sh in impact.get("shortages", []):
+        label = plan_label(plans, sh.get("plan_id"), sh.get("plan_date"))
+        if sh.get("plan_id") not in changed and label not in hit:
+            hit.append(label)
+    return f"연쇄 결품: 바꾸지 않은 {', '.join(hit)}도 공용 부품이 모자라게 됩니다." if hit else ""
 
 
 def describe_impact(impact: dict, plans: list[dict]) -> str:
-    """결과를 숫자 그대로 문장으로 옮긴다. 가짜 모델 답변과 ADJUST 요약에 쓴다 (모델 없이 숫자가 틀릴 일이 없다)."""
-    lines = [f"- 결품: {describe_shortage(s, plans)}" for s in impact.get("shortages", [])]
-    lines += [f"- 경고: {plan_label(plans, w.get('plan_id'), w.get('plan_date'))}: {w['item_id']} 재고 {w['projected_stock']}개 "
-              f"(안전재고 {w['threshold']}개 미만)" for w in impact.get("warnings", [])]
-    lines += [f"- 과잉: {e['item_id']} {e['qty']}개 ({e['date']} 기준)" for e in impact.get("excesses", [])]
-    return "\n".join(lines) if lines else "결품·경고·과잉이 없습니다."
+    """결과를 숫자 그대로 문장으로 옮긴다. 가짜 모델 답변과 ADJUST 요약에 쓴다 (모델 없이 숫자가 틀릴 일이 없다).
+
+    모양은 "제목 n건:" 한 줄 + "- " 항목 줄, 구역 사이는 빈 줄. 화면이 이 모양을 목록으로 그린다 (decisions 6.27).
+    """
+    groups = [
+        ("결품", [describe_shortage(s, plans) for s in impact.get("shortages", [])]),
+        ("주의", [f"{plan_label(plans, w.get('plan_id'), w.get('plan_date'))}: {item_label(w)} 재고 {w['projected_stock']:,}개 "
+                  f"· 안전재고 {w['threshold']:,}개 미만" for w in impact.get("warnings", [])]),
+        ("과잉", [f"{item_label(e)} {e['qty']:,}개 남음 · {e['date']} 기준, 앞으로 {e.get('window_days', 30)}일 쓸 양보다 많음"
+                  for e in impact.get("excesses", [])]),
+    ]
+    sections = [f"{title} {len(lines)}건:\n" + "\n".join("- " + line for line in lines) for title, lines in groups if lines]
+    return "\n\n".join(sections) if sections else "결품·주의·과잉이 없습니다."
 
 
 # ---------------------------------------------------------------------------
@@ -780,20 +817,24 @@ def describe_execution(res: dict) -> str:
 def _adjust_answer(state: AgentState) -> str:
     plans, impact = state.get("plans") or [], state.get("current_impact") or state.get("impact") or {}
     executions = state.get("executions") or []
-    lines = [f"승인된 변경 {len(executions)}건을 실행했습니다." if executions else "현재 분석 결과입니다."]
-    lines += [describe_execution(e["result"]) for e in executions]
+    # 구역마다 "제목:" + "- " 항목, 사이는 빈 줄 — 화면이 목록으로 그린다 (decisions 6.27)
+    parts = [f"승인된 변경 {len(executions)}건을 실행했습니다." if executions else "현재 분석 결과입니다."]
+    if executions:
+        parts.append("실행한 변경:\n" + "\n".join("- " + describe_execution(e["result"]).removeprefix("실행 결과: ")
+                                                for e in executions))
+    held = []
     if state.get("executed") and not state["executed"]["ok"]:
-        lines.append("실행 보류/실패: " + str(state["executed"]["error"]))
-    for key, reason in (state.get("blocked") or {}).items():
-        lines.append(f"- {key}: {reason}")
-    for rejection in state.get("rejections") or []:
-        lines.append(f"- 거절 사유: {rejection.get('reason')}")
+        held.append("실행 보류/실패: " + str(state["executed"]["error"]))
+    held += [f"{key}: {reason}" for key, reason in (state.get("blocked") or {}).items()]
+    held += [f"거절 사유: {rejection.get('reason')}" for rejection in state.get("rejections") or []]
+    if held:
+        parts.append("보류·거절:\n" + "\n".join("- " + h for h in held))
     if state.get("whatif_ops"):
-        lines.append("생산계획 등 사용자 가정은 자동 저장하지 않았습니다. 아래는 현재 DB와 남은 가정을 함께 분석한 결과입니다.")
-    lines.append(describe_impact(impact, plans))
+        parts.append("질문의 생산계획 가정은 저장하지 않았습니다. 아래는 현재 DB에 그 가정을 더해 다시 분석한 결과입니다.")
+    parts.append(describe_impact(impact, plans))
     if any(s.get("orderable") for s in impact.get("shortages", [])):
-        lines.append("새 발주 가능 부족분은 안내만 했으며, 신규 발주는 생성하지 않았습니다.")
-    return "\n".join(lines)
+        parts.append("지금 발주하면 제때 오는 부족분은 안내만 했고, 새 발주는 만들지 않았습니다.")
+    return "\n\n".join(parts)
 
 
 def respond(state: AgentState) -> dict:
@@ -810,11 +851,18 @@ def respond(state: AgentState) -> dict:
     else:
         last = next((m for m in reversed(state.get("messages") or []) if isinstance(m, AIMessage)), None)
         answer = last.content if last else ""
+        impact = state.get("impact") or {}
+        if intent == "IMPACT" and impact:
+            # 목록은 모델이 옮겨 적지 않고 계산 결과에서 그대로 붙인다. 모델은 결론·설명 문장만 (prompts/impact.md).
+            # 실제 모델이 6건 중 5건만 옮기고 "새 발주로는 늦음"을 "주문할 수 없다"로 바꿔 쓴 적이 있다 (decisions 6.27)
+            answer = "\n\n".join(x for x in (lead_text(answer), chain_note(impact, state.get("whatif_ops"), plans)) if x)
+            if any(impact.get(k) for k in ("shortages", "warnings", "excesses")):
+                answer = (answer + "\n\n" if answer else "") + describe_impact(impact, plans)
     if state.get("notice"):
         answer = f"({state['notice']})\n{answer}"
     if state.get("evidence"):
         answer += "\n\n확인한 근거:\n" + "\n".join(
-            f"- {s['title']} {s['version']} 제{s['clause_no']}조 ({s['uri']})" for s in state["evidence"])
+            f"- {s['title']} 제{s['clause_no']}조 ({s['version']})" for s in state["evidence"])
     elif intent == "QA":
         answer = "관련 원문을 확인하지 못해 규정 답변을 확정할 수 없습니다. 문서 색인·검색 상태를 확인해 주세요."
     if state.get("evidence_error"):
