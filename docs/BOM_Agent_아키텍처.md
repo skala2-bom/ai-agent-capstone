@@ -637,7 +637,7 @@ flowchart LR
 
 | Method | Path | 설명 | 응답 |
 |---|---|---|---|
-| GET | `/api/approvals?status=PENDING` | 승인 대기 목록 (팀장만) | 목록 |
+| GET | `/api/approvals?status=PENDING` | 승인 대기 목록 (팀장은 전부, 다른 역할은 자기가 요청한 것만) | 목록 |
 | GET | `/api/approvals/{approvalId}` | 승인 카드 상세 (도구·인자·요약·금액·근거) | 카드 |
 
 - 작업 SSE는 질문한 사람만 구독하므로, 팀장은 승인 대기함으로 카드를 받는다.

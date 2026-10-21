@@ -111,19 +111,28 @@ class Approvals {
     // 대기함·결정 (화면에서)
     // ------------------------------------------------------------------
 
-    /** GET /api/approvals?status=PENDING — 팀장 대기함. status를 빼면 전부. 오래된 것부터 */
+    /**
+     * GET /api/approvals?status=PENDING — 승인 대기함. status를 빼면 전부. 오래된 것부터.
+     * 팀장은 전부, 다른 역할은 **자기가 요청한 카드만** — 올린 건이 어떻게 됐는지는 요청자도 봐야 한다 (decisions 6.28).
+     * 거르는 건 backend다. 화면에서 거르면 API를 직접 부르는 사람에게 남의 카드가 보인다.
+     */
     @GetMapping("/api/approvals")
     List<Map<String, Object>> list(@RequestParam(required = false) String status, @AuthenticationPrincipal Jwt user) {
-        Auth.require(user, "APPROVER");
-        return db.queryForList("select approval_id from approval where (cast(? as text) is null or status = ?) order by requested_at",
-                String.class, status, status).stream().map(this::card).toList();
+        boolean all = Auth.allows(user.getClaimAsString("role"), "APPROVER");
+        return db.queryForList("""
+                select approval_id from approval
+                where (cast(? as text) is null or status = ?) and (? or requested_by = ?)
+                order by requested_at""",
+                String.class, status, status, all, user.getSubject()).stream().map(this::card).toList();
     }
 
-    /** GET /api/approvals/{id} — 카드 하나 */
+    /** GET /api/approvals/{id} — 카드 하나. 팀장이 아니면 자기가 요청한 카드만 */
     @GetMapping("/api/approvals/{id}")
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
-        Auth.require(user, "APPROVER");
-        return card(id);
+        Map<String, Object> c = card(id);
+        if (!Auth.allows(user.getClaimAsString("role"), "APPROVER") && !user.getSubject().equals(c.get("requested_by")))
+            throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "자기가 요청한 승인만 볼 수 있습니다. 전체는 구매팀장 계정으로 보세요.");
+        return c;
     }
 
     /**

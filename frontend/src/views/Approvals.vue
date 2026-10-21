@@ -29,7 +29,7 @@ async function decide(decision: "APPROVED" | "REJECTED") {
 </script>
 <template>
   <p v-if="w.session?.role !== 'APPROVER'" class="caption">
-    조회 전용 · 승인 권한: 구매팀장
+    내가 요청한 건만 보입니다 · 승인·거절은 구매팀장이 합니다
   </p>
   <div class="toolbar">
     <select v-model="filter" aria-label="승인 상태 필터">
@@ -80,10 +80,16 @@ async function decide(decision: "APPROVED" | "REJECTED") {
       </tbody>
     </table>
     <div v-if="!rows.length" class="empty">
-      <h3>대기 중인 요청이 없습니다</h3>
-      <p>
+      <h3>{{ w.approver ? "대기 중인 요청이 없습니다" : "내가 요청한 승인이 없습니다" }}</h3>
+      <p v-if="mode === 'mock'">
         생산관리에서 1순위 선정 후, 구매 담당자가 발주 변경을 요청하면 이곳에
         표시됩니다.
+      </p>
+      <p v-else-if="w.session?.role === 'PLANNER'">
+        발주 변경 요청은 구매 담당자가 합니다. 생산관리 담당자는 AI 답변의 해결안을 보고 구매에 요청하세요.
+      </p>
+      <p v-else>
+        AI 채팅에서 "부족한 부품 해결 방법 만들어 줘"처럼 요청하면, AI가 검증한 해결안이 승인 카드로 여기 올라옵니다.
       </p>
       <RouterLink v-if="w.approver" class="button" to="/solutions"
         >해결안 비교로 이동 →</RouterLink

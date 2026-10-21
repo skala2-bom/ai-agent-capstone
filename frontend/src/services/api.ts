@@ -302,9 +302,9 @@ const api: Gateway = {
       request<{ purchase_orders: Row[] }>("/purchase-orders", s.token),
     ]);
     const { plans, items, purchases } = toWorkspace(rp, ri, rpo);
-    // 승인 대기함은 팀장만 볼 수 있다 (contracts 3.1). 다른 역할은 빈 목록
+    // 승인 대기함: 팀장은 전부, 다른 역할은 자기가 요청한 카드만 — backend가 거른다 (decisions 6.28)
     const [cards, tasks, metrics, impact, compared] = await Promise.all([
-      s.role === "APPROVER" ? request<Row[]>("/approvals", s.token) : Promise.resolve([] as Row[]),
+      request<Row[]>("/approvals", s.token),
       request<Row[]>("/ai/tasks", s.token),
       request<{ metrics: Row[] }>("/suppliers/metrics", s.token),
       // 지금 DB 상태의 결품·과잉과 해결안. 일정 변경·지연 입력을 저장하면 다시 불러와 바로 반영된다

@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 33 | **승인 대기함: 팀장 외에는 내가 요청한 카드만** — `GET /api/approvals`가 요청자 기준으로 거르고, 화면이 모든 역할에서 대기함을 불러온다. 승인·거절은 그대로 팀장만 | 3.1, decisions 6.28 | ✅ B가 반영함 (사용자 지시) | 없음 |
 | 32 | **답변 가독성** — ① `analyze_impact` 항목에 `item_name`·`product_name` 추가 ② 영향 분석 답변의 결품·주의·과잉 목록과 연쇄 결품 줄은 **코드가 계산 결과에서 그대로** 쓰고, 모델은 결론 1~2문장만 ③ 프롬프트에 평문 규칙 ④ 화면이 답변을 결론·제목·목록으로, 근거를 문서 카드로 그림 | 2.2·3.2, decisions 6.27 | ✅ B가 반영함 (사용자 지시). QA 결과(`impact: null`)에 빈 영향 결과를 안 그리고, 실행한 해결안은 `post_execution_impact`를 보여 준다 (C 변경 기록 2·9번) | 확인 필요: `graph.py`의 `lead_text`·`chain_note`·`describe_impact`, `prompts/impact.md`·`qa.md`를 B가 고쳤다. 남은 것: 검색 근거의 관련성(SC2 질문에 도어센서 문서가 붙음) |
 | 31 | **해결안 비교 화면은 구매팀장(APPROVER)만** — 메뉴·주소·링크·할 일 카드 모두. 구매 담당자는 AI 채팅으로 승인을 요청한다 (팀 토의) | decisions 6.25 | ✅ B가 반영함 (사용자 지시). 목데이터 모드의 검수·우선순위 단계는 생산관리·구매가 더 못 쓴다 — 확인 필요 | 없음. 구매 담당자의 해결 요청은 채팅으로만 들어온다 |
 | 30 | AI 결품·과잉 순차 승인 및 실제 RAG 연결. `DONE.result` 기본 3칸 유지, ADJUST 실행 내역·실행 후 분석 필드 추가 | 3.2, [변경 기록](ai-rag-integration-changes.md) | 감량·취소 승인 카드의 `tool`별 표시, 순차 승인 대기함 갱신 확인 필요 | 구현·회귀 검사. 변경 내역은 A·B 공유 필요 |
@@ -462,7 +463,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
 | POST | `/api/ai/tasks/{id}/approval` | ✅ `202 {approvalId, status}` | APPROVER |
 | GET | `/api/ai/tasks?mine=true` | ✅ 작업 목록, 최근 50개. 생산관리는 항상 자기 것만, 구매·팀장은 `mine`을 빼면 전체 | 로그인 |
-| GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3) | APPROVER |
+| GET | `/api/approvals?status=PENDING` · `/api/approvals/{id}` | ✅ 승인 카드 목록 · 카드 하나 (3.3). **APPROVER는 전부, 다른 역할은 자기가 요청한 카드만** (남의 카드 하나를 열면 403 `ROLE_NOT_ALLOWED`, decisions 6.28) | 전부 (요청자 기준으로 거름) |
 | GET | ✅ `/api/plans` · `/api/inventory` · `/api/purchase-orders` · `/api/items/{id}/bom` · `/api/suppliers/metrics` (응답 모양은 2.1 `/internal`과 같다) | 조회 | 로그인 (금액 마스킹) |
 | POST | ✅ `/api/analysis/impact` · `/api/analysis/options` `{whatif, issues?}` | AI 도구 2.2·2.3과 같은 모양. `whatif`를 비우면 지금 DB 상태 그대로 (업무 현황·해결안 비교), 넣으면 미리보기 (DB는 안 바뀜) | 로그인 (금액 마스킹) |
 | PUT | ✅ `/api/suppliers/{supplier_id}/items/{item_id}/metrics` `{on_time_rate?, quality_score?, unit_price?, lead_time_days?, expedite_cost_per_day?, split_fee?, delay_penalty?}` | 바뀐 지표 한 줄. 보낸 칸만 바꾸고 `evaluated_at`·`evaluated_by`를 남긴다 | BUYER·APPROVER (AI 도구로는 안 연다) |

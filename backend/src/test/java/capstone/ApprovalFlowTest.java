@@ -169,6 +169,22 @@ class ApprovalFlowTest {
     }
 
     @Test
+    void 승인_대기함은_팀장이_전부_다른_역할은_자기가_요청한_것만_본다() {
+        db.update("insert into ai_task (task_id, thread_id, user_id, role, question) values ('T-9', 'T-9', 'approver', 'APPROVER', 'q') on conflict do nothing");
+        String mine = (String) approvals.create("T-1", "buyer", "BUYER",
+                m("tool", "request_due_date_change", "args", m("po_id", "PO-2609-001", "new_due_date", "2026-12-10"))).get("approval_id");
+        String boss = (String) approvals.create("T-9", "approver", "APPROVER",
+                m("tool", "request_due_date_change", "args", m("po_id", "PO-2609-001", "new_due_date", "2026-12-11"))).get("approval_id");
+        Jwt buyer = jwt("buyer", "BUYER"), planner = jwt("planner", "PLANNER"), approver = jwt("approver", "APPROVER");
+
+        assertThat(approvals.list(null, buyer)).extracting(c -> c.get("requested_by")).containsOnly("buyer").isNotEmpty();
+        assertThat(approvals.list(null, planner)).isEmpty();
+        assertThat(approvals.list(null, approver)).extracting(c -> c.get("approval_id")).contains(mine, boss);
+        assertThat(approvals.get(mine, buyer)).containsEntry("approval_id", mine);
+        assertCode(() -> approvals.get(boss, buyer), "ROLE_NOT_ALLOWED");
+    }
+
+    @Test
     void 평가지표는_구매가_화면에서만_입력한다() {
         Jwt buyer = jwt("buyer", "BUYER"), planner = jwt("planner", "PLANNER");
         assertCode(() -> screen.updateMetric("SUP-POWER", "RELAY", m("on_time_rate", 80.5), planner), "ROLE_NOT_ALLOWED");
