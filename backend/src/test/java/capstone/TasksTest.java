@@ -113,6 +113,21 @@ class TasksTest {
     }
 
     @Test
+    void 카드가_남아_있으면_하나를_결정해도_승인_대기다() {
+        String id = insertTask("buyer", "BUYER");
+        String a = (String) tasks.receiveEvent(id, m("type", "APPROVAL_REQUIRED", "tool", "request_due_date_change",
+                "args", m("po_id", "PO-2609-001", "new_due_date", "2026-12-10"))).get("approvalId");
+        String b = (String) tasks.receiveEvent(id, m("type", "APPROVAL_REQUIRED", "tool", "request_due_date_change",
+                "args", m("po_id", "PO-2609-002", "new_due_date", "2026-12-10"))).get("approvalId");
+        assertThat(tasks.find(id).status()).isEqualTo("WAITING_APPROVAL");
+
+        tasks.decide(id, Map.of("approvalId", a, "decision", "APPROVED"), APPROVER);
+        assertThat(tasks.find(id).status()).isEqualTo("WAITING_APPROVAL");   // b가 아직 팀장을 기다린다
+        tasks.decide(id, Map.of("approvalId", b, "decision", "REJECTED", "reason", "다른 방법으로"), APPROVER);
+        assertThat(tasks.find(id).status()).isEqualTo("RUNNING");            // 이제 AI 차례
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void 작업_조회에_제안별_최신_진행_상태가_붙는다() {
         String id = insertTask("buyer", "BUYER");

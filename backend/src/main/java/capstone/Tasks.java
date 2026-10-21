@@ -186,7 +186,11 @@ class Tasks {
         Auth.require(user, "APPROVER");
         find(id);
         Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
-        db.update("update ai_task set status = 'RUNNING' where task_id = ? and status = 'WAITING_APPROVAL'", id);
+        // 카드가 여러 장이면(decisions 6.29) 하나를 결정해도 나머지가 팀장을 기다린다. 그때는 "승인 대기"를 유지한다.
+        // 마지막 카드를 결정했을 때만 AI 차례(RUNNING)로 넘긴다 (decisions 6.31)
+        db.update("""
+                update ai_task set status = 'RUNNING' where task_id = ? and status = 'WAITING_APPROVAL'
+                and not exists (select 1 from approval where task_id = ? and status = 'PENDING')""", id, id);
         Map<String, Object> req = new HashMap<>();
         req.put("threadId", id);
         req.put("approvalId", card.get("approval_id"));
