@@ -9,9 +9,11 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 import graph as G
@@ -25,31 +27,40 @@ AGENT_DB_URL = os.getenv("AGENT_DB_URL")
 app_graph = None
 store = None
 runner = None
+checkpoints = None   # checkpointer 연결 풀
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global app_graph, store, runner
+    global app_graph, store, runner, checkpoints
     if not AGENT_DB_URL:
         # Serving 202 from memory would silently lose accepted decisions on restart.
         yield
         return
     store = ApprovalStore(AGENT_DB_URL)
     await store.open()
+    # checkpointer는 연결 하나(from_conn_string)가 아니라 풀로 연다. 연결 하나는 postgres가 재시작되면
+    # 끊긴 채 남아 승인 재개가 계속 실패했다. check_connection이 꺼낼 때마다 살아 있는지 보고 새로 붙는다.
+    # 연결 옵션은 from_conn_string과 같다 (decisions 6.41)
+    checkpoints = AsyncConnectionPool(AGENT_DB_URL, min_size=1, max_size=12, open=False,
+                                      check=AsyncConnectionPool.check_connection,
+                                      kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+    await checkpoints.open()
     try:
-        async with AsyncPostgresSaver.from_conn_string(AGENT_DB_URL) as saver:
-            await saver.setup()
-            app_graph = G.builder.compile(checkpointer=saver)
-            G.execution_store = store
-            runner = ApprovalRunner(app_graph, store, initial_state)
-            runner.start()
-            try:
-                yield
-            finally:
-                await runner.close()
-                await O.shutdown()
+        saver = AsyncPostgresSaver(conn=checkpoints)
+        await saver.setup()
+        app_graph = G.builder.compile(checkpointer=saver)
+        G.execution_store = store
+        runner = ApprovalRunner(app_graph, store, initial_state)
+        runner.start()
+        try:
+            yield
+        finally:
+            await runner.close()
+            await O.shutdown()
     finally:
         G.execution_store = None
+        await checkpoints.close()
         await store.close()
 
 
@@ -132,8 +143,20 @@ async def resume(task_id: str, body: ResumeIn):
 
 
 @app.get("/health")
-async def health():
-    return {"ok": app_graph is not None and store is not None,
+async def health(response: Response):
+    # docker healthcheck가 본다. 그래프·checkpointer가 준비되고 agent DB에 붙을 때만 healthy다 —
+    # 그래야 받은 결정을 잃지 않는다. 아니면 503. LLM·MCP는 보지 않는다 (decisions 6.41)
+    ok = app_graph is not None and store is not None
+    if ok:
+        try:
+            for pool in (store.pool, checkpoints):   # 접수함과 checkpointer 둘 다 붙어야 한다
+                async with pool.connection(timeout=1.5) as c:
+                    await c.execute("select 1")
+        except Exception:
+            ok = False
+    if not ok:
+        response.status_code = 503
+    return {"ok": ok,
             "checkpointer": "postgres" if store else "unavailable", "workflow_version": 2,
             "model": "openai" if G.llm is not None else "fake",
             "tracingConfigured": O.client() is not None, "promptVersion": O.prompt_version()}

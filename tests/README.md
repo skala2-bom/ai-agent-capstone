@@ -9,7 +9,7 @@
 ## 외부 모델 호출 없는 검사
 
 ```bash
-docker compose -p capstone-ai-test -f tests/compose.yml up -d --build
+docker compose -p capstone-ai-test -f tests/compose.yml up -d --build --wait
 docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -m unittest -v test_ai_rag
 docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -m unittest -v test_approval_runner
 docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests

@@ -4,9 +4,12 @@
 # 브라우저에서 닿지 않고, compose 내부망에서 **서비스 이름**으로만 불린다
 # (예: http://business-mcp:9101/mcp). 교재 5장 "브라우저에 노출되는 주소를 줄인다".
 #
-# 시작 순서를 거의 신경 쓰지 않는 이유: 서비스끼리는 실제로 호출할 때 연결하기
-# 때문이다. agent가 먼저 떠도 MCP 서버가 준비되면 그때부터 정상 동작한다.
-# postgres·rabbitmq는 healthcheck로 준비를 기다린다. 다른 서비스는 호출 시 연결한다.
+# 시작 순서: 모든 서비스에 healthcheck가 있고, 앞 서비스가 healthy가 된 뒤에 뜬다 (decisions 6.41).
+#   postgres·rabbitmq → backend → frontend,  postgres → rag-mcp,  business-mcp·rag-mcp·postgres → agent
+#   postgres·rabbitmq는 아래 healthcheck, 나머지는 각 Dockerfile의 HEALTHCHECK가 정한다.
+#   healthcheck는 자기 프로세스와 직접 쓰는 저장소만 본다. 다른 서비스까지 보면 하나가 죽을 때 전부 unhealthy로 번진다.
+#   서비스끼리는 여전히 호출할 때 연결하므로, 뜬 뒤에 하나가 잠깐 죽어도 나머지는 그대로 돈다.
+# 모두 준비될 때까지 기다리려면: docker compose up -d --build --wait
 #
 # indexer는 수동 실행 프로필(indexing), rabbitmq는 상시 작업 대기열
 # 설계 배경: docs/walking-skeleton.md
@@ -18,7 +21,8 @@ services:
       args:
         VITE_DATA_MODE: ${VITE_DATA_MODE:-api}
     ports: ["3000:80"]        # 공개. 브라우저가 여기로 들어온다
-    depends_on: [backend]
+    depends_on:
+      backend: { condition: service_healthy }    # 화면이 뜨자마자 /api가 502를 내지 않게
 
   backend:
     build: ./backend
@@ -68,8 +72,8 @@ services:
       # checkpointer: 승인 대기 상태를 agent 스키마에 저장 (agent 계정은 자기 스키마만, db/init.sql)
       AGENT_DB_URL: postgresql://agent:agent@postgres:5432/bom
     depends_on:
-      business-mcp: { condition: service_started }
-      rag-mcp: { condition: service_started }
+      business-mcp: { condition: service_healthy }
+      rag-mcp: { condition: service_healthy }
       postgres: { condition: service_healthy }
 
   business-mcp:
@@ -97,6 +101,7 @@ services:
     volumes:
       - ./data:/app/data:ro
     command: ["python", "indexer.py"]
+    healthcheck: { disable: true }   # rag-mcp 이미지의 HEALTHCHECK를 끈다. 서버가 아니라 한 번 돌고 끝나는 작업이다
     depends_on:
       postgres: { condition: service_healthy }
 
