@@ -65,7 +65,23 @@ function clear() {
   answer.value = ""; result.value = undefined; sources.value = undefined; events.value = [];
   status.value = "분석 준비"; err.value = "";
 }
-watch(() => w.context, () => { clear(); w.activeTask = undefined; question.value = ""; });
+// 업무를 바꾸면 이전 답변은 지운다. 입력 중이던 질문 글은 남긴다 — 질문을 쓰고 나서 업무를 고를 수도 있다
+watch(() => w.context, () => { clear(); w.activeTask = undefined; });
+// "선택한 업무" 목록: 데이터의 모든 생산계획·발주·자재 (decisions 6.32).
+// value는 각 화면에서 항목을 누를 때 넣는 문구와 같다 — 그래야 화면에서 누른 업무가 여기서 그대로 선택돼 보인다.
+// 보이는 글자에만 날짜·수량을 더한다. AI에게 보내는 문구에 수량을 넣으면 질문의 가정 변경으로 잘못 읽을 수 있다
+const contextGroups = computed(() => {
+  const d = w.data;
+  if (!d) return [];
+  return [
+    { label: "생산계획", options: d.plans.map((p) => ({ value: `${p.id} · ${p.product}`,
+      text: `${p.id} · ${p.product} — ${p.date} · ${p.qty.toLocaleString()}대` })) },
+    { label: "발주", options: d.purchases.map((p) => ({ value: `${p.id} · ${p.item}`,
+      text: `${p.id} · ${p.item} — ${p.qty.toLocaleString()}개 · ${p.date} 입고` })) },
+    { label: "자재·제품", options: d.items.map((i) => ({ value: `${i.id} · ${i.name}`, text: `${i.id} · ${i.name}` })) },
+  ];
+});
+const knownContexts = computed(() => new Set(contextGroups.value.flatMap((g) => g.options.map((o) => o.value))));
 window.addEventListener("close-agent", clear);
 onBeforeUnmount(() => { clear(); window.removeEventListener("close-agent", clear); });
 
@@ -116,7 +132,7 @@ async function ask() {
   }
   running.value = true; status.value = "접수 중";
   try {
-    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: `${w.context}\n${question.value}` });
+    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: w.context ? `${w.context}\n${question.value}` : question.value });
     if (g === generation) w.activeTask = taskId;
   } catch (e) {
     if (g === generation) { err.value = (e as Error).message; running.value = false; }
@@ -137,7 +153,14 @@ async function ask() {
     </header>
     <div class="ai-body">
       <span class="eyebrow">선택한 업무</span>
-      <div class="context">{{ w.context || "업무 항목을 선택하세요" }}</div>
+      <select v-model="w.context" class="context" aria-label="선택한 업무">
+        <option value="">선택 없음</option>
+        <!-- 결품 항목처럼 목록에 없는 업무를 화면에서 눌렀을 때도 그대로 보이게 -->
+        <option v-if="w.context && !knownContexts.has(w.context)" :value="w.context">{{ w.context }}</option>
+        <optgroup v-for="g in contextGroups" :key="g.label" :label="g.label">
+          <option v-for="o in g.options" :key="o.value" :value="o.value">{{ o.text }}</option>
+        </optgroup>
+      </select>
       <span class="badge success">{{
         mode === "mock" ? "시연 결과" : "실시간 API"
       }}</span

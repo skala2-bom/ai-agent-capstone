@@ -1677,6 +1677,13 @@ td {
 .ai-panel .context {
   font-size: 12px;
 }
+select.context {
+  width: 100%;
+  border: 1px solid var(--border);
+  color: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+}
 .ai-panel .eyebrow {
   letter-spacing: 0.6px;
 }
