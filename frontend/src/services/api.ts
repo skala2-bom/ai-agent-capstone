@@ -2,6 +2,7 @@ import type { Command, Session, Workspace, Role, Option, Issue, Grade } from "..
 import { sourceCards } from "./answer";
 import { environmentFixture } from "../mocks/environments";
 import { mutate } from "./workflow";
+import { toTrace } from "./traces";
 export const mode = import.meta.env.VITE_DATA_MODE === "api" ? "api" : "mock";
 export async function request<T>(
   path: string,
@@ -195,6 +196,7 @@ export function toHistory(tasks: Row[]): Workspace["history"] {
     detail: String(t.answer ?? ""),
     userId: String(t.userId ?? ""),
     trigger: String(t.trigger ?? ""),
+    ...(toTrace(t.trace) ? { trace: toTrace(t.trace) } : {}),
   }));
 }
 /** 협력사 평가지표(GET /api/suppliers/metrics) → 화면 평가지표 표 */

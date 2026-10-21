@@ -619,6 +619,14 @@ backend ──▶ agent    { threadId, approvalId, decision, reason }
 | LLM | **주 모델 1 + 대체 모델 1** | Harness Recovery 증빙에 둘이 필요하다. 제공자를 다르게 두면 더 강한 증빙이 된다 |
 | 대기열 | **RabbitMQ** (가산점, 후순위) | 큐·재시도·DLQ 설정이 단순하다. Kafka는 이 규모에 과하다 |
 | Harness 한도 | 일반 경로 8턴, ADJUST 기본 64턴(`MAX_ADJUST_TURNS`), 작업 실행 구간 기본 600초(`AGENT_WORK_TIMEOUT_S`), 그래프 600단계(`AGENT_RECURSION_LIMIT`), 같은 도구 3회·429/503 2회 재시도 | 다건 준비·재제안을 포함하도록 조정. 사람 승인 대기는 시간 제한에서 제외. 대상 최대 10개, 최초+재제안 최대 30개 |
+
+### Harness 관측 추가 계약 (2026-10-21)
+
+- `TRACE` 이벤트는 업무 상태를 변경하지 않는다. 회차별 `traceId`, `previousTraceId`, `executionKind`, `outcome`, `traceUrl`, 실행 시간·호출·오류·복구·사용량 통계를 담는다.
+- task 목록의 `trace`는 최신 회차, 상세 조회의 `traces[]`는 회차별 최종 기록이다. 기존 작업 조회 권한을 그대로 적용한다.
+- `taskId`/`threadId`로 승인 전후를 묶고, 재개 command마다 새 root trace를 만든다. trace 정보는 업무 이벤트 중복 제거 키에 넣지 않는다.
+- 토큰 수를 확보하지 못하면 null, LLM 호출이 없을 때만 비용 0이다. 실제 모델 비용은 LangSmith에서 확인하며 임의 단가 계산을 하지 않는다.
+- 전체 기준·검증 결과·재현법: [harness-validation.md](harness-validation.md).
 | 통합 발주 (A4) | **MVP 제외** | 도구·계산·승인이 한 벌 더 필요한데 평가표에 해당 항목이 없다. 장표에 향후 과제로 |
 | 자동 분석 (B1) | **넣는다** | 작업 생성 한 번이면 되고, SC4 시연이 완성되며 대기열 가산점과 이어진다 |
 | 근거 문서 (C3) | **3종** — 구매 규정 / 협력사 계약 조건 / ECN 3~5건 | 통합 발주를 뺐으므로 통합 발주 기준 문서도 뺀다 |

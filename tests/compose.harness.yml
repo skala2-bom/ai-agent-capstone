@@ -1,0 +1,29 @@
+# Apply ONLY on top of tests/compose.yml. No paid LLM or embedding calls.
+# docker compose --env-file .env -p capstone-harness-current -f tests/compose.yml -f tests/compose.harness.yml up -d --build --wait
+services:
+  backend:
+    image: capstone-harness-current-backend
+  business-mcp:
+    image: capstone-harness-current-business-mcp
+  rag-mcp:
+    image: capstone-harness-current-rag-mcp
+  agent:
+    image: capstone-harness-current-agent
+    environment:
+      AGENT_MODEL_MODE: fake
+      OPENAI_API_KEY: ""
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-bom-agent-dev}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      LANGSMITH_WORKSPACE_ID: ${LANGSMITH_WORKSPACE_ID:-}
+  tests:
+    image: capstone-harness-current-agent
+  frontend:
+    image: capstone-harness-current-frontend
+    build:
+      context: ../frontend
+      args:
+        VITE_DATA_MODE: api
+    ports: ["127.0.0.1:3100:80"]
+    depends_on: [backend]

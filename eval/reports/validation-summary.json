@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-21",
+  "budget_usd": 0,
+  "provider_calls": 0,
+  "embedding_api_calls": 0,
+  "baseline_commit": "17f72403cefe15d7161dba1707aa0572086da564",
+  "checks": {
+    "python_tests": {
+      "passed": 54,
+      "failed": 0
+    },
+    "backend_tests": {
+      "passed": 29,
+      "failed": 0
+    },
+    "frontend_tests": {
+      "passed": 38,
+      "failed": 0
+    },
+    "business_integration_before": {
+      "passed": 16,
+      "failed": 0
+    },
+    "business_integration_after": {
+      "passed": 16,
+      "failed": 0
+    },
+    "evaluation_before": {
+      "passed": 18,
+      "total": 18,
+      "mode": "fake"
+    },
+    "evaluation_after": {
+      "passed": 18,
+      "total": 18,
+      "mode": "fake"
+    },
+    "langsmith_synthetic": {
+      "ingested": true,
+      "redaction_checked": true,
+      "llm_calls": 0
+    },
+    "langsmith_failed_run": {
+      "ingested": true,
+      "root_error": true,
+      "error_spans": 4,
+      "total_spans": 4
+    },
+    "frontend_build": "passed",
+    "restart_recovery": {
+      "passed": true,
+      "executions": 3,
+      "linked_traces": 4
+    },
+    "secret_scan": {
+      "leaks": 0
+    }
+  },
+  "not_validated": [
+    "real_model_answer_quality",
+    "real_provider_retry_or_fallback",
+    "real_model_usage_and_billing",
+    "real_embedding_quality",
+    "visual_browser_review"
+  ],
+  "notes": [
+    "Paid provider keys were not forwarded to test containers.",
+    "Browser UI connection was unavailable; frontend typecheck/build and 38 tests passed.",
+    "Existing developer containers and database were not replaced or reset."
+  ]
+}

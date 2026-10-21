@@ -40,12 +40,15 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 import whatif as W
+import observability as O
+import model_runtime as M
+from context_budget import tool_content
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8080")
 BUSINESS_MCP_URL = os.getenv("BUSINESS_MCP_URL", "http://business-mcp:9101/mcp")
 RAG_MCP_URL = os.getenv("RAG_MCP_URL", "http://rag-mcp:9102/mcp")
 
-# Harness 한도 (교재 권장값 그대로, decisions 6.7)
+# Harness 한도: 일반 8턴, 다건 ADJUST 64턴 (decisions 6.29).
 MAX_TURNS = 8               # 모델 호출 횟수
 MAX_SAME_TOOL = 3           # 같은 도구를 부르는 횟수 (모델이 고르는 도구 기준)
 TOOL_TIMEOUT_S = 10         # 도구 1회 (아키텍처 4.2)
@@ -71,16 +74,7 @@ def prompt(name: str, **values: str) -> str:
 # Model — 키가 없으면 가짜 모델(규칙)로 동작한다
 # ---------------------------------------------------------------------------
 
-if os.getenv("OPENAI_API_KEY"):
-    from langchain_openai import ChatOpenAI
-
-    # max_retries: 429·503 등 일시 오류를 SDK가 다시 시도한다 (Harness Recovery, 교재 권장 2회).
-    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0, timeout=30, max_retries=2)
-    if os.getenv("FALLBACK_MODEL"):
-        # 대체 모델. decisions 6.11은 제공자를 다르게 두라고 한다 — 키를 받으면 여기만 바꾼다.
-        llm = llm.with_fallbacks([ChatOpenAI(model=os.environ["FALLBACK_MODEL"], temperature=0, timeout=30)])
-else:
-    llm = None
+llm, fallback_llm = M.make_models()
 
 
 # 구조화 출력은 function_calling 방식으로 받는다. 기본(json_schema)은 gpt-4o-mini에서 날짜 값 뒤에
@@ -112,7 +106,7 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[list, add_messages]   # 대화 (이어 붙임)
     task_id: str
     thread_id: str
-    trace_id: str
+    trace_id: str                            # 최초 실행 ID. 재개 회차의 ID는 observability 컨텍스트에서 관리
     user_id: str | None
     role: str | None                          # PLANNER | BUYER | APPROVER (금액 숨김·ADJUST 권한)
     question: str
@@ -171,6 +165,7 @@ async def emit(task_id: str, event: dict, *, important: bool = False) -> httpx.R
     이게 유실되면 backend는 작업이 끝났는지 모르고 화면은 계속 기다린다.
     backend 응답을 돌려준다 (APPROVAL_REQUIRED는 {approvalId} 또는 403 ROLE_NOT_ALLOWED, contracts 3.3).
     """
+    event = O.enrich(event)
     tries = 3 if important else 1
     for i in range(tries):
         try:
@@ -234,6 +229,14 @@ async def call_tool(state: dict, name: str, args: dict, *, label: str | None = N
     도구 오류로 작업을 죽이지 않는다. 오류 문장(retry_hint 포함)을 모델이나 판정에 돌려준다.
     quiet=True면 진행 이벤트를 보내지 않는다 (제품 이름 조회 같은 내부 준비 작업).
     """
+    with O.tool_span(name, args) as report:
+        ok, result = await _call_tool(state, name, args, label=label, quiet=quiet)
+        report.update(ok=ok, errorCode=None if ok else ("UPSTREAM_TIMEOUT" if "UPSTREAM_TIMEOUT" in str(result) else "TOOL_ERROR"))
+        return ok, result
+
+
+async def _call_tool(state: dict, name: str, args: dict, *, label: str | None = None,
+                     quiet: bool = False) -> tuple[bool, Any]:
     task_id = state.get("task_id", "")
     if not quiet:
         await emit(task_id, {"type": "TOOL_START", "tool": name, "label": label or LABELS.get(name, name)})
@@ -409,12 +412,10 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0) ->
     msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans))),
             HumanMessage(question)]
     if W.explicit_adjust_request(question):
-        msgs.append(SystemMessage("이 질문에는 명시적인 해결 요청이 있으므로 intent는 ADJUST입니다. "
-                                  "'문제 있어?'와 함께 있어도 모순이 아닙니다. whatif를 추출하세요. "
-                                  "unclear는 생산 계획·날짜·수량이 실제로 모호할 때만 씁니다."))
+        msgs.append(SystemMessage(prompt("classify_adjust")))
     for attempt in range(2):
         turns += 1
-        c = await llm.with_structured_output(W.Classification, method=STRUCTURED).ainvoke(msgs)
+        c = await M.invoke(llm, fallback_llm, msgs, schema=W.Classification)
         if c.intent == "IMPACT" and W.explicit_adjust_request(question):
             # 실제 SC2에서 긴 가정 뒤 "해결 방법 만들어 줘"를 놓쳤다. 명시적 요청의 분기만 보완한다.
             # 모델의 whatif는 그대로 검사하며, 역할 제한과 개별 승인은 이후 단계에서 적용한다.
@@ -493,7 +494,7 @@ async def agent_impact(state: AgentState) -> dict:
         return {"messages": [msg], "turn_count": turns}
     system = SystemMessage(prompt("impact", PLANS=plans_table(state["plans"]),
                                   SOURCES=json.dumps(state.get("evidence") or [], ensure_ascii=False)))
-    msg = await llm.bind_tools([analyze_impact_tool]).ainvoke([system, *state["messages"]])
+    msg = await M.invoke(llm, fallback_llm, [system, *state["messages"]], tools=[analyze_impact_tool])
     return {"messages": [msg], "turn_count": turns}
 
 
@@ -516,7 +517,7 @@ async def tools(state: AgentState) -> dict:
             content = json.dumps(mask(res, state.get("role")), ensure_ascii=False) if ok else res
         else:
             content = f"이 경로에서 쓸 수 없는 도구입니다: {call['name']}"
-        out_msgs.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
+        out_msgs.append(ToolMessage(tool_content(content), tool_call_id=call["id"], name=call["name"]))
     return {"messages": out_msgs, "tool_counts": counts, **updates}
 
 
@@ -547,7 +548,7 @@ async def agent_qa(state: AgentState) -> dict:
             msg = AIMessage(f"[가짜 모델] 근거 조항 원문입니다.\n{e['excerpt']}\n(근거: {e['uri']})")
         return {"messages": [msg], "turn_count": turns}
     system = SystemMessage(prompt("qa"))
-    msg = await llm.bind_tools([search_docs_tool, read_doc_tool]).ainvoke([system, *state["messages"]])
+    msg = await M.invoke(llm, fallback_llm, [system, *state["messages"]], tools=[search_docs_tool, read_doc_tool])
     return {"messages": [msg], "turn_count": turns}
 
 
@@ -581,7 +582,7 @@ async def tools_rag(state: AgentState) -> dict:
                 content = json.dumps(source, ensure_ascii=False) if source else error
         else:
             content = f"이 경로에서 쓸 수 없는 도구입니다: {call['name']}"
-        out_msgs.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
+        out_msgs.append(ToolMessage(tool_content(content), tool_call_id=call["id"], name=call["name"]))
     return {"messages": out_msgs, "tool_counts": counts, "evidence": evidence,
             "search_hits": hits, "qa_searched": searched, "evidence_error": error}
 
@@ -673,8 +674,8 @@ async def agent_adjust(state: AgentState) -> dict:
             "rejections": state.get("rejections") or [],
         }
         try:
-            pick = await llm.with_structured_output(Pick, method=STRUCTURED).ainvoke(
-                [SystemMessage(prompt("adjust")), HumanMessage(json.dumps(context, ensure_ascii=False))])
+            pick = await M.invoke(llm, fallback_llm,
+                [SystemMessage(prompt("adjust")), HumanMessage(json.dumps(context, ensure_ascii=False))], schema=Pick)
         except Exception as e:
             return {"selected_option": None, "turn_count": turns, "evidence_error": f"대안 선택 실패: {type(e).__name__}"}
     chosen = next((o for o in cands if o["option_id"] == pick.option_id), None)

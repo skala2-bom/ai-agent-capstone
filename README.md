@@ -5,6 +5,7 @@
 > - [docs/walking-skeleton.md](docs/walking-skeleton.md) — 이 뼈대를 무엇을 기반으로, 왜 이렇게 만들었는지
 > - [docs/contracts.md](docs/contracts.md) — **파트 경계를 넘는 약속.** 내 파트 것만 보면 된다
 > - [docs/decisions.md](docs/decisions.md) — 무엇이 정해졌고, 왜 그렇게 정했는지
+> - [docs/harness-validation.md](docs/harness-validation.md) — Harness 8요소 구현·비용 0 검증 결과·LangSmith 연결·시연 절차
 
 ```
 ai-agent-capstone/

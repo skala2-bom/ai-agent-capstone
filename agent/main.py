@@ -5,6 +5,7 @@ approval contracts stay unchanged. Human approval waiting has no timeout.
 """
 import uuid
 import os
+import logging
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -16,6 +17,9 @@ from pydantic import BaseModel
 import graph as G
 from approval_store import ApprovalStore
 from approval_runner import ApprovalRunner, config
+import observability as O
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 AGENT_DB_URL = os.getenv("AGENT_DB_URL")
 app_graph = None
@@ -43,6 +47,7 @@ async def lifespan(app: FastAPI):
                 yield
             finally:
                 await runner.close()
+                await O.shutdown()
     finally:
         G.execution_store = None
         await store.close()
@@ -70,7 +75,7 @@ class ResumeIn(BaseModel):
 def initial_state(command):
     body = TaskIn(**command["payload"])
     thread_id = body.threadId or body.taskId
-    trace_id = uuid.uuid4().hex
+    trace_id = O.current().trace_id if O.current() else str(uuid.uuid4())
     graph_input = {
         "messages": [HumanMessage(body.question)],
         "task_id": body.taskId, "thread_id": thread_id, "trace_id": trace_id,
@@ -130,4 +135,5 @@ async def resume(task_id: str, body: ResumeIn):
 async def health():
     return {"ok": app_graph is not None and store is not None,
             "checkpointer": "postgres" if store else "unavailable", "workflow_version": 2,
-            "model": "openai" if G.llm is not None else "fake"}
+            "model": "openai" if G.llm is not None else "fake",
+            "tracingConfigured": O.client() is not None, "promptVersion": O.prompt_version()}

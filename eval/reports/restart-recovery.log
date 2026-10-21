@@ -1,0 +1,5 @@
+  APPROVED change_po_qty {'po_id': 'PO-2610-115', 'new_qty': 500}
+  APPROVED split_po {'po_id': 'PO-2610-114', 'split_qty': 400, 'new_due_date': '2026-11-23'}
+  APPROVED split_po {'po_id': 'PO-2610-113', 'split_qty': 200, 'new_due_date': '2026-11-23'}
+PASS 실제 컨테이너 재시작 뒤 기존 3건 재개, 중복 카드·중복 실행 없음
+ALL REQUESTED CHECKS PASSED

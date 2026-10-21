@@ -52,6 +52,19 @@ services:
       # 키가 비어 있으면 agent가 가짜 모델로 돈다. 키는 .env에만 두고 커밋하지 않는다
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AGENT_MODEL_MODE: ${AGENT_MODEL_MODE:-auto}
+      FALLBACK_MODEL: ${FALLBACK_MODEL:-}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-bom-agent-dev}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      LANGSMITH_WORKSPACE_ID: ${LANGSMITH_WORKSPACE_ID:-}
+      AGENT_INPUT_TOKEN_BUDGET: ${AGENT_INPUT_TOKEN_BUDGET:-12000}
+      AGENT_OUTPUT_MAX_TOKENS: ${AGENT_OUTPUT_MAX_TOKENS:-1500}
+      TOOL_RESULT_MAX_CHARS: ${TOOL_RESULT_MAX_CHARS:-4000}
+      MAX_ADJUST_TURNS: ${MAX_ADJUST_TURNS:-64}
+      AGENT_WORK_TIMEOUT_S: ${AGENT_WORK_TIMEOUT_S:-600}
+      AGENT_RECURSION_LIMIT: ${AGENT_RECURSION_LIMIT:-600}
       # checkpointer: 승인 대기 상태를 agent 스키마에 저장 (agent 계정은 자기 스키마만, db/init.sql)
       AGENT_DB_URL: postgresql://agent:agent@postgres:5432/bom
     depends_on:

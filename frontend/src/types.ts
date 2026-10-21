@@ -100,6 +100,27 @@ export interface History {
   detail: string;
   userId?: string;
   trigger?: string;
+  trace?: ExecutionTrace;
+  traces?: ExecutionTrace[];
+}
+export interface ExecutionTrace {
+  traceId: string;
+  previousTraceId?: string | null;
+  traceUrl?: string | null;
+  executionKind?: string;
+  outcome?: string;
+  tracingEnabled?: boolean;
+  durationMs?: number;
+  llmCalls?: number;
+  toolCalls?: number;
+  toolErrors?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  retryCount?: number;
+  fallbackCount?: number;
+  summaryCount?: number;
+  costUsd?: number | null;
+  promptVersion?: string;
 }
 export interface Metric {
   supplierId?: string; // API 모드에서 저장할 때 쓰는 ID (화면에는 이름을 보여 준다)
@@ -153,6 +174,7 @@ export interface AgentEvent {
     | "APPROVAL_REQUIRED"
     | "PROPOSAL_PROGRESS"
     | "WORKFLOW_NOTICE"
+    | "TRACE"
     | "DONE"
     | "FAILED";
   taskId: string;
@@ -167,6 +189,7 @@ export interface AgentEvent {
   summary?: string;
   message?: string;
   traceId?: string;
+  traceUrl?: string | null;
   result?: unknown;
   sources?: unknown;
   proposalId?: string;
