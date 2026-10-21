@@ -12,6 +12,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 35 | **거절 뒤 재검토 결과 안내** — 거절한 제안에 `outcome`(재제안 생성 / 대안 없음 / 검토 실패 / 재제안 한도 + 안내 + 다음 행동). `GET /api/ai/tasks/{id}`에 `progress`(제안별 최신 진행) 추가. 부분 해결안(줄이기만)은 내지 않는다 | 3.1, decisions 6.30 | ✅ B가 반영함 (사용자 지시): 승인 대기함의 거절 카드 바로 아래에 결과 표시 (팀장·요청자 모두) | ✅ B가 반영함 (사용자 지시): `graph.py`의 `skip_target`·`save_proposal`·`replan_prepare`가 결과를 붙이고 `PROPOSAL_PROGRESS`·`DONE.result.proposals`에 실린다. `blocked_targets`는 그대로. 확인 부탁 |
 | 34 | 해결안을 모두 준비한 뒤 개별 카드 등록, 독립 승인·실행. AI의 영구 접수함과 실행 기록 추가 | 2.7, 3.2, decisions 6.29, [검증 기록](ai-rag-integration-changes.md) | 작업별 승인 그룹·개별 접수·3초 갱신·진행 이벤트·기존 작업 다시 열기 구현 | 체크포인트와 카드 연결 보존, 최신 상태 재검증, 모호한 응답은 자동 재실행 금지 |
 | 33 | **승인 대기함: 팀장 외에는 내가 요청한 카드만** — `GET /api/approvals`가 요청자 기준으로 거르고, 화면이 모든 역할에서 대기함을 불러온다. 승인·거절은 그대로 팀장만 | 3.1, decisions 6.28 | ✅ B가 반영함 (사용자 지시) | 없음 |
 | 32 | **답변 가독성** — ① `analyze_impact` 항목에 `item_name`·`product_name` 추가 ② 영향 분석 답변의 결품·주의·과잉 목록과 연쇄 결품 줄은 **코드가 계산 결과에서 그대로** 쓰고, 모델은 결론 1~2문장만 ③ 프롬프트에 평문 규칙 ④ 화면이 답변을 결론·제목·목록으로, 근거를 문서 카드로 그림 | 2.2·3.2, decisions 6.27 | ✅ B가 반영함 (사용자 지시). QA 결과(`impact: null`)에 빈 영향 결과를 안 그리고, 실행한 해결안은 `post_execution_impact`를 보여 준다 (C 변경 기록 2·9번) | 확인 필요: `graph.py`의 `lead_text`·`chain_note`·`describe_impact`, `prompts/impact.md`·`qa.md`를 B가 고쳤다. 남은 것: 검색 근거의 관련성(SC2 질문에 도어센서 문서가 붙음) |
@@ -481,8 +482,12 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 { "taskId": "…", "userId": "buyer", "role": "BUYER", "question": "…", "trigger": "USER",   // SYSTEM = 자동 분석
   "status": "DONE",        // QUEUED → RUNNING → WAITING_APPROVAL → RUNNING → DONE | FAILED
   "answer": "…", "result": { … }, "sources": [ … ],   // DONE 이벤트 내용. result의 금액은 보는 사람 역할대로 가린다
-  "createdAt": "…", "finishedAt": "…" }
+  "createdAt": "…", "finishedAt": "…",
+  // 한 건 조회에만 (10/21, decisions 6.30): 제안별 최신 PROPOSAL_PROGRESS. 작업이 안 끝나도 거절 카드의 재검토 결과를 보여 준다
+  "progress": [ { "proposalId": "…", "approvalId": "APR-…", "proposalStatus": "REJECTED",
+                  "outcome": { "code": "NO_ALTERNATIVE", "item_name": "도어센서 옛 케이스", "message": "…", "next_action": "…", "detail": null } } ] }
 ```
+- `outcome.code`: `REPROPOSED`(재제안 생성) · `NO_ALTERNATIVE`(대안 없음) · `REVIEW_FAILED`(검토 실패, 대안이 없다는 뜻이 아님) · `LIMIT`(재제안 한도). 거절한 제안에만 붙는다. 같은 칸이 `DONE.result.proposals[].outcome`에도 있다.
  화면 변경 2개의 요청 모양은 프론트 브랜치가 먼저 정한 것을 따랐다.
 
 **로그인과 토큰** (10/20 저녁 구현)

@@ -2756,3 +2756,35 @@ td {
     display: none;
   }
 }
+
+/* 거절 카드 아래 재검토 결과 (decisions 6.30). 색: 빨강 = 검토 실패(다시 요청), 노랑 = 사람이 조건 검토, 초록 = 새 카드 확인 */
+.outcome-row td {
+  padding-top: 0;
+}
+.outcome {
+  margin-left: 14px;
+  padding: 9px 12px;
+  border-left: 3px solid #c4ccd5;
+  background: #f6f8fa;
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+}
+.outcome p {
+  margin: 3px 0 0;
+}
+.outcome p span {
+  font-weight: 600;
+  margin-right: 4px;
+}
+.outcome small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.outcome.warning { border-color: #d9a440; background: #fff7e8; }
+.outcome.warning b { color: #a9782b; }
+.outcome.danger { border-color: #be4b47; background: #fbeeed; }
+.outcome.danger b { color: #be4b47; }
+.outcome.success { border-color: #247a62; background: #eaf5ef; }
+.outcome.success b { color: #247a62; }

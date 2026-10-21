@@ -120,6 +120,12 @@ class Tasks {
         if (!t.get("userId").equals(user.getSubject()) && !"SYSTEM".equals(t.get("trigger"))
                 && !Auth.allows(user.getClaimAsString("role"), "BUYER"))
             throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람의 작업입니다.", "생산관리 담당자는 자기 작업만 볼 수 있습니다.");
+        // 제안별 최신 진행 상태 (agent의 PROPOSAL_PROGRESS). 여러 카드 중 일부가 아직 대기 중이라 작업이 끝나지 않아도
+        // 승인 대기함이 거절 카드의 재검토 결과를 바로 보여 줄 수 있다 (decisions 6.30). 목록 API에는 넣지 않는다 — 50건마다 읽게 된다
+        t.put("progress", db.queryForList("""
+                select distinct on (payload->>'proposalId') payload::text from task_event
+                where task_id = ? and type = 'PROPOSAL_PROGRESS'
+                order by payload->>'proposalId', seq desc""", String.class, id).stream().map(this::read).toList());
         return t;
     }
 

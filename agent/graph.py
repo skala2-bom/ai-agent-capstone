@@ -729,8 +729,51 @@ def after_evidence(state: AgentState) -> str:
     return "skip_target" if state.get("evidence_error") else "save_proposal"
 
 
+# 거절 뒤 재검토 결과 (decisions 6.30). 거절한 제안에 붙여 진행 이벤트·작업 결과로 함께 나간다.
+# 코드는 사람이 다음에 무엇을 할지가 갈리는 단위로 나눈다: 새 카드 확인 / 조건 검토 / 다시 요청 / 직접 결정
+OUTCOMES = {
+    "REPROPOSED": ("다른 대안을 다시 제안했습니다.", "바로 아래 새 승인 카드를 확인해 주세요."),
+    "NO_ALTERNATIVE": ("현재 조건에서 제시할 수 있는 추가 대안을 찾지 못했습니다.",
+                       "거절 사유의 조건(수량·날짜 등)을 담당자가 검토해 주세요. 조건을 바꿔 새로 요청할 수 있습니다."),
+    "REVIEW_FAILED": ("다른 대안을 검토하는 중 오류가 나서 결론을 내지 못했습니다. 대안이 없다는 뜻은 아닙니다.",
+                      "잠시 뒤 같은 요청을 다시 해 주세요. 계속되면 시스템 담당자에게 알려 주세요."),
+    "LIMIT": ("재제안 한도에 도달해 더 제안하지 않습니다.", "담당자가 조건을 정해 새로 요청해 주세요."),
+}
+
+
+def target_name(state: dict, target: str) -> str:
+    """'INV-003|CASE-DOOR-V1' → 부품 이름. 영향 결과의 item_name을 쓰고, 없으면 ID 그대로"""
+    item = target.split("|", 1)[-1]
+    impact = state.get("current_impact") or state.get("impact") or {}
+    for key in ("shortages", "warnings", "excesses"):
+        for e in impact.get(key) or []:
+            if e.get("item_id") == item and e.get("item_name"):
+                return e["item_name"]
+    return item
+
+
+def with_outcome(state: dict, target: str, code: str, detail: str | None = None) -> list[dict] | None:
+    """이 대상의 마지막 거절 제안에 재검토 결과를 붙인 proposals. 거절이 없던 대상이면 None"""
+    proposals = [dict(p) for p in state.get("proposals") or []]
+    rejected = [p for p in proposals if p["target"] == target and p["status"] == "REJECTED"]
+    if not rejected:
+        return None
+    message, next_action = OUTCOMES[code]
+    rejected[-1]["outcome"] = {"code": code, "item_name": target_name(state, target),
+                               "message": message, "next_action": next_action, "detail": detail}
+    return proposals
+
+
+def outcome_code(state: dict) -> str:
+    error = state.get("evidence_error") or ""
+    if error.startswith("작업당 제안 한도") or state.get("reject_count", 0) > MAX_REJECTS:
+        return "LIMIT"
+    return "REVIEW_FAILED" if error else "NO_ALTERNATIVE"
+
+
 def skip_target(state: AgentState) -> dict:
     blocked = dict(state.get("blocked") or {})
+    code, detail = outcome_code(state), state.get("evidence_error")
     reason = state.get("evidence_error") or (
         "거절 재제안 한도를 넘었습니다." if state.get("reject_count", 0) > MAX_REJECTS
         else "검증을 통과하고 부작용이 없는 미시도 후보가 없습니다.")
@@ -744,12 +787,16 @@ def skip_target(state: AgentState) -> dict:
                 {"remaining_issues": opt.get("remaining_issues", []),
                  "side_effects": opt.get("side_effects", [])}, ensure_ascii=False)
     blocked[state["active_target"]] = reason
-    return {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None,
-            "replan_target": None}
+    updates = {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None,
+               "replan_target": None}
+    proposals = with_outcome(state, state["active_target"], code, detail)
+    if proposals is not None:
+        updates["proposals"] = proposals
+    return updates
 
 
 def save_proposal(state: AgentState) -> dict:
-    proposals = list(state.get("proposals") or [])
+    proposals = with_outcome(state, state["active_target"], "REPROPOSED") or list(state.get("proposals") or [])
     previous = [p for p in proposals if p["target"] == state["active_target"]]
     revision = len(previous) + 1
     proposal_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{state['task_id']}:{state['active_target']}:{revision}").hex
@@ -797,7 +844,7 @@ def proposal_event(p: dict, state: dict) -> dict:
     return mask({"type": "PROPOSAL_PROGRESS", "proposalId": p["proposal_id"],
                  "approvalId": p.get("approval_id"), "revision": p["revision"], "replaces": p.get("replaces"),
                  "itemId": p["option"]["item_id"], "summary": p["option"].get("summary"),
-                 "proposalStatus": p["status"], "message": p.get("reason"),
+                 "proposalStatus": p["status"], "message": p.get("reason"), "outcome": p.get("outcome"),
                  "round": len(state.get("processed_commands", []))}, state.get("role"))
 
 
@@ -851,7 +898,11 @@ async def replan_prepare(state: AgentState) -> dict:
     ok, impact = await call_tool(state, "analyze_impact", {"whatif": state["current_ops"]})
     if ok:
         return {"current_impact": impact}
-    return {"blocked": {**state.get("blocked", {}), state["replan_target"]: "거절 후 최신 분석에 실패했습니다."}}
+    updates = {"blocked": {**state.get("blocked", {}), state["replan_target"]: "거절 후 최신 분석에 실패했습니다."}}
+    proposals = with_outcome(state, state["replan_target"], "REVIEW_FAILED", "거절 후 최신 분석에 실패했습니다: " + str(impact))
+    if proposals is not None:
+        updates["proposals"] = proposals
+    return updates
 
 
 def execution_updates(state, result):
@@ -960,13 +1011,22 @@ def _adjust_answer(state: AgentState) -> str:
     if state.get("executed") and not state["executed"]["ok"]:
         held.append("실행 보류/실패: " + str(state["executed"]["error"]))
     blocked = state.get("blocked") or {}
-    held += [f"{key}: {reason}" for key, reason in blocked.items()]
+    proposals = state.get("proposals") or []
+    # 거절 뒤 재검토 결과 (decisions 6.30): 품목마다 결과 · 거절 사유 · 다음 행동
+    reviewed = [p for p in proposals if p.get("outcome")]
+    reviewed_targets = {p["target"] for p in reviewed if p["outcome"]["code"] != "REPROPOSED"}
+    for p in reviewed:
+        o = p["outcome"]
+        line = f"{o['item_name']}: {o['message']}"
+        if p.get("reason"):
+            line += f" (거절 사유: {p['reason']})"
+        held.append(line + f" · {o['next_action']}")
+    held += [f"{target_name(state, key)}: {reason}" for key, reason in blocked.items() if key not in reviewed_targets]
     # 여러 품목을 먼저 준비하는 흐름(decisions 6.29)에서 보류된 제안
-    held += [f"{p['target']}: {p.get('reason', '보류')}" for p in state.get("proposals") or []
+    held += [f"{target_name(state, p['target'])}: {p.get('reason', '보류')}" for p in proposals
              if p["status"] == "BLOCKED" and p["target"] not in blocked]
-    held += [f"거절 사유: {rejection.get('reason')}" for rejection in state.get("rejections") or []]
     if held:
-        parts.append("보류·거절:\n" + "\n".join("- " + h for h in held))
+        parts.append("거절·보류 결과:\n" + "\n".join("- " + h for h in held))
     if state.get("whatif_ops"):
         parts.append("질문의 생산계획 가정은 저장하지 않았습니다. 아래는 현재 DB에 그 가정을 더해 다시 분석한 결과입니다.")
     if impact is not None:

@@ -3,13 +3,32 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useWorkspace } from "../stores/workspace";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
-import { mode } from "../services/api";
+import { mode, request } from "../services/api";
 import type { Approval } from "../types";
 const w = useWorkspace();
 const selectedId = ref<string>();
 const reason = ref("");
 const filter = ref("");
 const pollError = ref("");
+// 거절 뒤 AI 재검토 결과 (decisions 6.30): approvalId → {code, item_name, message, next_action, detail}
+interface Outcome { code: string; item_name?: string; message: string; next_action: string; detail?: string | null }
+const outcomes = ref<Record<string, Outcome>>({});
+const outcomeLabel: Record<string, string> = {
+  REPROPOSED: "재제안 생성", NO_ALTERNATIVE: "대안 없음", REVIEW_FAILED: "검토 실패", LIMIT: "재제안 한도",
+};
+const outcomeTone: Record<string, string> = {
+  REPROPOSED: "success", NO_ALTERNATIVE: "warning", REVIEW_FAILED: "danger", LIMIT: "warning",
+};
+/** 거절 카드가 있는 작업만 진행 상태를 읽는다. 작업이 아직 안 끝나도 거절 건의 결과는 먼저 보인다 */
+async function loadOutcomes() {
+  if (mode !== "api" || !w.session) return;
+  const tasks = [...new Set((w.data?.approvals ?? []).filter((a) => a.status === "REJECTED").map((a) => a.taskId))];
+  for (const id of tasks) {
+    const t = await request<{ progress?: { approvalId?: string; outcome?: Outcome }[] }>(
+      `/ai/tasks/${encodeURIComponent(id)}`, w.session.token);
+    for (const p of t.progress ?? []) if (p.approvalId && p.outcome) outcomes.value[p.approvalId] = p.outcome;
+  }
+}
 const selected = computed(() => w.data?.approvals.find((a) => a.id === selectedId.value));
 const rows = computed(() => (w.data?.approvals ?? []).filter((a) => !filter.value || a.status === filter.value));
 const optionsById = computed(() => new Map(w.data?.options.map((o) => [o.id, o]) ?? []));
@@ -70,7 +89,7 @@ let mounted = false;
 async function poll() {
   if (!mounted) return;
   if (document.visibilityState !== "hidden") {
-    try { await w.refreshApprovals(); pollError.value = ""; }
+    try { await w.refreshApprovals(); await loadOutcomes(); pollError.value = ""; }
     catch (e) { pollError.value = (e as Error).message; }
   }
   if (mounted) timer = setTimeout(poll, 3000);
@@ -110,7 +129,8 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
           <p class="caption">{{ group.all.length }}건 · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
           <button v-if="mode === 'api'" @click="w.openTask(group.taskId)">작업 결과</button>
         </td></tr>
-        <tr v-for="a in group.rows" :key="a.id">
+        <template v-for="a in group.rows" :key="a.id">
+        <tr>
           <td>
             <b>{{ approvalTitle(optionsById.get(a.optionId)?.name) }}</b
             ><small>{{
@@ -135,6 +155,17 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
             </button>
           </td>
         </tr>
+        <tr v-if="a.status === 'REJECTED' && outcomes[a.id]" class="outcome-row">
+          <td colspan="5">
+            <div class="outcome" :class="outcomeTone[outcomes[a.id].code]">
+              <b>↳ {{ outcomes[a.id].item_name }} · {{ outcomeLabel[outcomes[a.id].code] ?? outcomes[a.id].code }}</b>
+              <p>{{ outcomes[a.id].message }}</p>
+              <p><span>다음 행동</span> {{ outcomes[a.id].next_action }}</p>
+              <small v-if="outcomes[a.id].detail">{{ outcomes[a.id].detail }}</small>
+            </div>
+          </td>
+        </tr>
+        </template>
         </template>
       </tbody>
     </table>

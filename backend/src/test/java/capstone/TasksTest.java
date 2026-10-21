@@ -113,6 +113,21 @@ class TasksTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void 작업_조회에_제안별_최신_진행_상태가_붙는다() {
+        String id = insertTask("buyer", "BUYER");
+        tasks.addEvent(id, m("type", "PROPOSAL_PROGRESS", "proposalId", "p1", "approvalId", "APR-1", "proposalStatus", "PENDING"));
+        tasks.addEvent(id, m("type", "PROPOSAL_PROGRESS", "proposalId", "p2", "approvalId", "APR-2", "proposalStatus", "PENDING"));
+        tasks.addEvent(id, m("type", "PROPOSAL_PROGRESS", "proposalId", "p1", "approvalId", "APR-1", "proposalStatus", "REJECTED",
+                "outcome", m("code", "NO_ALTERNATIVE")));
+        List<Map<String, Object>> progress = (List<Map<String, Object>>) (List<?>) tasks.get(id, BUYER).get("progress");
+        assertThat(progress).extracting(p -> p.get("proposalId") + " " + p.get("proposalStatus"))
+                .containsExactlyInAnyOrder("p1 REJECTED", "p2 PENDING");
+        assertThat(progress).filteredOn(p -> "p1".equals(p.get("proposalId")))
+                .extracting(p -> String.valueOf(((Map<?, ?>) p.get("outcome")).get("code"))).containsExactly("NO_ALTERNATIVE");
+    }
+
+    @Test
     void 생산관리는_자기_작업만_구매와_팀장은_전체를_본다() {
         String buyers = insertTask("buyer", "BUYER");
         String planners = insertTask("planner", "PLANNER");

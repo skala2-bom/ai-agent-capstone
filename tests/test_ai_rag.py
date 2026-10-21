@@ -58,6 +58,40 @@ class Guardrails(unittest.TestCase):
                          {"amount": None, "a": [{"saved_amount": None, "unit_price": None}]})
 
 
+class RejectionOutcome(unittest.TestCase):
+    """거절 뒤 재검토 결과: 대안 없음·검토 실패·한도 초과·재제안을 구분한다 (decisions 6.30)"""
+    def state(self, **extra):
+        rejected = {"proposal_id": "p1", "target": "INV-003|CASE-DOOR-V1", "status": "REJECTED",
+                    "reason": "입고 취소 불가. 입고 수량 수정 가능", "option": {"item_id": "CASE-DOOR-V1"}}
+        other = {"proposal_id": "p2", "target": "INV-003|COIN-CELL", "status": "EXECUTED", "option": {"item_id": "COIN-CELL"}}
+        return {"active_target": "INV-003|CASE-DOOR-V1", "proposals": [rejected, other], "reject_count": 1,
+                "rejections": [{"proposal_id": "p1"}],
+                "current_impact": {"excesses": [{"item_id": "CASE-DOOR-V1", "item_name": "도어센서 옛 케이스"}]}, **extra}
+
+    def outcome(self, update):
+        return next(p for p in update["proposals"] if p["proposal_id"] == "p1")["outcome"]
+
+    def test_no_alternative_names_item_and_next_action(self):
+        o = self.outcome(G.skip_target(self.state()))
+        self.assertEqual((o["code"], o["item_name"]), ("NO_ALTERNATIVE", "도어센서 옛 케이스"))
+        self.assertIn("담당자가 검토", o["next_action"])
+
+    def test_review_error_is_not_no_alternative(self):
+        o = self.outcome(G.skip_target(self.state(evidence_error="도구 오류: Client failed to connect")))
+        self.assertEqual(o["code"], "REVIEW_FAILED")
+        self.assertIn("대안이 없다는 뜻은 아닙니다", o["message"])
+
+    def test_limit_and_reproposal(self):
+        self.assertEqual(self.outcome(G.skip_target(self.state(reject_count=G.MAX_REJECTS + 1)))["code"], "LIMIT")
+        s = self.state(task_id="t", targets=[], verify={}, selected_option={"item_id": "CASE-DOOR-V1"})
+        self.assertEqual(self.outcome(G.save_proposal(s))["code"], "REPROPOSED")
+
+    def test_other_items_untouched_and_target_without_rejection_has_no_outcome(self):
+        update = G.skip_target(self.state())
+        self.assertNotIn("outcome", next(p for p in update["proposals"] if p["proposal_id"] == "p2"))
+        self.assertNotIn("proposals", G.skip_target(self.state(active_target="INV-001|MCU")))
+
+
 class Evidence(unittest.IsolatedAsyncioTestCase):
     async def test_valid_ops_with_intent_explanation_in_unclear_are_retried(self):
         op = W.WhatifOp(op="reschedule_plan", plan_id="PP-02", new_date="2027-01-04")
