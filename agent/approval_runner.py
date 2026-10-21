@@ -13,6 +13,7 @@ import os
 from langgraph.types import Command
 
 import graph as G
+import observability as O
 
 log = logging.getLogger(__name__)
 WORK_TIMEOUT = int(os.getenv("AGENT_WORK_TIMEOUT_S", "600"))
@@ -20,7 +21,7 @@ RECURSION_LIMIT = int(os.getenv("AGENT_RECURSION_LIMIT", "600"))
 
 
 def config(thread_id):
-    return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
+    return O.graph_config(thread_id, RECURSION_LIMIT)
 
 
 def interrupts(snapshot):
@@ -63,23 +64,7 @@ class ApprovalRunner:
                     command = await self.store.next_command(thread)
                     if command is None:
                         break
-                    try:
-                        await asyncio.wait_for(self.process(command), WORK_TIMEOUT)
-                    except asyncio.CancelledError:
-                        raise  # leave inbox PENDING; restart resumes the saved graph
-                    except Exception as e:
-                        log.exception("approval workflow command failed")
-                        snapshot = await self.graph.aget_state(config(thread))
-                        if snapshot.values.get("proposals"):
-                            # A timeout must not terminal-fail other cards or replay an uncertain write.
-                            await self.store.event(command["task_id"], {"type": "WORKFLOW_NOTICE",
-                                "message": "처리가 중단되었습니다. 저장된 상태와 실행 이력을 확인한 뒤 복구가 필요합니다.",
-                                "errorCode": type(e).__name__})
-                            await self.store.finish_command(command["command_id"], "HELD", type(e).__name__)
-                        else:
-                            await self.store.event(command["task_id"], {"type": "FAILED", "errorCode": type(e).__name__,
-                                "message": "작업 준비에 실패했습니다. " + str(e)[:300]})
-                            await self.store.finish_command(command["command_id"], "ERROR", type(e).__name__)
+                    await self.process_observed(command)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -87,6 +72,46 @@ class ApprovalRunner:
             log.exception("approval worker unavailable; command retained")
         finally:
             self.active.pop(thread, None)
+
+    async def process_observed(self, command):
+        previous = await self.store.previous_trace(command["task_id"])
+        async with O.execution(command["task_id"], command["thread_id"], command["command_id"],
+                               command["kind"], previous) as trace:
+            await self.store.event(command["task_id"], {"type": "TRACE", **trace.summary(), "outcome": "RUNNING"})
+            try:
+                await asyncio.wait_for(self.process(command), WORK_TIMEOUT)
+                snapshot = await self.graph.aget_state(config(command["thread_id"]))
+                proposals = snapshot.values.get("proposals") or []
+                if any(p["status"] in {"REGISTRATION_UNKNOWN", "EXECUTION_UNKNOWN"} for p in proposals):
+                    trace.outcome = "HELD"
+                elif interrupts(snapshot):
+                    trace.outcome = "WAITING_APPROVAL"
+                elif any(p["status"] == "BLOCKED" for p in proposals):
+                    trace.outcome = "PARTIAL"
+            except asyncio.CancelledError:
+                trace.outcome = "INTERRUPTED"
+                raise
+            except Exception as e:
+                trace.outcome = "ERROR"
+                O.note("command_error", errorCode=type(e).__name__)
+                snapshot = await self.graph.aget_state(config(command["thread_id"]))
+                if snapshot.values.get("proposals"):
+                    trace.outcome = "HELD"
+                    await self.store.event(command["task_id"], {"type": "WORKFLOW_NOTICE",
+                        "message": "처리가 중단되었습니다. 저장된 상태와 실행 이력을 확인한 뒤 복구가 필요합니다.",
+                        "errorCode": type(e).__name__})
+                    await self.store.finish_command(command["command_id"], "HELD", type(e).__name__)
+                else:
+                    await self.store.event(command["task_id"], {"type": "FAILED", "errorCode": type(e).__name__,
+                        "message": "작업 준비에 실패했습니다. " + str(e)[:300]})
+                    await self.store.finish_command(command["command_id"], "ERROR", type(e).__name__)
+            finally:
+                await self.store.event(command["task_id"], {"type": "TRACE", **trace.summary()})
+                trace.finishing = True
+                if trace.terminal_event:
+                    await self.store.event(*trace.terminal_event)
+                if trace.command_completion:
+                    await self.store.finish_command(*trace.command_completion)
 
     async def register(self, task_id, proposal):
         payload = {"type": "APPROVAL_REQUIRED", **G.approval_payload(proposal)}

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, computed, watch } from "vue";
+import { ref, onBeforeUnmount, computed, watch, nextTick } from "vue";
 import TaskReview from "./TaskReview.vue";
 import ServerResult from "./ServerResult.vue";
-import { segments, sourceCards } from "../services/answer";
+import AnswerBlocks from "./AnswerBlocks.vue";
+import { sourceCards } from "../services/answer";
 import { useWorkspace } from "../stores/workspace";
 import { mode, request } from "../services/api";
 import { connect, EventAccumulator } from "../services/sse";
@@ -13,7 +14,53 @@ const w = useWorkspace();
 const question = ref("");
 // 보낸 질문 (말풍선). 입력칸은 보내면 비운다 — 일반 채팅처럼 (decisions 6.35)
 const asked = ref("");
+// 지난 대화 기록 (decisions 6.36): 새 질문을 보내거나 다른 작업을 열면 지금 대화를 위로 올린다.
+// 화면 기록일 뿐 AI가 앞 대화를 기억하는 것은 아니다 — 질문마다 따로 처리된다
+interface Turn { question: string; answer: string; status: string; taskId?: string }
+const history = ref<Turn[]>([]);
+let currentTask: string | undefined;
+const body = ref<HTMLElement>();
+function archive() {
+  if (!asked.value && !answer.value) return;
+  history.value = [...history.value, { question: asked.value, answer: answer.value, status: status.value, taskId: currentTask }].slice(-20);
+}
+function reopen(i: number) {
+  const t = history.value[i];
+  history.value = history.value.filter((_, j) => j !== i);
+  if (t.taskId) {
+    if (t.taskId === w.activeTask) void openExisting(t.taskId);
+    else w.openTask(t.taskId);
+  }
+}
+function resetAll() {
+  clear(); history.value = []; currentTask = undefined;
+}
 const sending = ref(false);
+// 패널 너비: 왼쪽 경계를 끌어서 바꾼다 (decisions 6.38). 이 브라우저에만 기억한다 — 사람마다 화면이 달라서
+const PANEL_KEY = "bom-panel-width";
+function savedWidth() {
+  try { return Number(localStorage.getItem(PANEL_KEY)) || undefined; } catch { return undefined; }
+}
+const panelWidth = ref<number | undefined>(savedWidth());
+const clampWidth = (px: number) => Math.round(Math.min(Math.max(px, 300), window.innerWidth * 0.75));
+function startResize(e: PointerEvent) {
+  if (window.innerWidth <= 760) return;   // 폰 화면은 패널이 거의 전체 폭이라 조절하지 않는다
+  e.preventDefault();
+  const handle = e.currentTarget as HTMLElement;
+  handle.setPointerCapture(e.pointerId);
+  document.body.classList.add("resizing");
+  const move = (ev: PointerEvent) => { panelWidth.value = clampWidth(window.innerWidth - ev.clientX); };
+  const up = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", up);
+    document.body.classList.remove("resizing");
+    try { if (panelWidth.value) localStorage.setItem(PANEL_KEY, String(panelWidth.value)); } catch { /* 기억 못 해도 지금은 된다 */ }
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", up);
+}
+const panelStyle = computed(() =>
+  panelWidth.value && window.innerWidth > 760 ? { width: `${clampWidth(panelWidth.value)}px` } : undefined);
 const answer = ref("");
 const status = ref("분석 준비");
 const err = ref("");
@@ -21,7 +68,6 @@ const events = ref<AgentEvent[]>([]);
 const running = ref(false);
 const result = ref<Record<string, unknown>>();
 const sources = ref<unknown>();
-const blocks = computed(() => segments(answer.value));
 const docs = computed(() => sourceCards(sources.value));
 const approvalReasons = ref<Record<string, string>>({});
 const approvalStates = ref<Record<string, string>>({});
@@ -84,24 +130,63 @@ function clear() {
   status.value = "분석 준비"; err.value = ""; asked.value = "";
 }
 // 업무를 바꾸면 이전 답변은 지운다. 입력 중이던 질문 글은 남긴다 — 질문을 쓰고 나서 업무를 고를 수도 있다
-watch(() => w.context, () => { clear(); w.activeTask = undefined; });
+watch(() => w.context, () => { archive(); clear(); currentTask = undefined; w.activeTask = undefined; });
 // "선택한 업무" 목록: 데이터의 모든 생산계획·발주·자재 (decisions 6.32).
 // value는 각 화면에서 항목을 누를 때 넣는 문구와 같다 — 그래야 화면에서 누른 업무가 여기서 그대로 선택돼 보인다.
 // 보이는 글자에만 날짜·수량을 더한다. AI에게 보내는 문구에 수량을 넣으면 질문의 가정 변경으로 잘못 읽을 수 있다
-const contextGroups = computed(() => {
+// 업무 고르기 = 검색칸 + 바로 아래 후보 목록 (decisions 6.38). 칸을 누르면 목록이 펼쳐지고 칠 때마다 좁혀진다
+interface CtxOption { value: string; text: string; group: string }
+const allOptions = computed<CtxOption[]>(() => {
   const d = w.data;
   if (!d) return [];
   return [
-    { label: "생산계획", options: d.plans.map((p) => ({ value: `${p.id} · ${p.product}`,
-      text: `${p.id} · ${p.product} — ${p.date} · ${p.qty.toLocaleString()}대` })) },
-    { label: "발주", options: d.purchases.map((p) => ({ value: `${p.id} · ${p.item}`,
-      text: `${p.id} · ${p.item} — ${p.qty.toLocaleString()}개 · ${p.date} 입고` })) },
-    { label: "자재·제품", options: d.items.map((i) => ({ value: `${i.id} · ${i.name}`, text: `${i.id} · ${i.name}` })) },
+    ...d.plans.map((p) => ({ group: "생산계획", value: `${p.id} · ${p.product}`,
+      text: `${p.id} · ${p.product} — ${p.date} · ${p.qty.toLocaleString()}대` })),
+    ...d.purchases.map((p) => ({ group: "발주", value: `${p.id} · ${p.item}`,
+      text: `${p.id} · ${p.item} — ${p.qty.toLocaleString()}개 · ${p.date} 입고` })),
+    ...d.items.map((i) => ({ group: "자재·제품", value: `${i.id} · ${i.name}`, text: `${i.id} · ${i.name}` })),
   ];
 });
-const knownContexts = computed(() => new Set(contextGroups.value.flatMap((g) => g.options.map((o) => o.value))));
-window.addEventListener("close-agent", clear);
-onBeforeUnmount(() => { clear(); window.removeEventListener("close-agent", clear); });
+const ctxSearch = ref("");
+const ctxOpen = ref(false);
+const ctxActive = ref(0);
+const ctxResults = computed<CtxOption[]>(() => {
+  const q = ctxSearch.value.trim().toLowerCase();
+  return [{ group: "", value: "", text: "선택 없음" },
+    ...allOptions.value.filter((o) => !q || o.text.toLowerCase().includes(q))];
+});
+// 결품 항목처럼 목록에 없는 업무를 화면에서 눌렀으면 그 문구를 그대로 보여 준다
+const ctxLabel = computed(() => allOptions.value.find((o) => o.value === w.context)?.text ?? w.context);
+const ctxList = ref<HTMLElement>();
+function pickContext(value: string) {
+  w.context = value;
+  ctxOpen.value = false;
+  ctxSearch.value = "";
+}
+function openContext() {
+  ctxOpen.value = true;
+  ctxSearch.value = "";
+  ctxActive.value = Math.max(0, ctxResults.value.findIndex((o) => o.value === w.context));
+}
+function onContextKey(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  const n = ctxResults.value.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    ctxOpen.value = true;
+    ctxActive.value = (ctxActive.value + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+    void nextTick(() => ctxList.value?.querySelector(".active")?.scrollIntoView({ block: "nearest" }));
+  } else if (e.key === "Enter" && ctxOpen.value) {
+    e.preventDefault();
+    const o = ctxResults.value[ctxActive.value];
+    if (o) pickContext(o.value);
+  } else if (e.key === "Escape") {
+    ctxOpen.value = false;
+  }
+}
+// 로그아웃·계정 전환이면 기록까지 지운다 — 다른 사람에게 앞 사람의 대화가 보이면 안 된다
+window.addEventListener("close-agent", resetAll);
+onBeforeUnmount(() => { clear(); window.removeEventListener("close-agent", resetAll); });
 
 function subscribe(taskId: string, g: number) {
   const acc = new EventAccumulator(taskId);
@@ -124,6 +209,8 @@ function subscribe(taskId: string, g: number) {
 interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string; question?: string;
   result?: Record<string, unknown>; sources?: unknown; }
 async function openExisting(taskId: string) {
+  if (taskId !== currentTask) archive();
+  currentTask = taskId;
   clear();
   const g = generation;
   running.value = true; status.value = "작업 불러오는 중";
@@ -157,10 +244,14 @@ function onEnter(e: KeyboardEvent) {
 async function ask() {
   const text = question.value.trim();
   if (!text || sending.value) return;
+  archive();
+  currentTask = undefined;
   clear();
+  w.activeTask = undefined;
   const g = generation;
   asked.value = w.context ? `${w.context}\n${text}` : text;
   question.value = "";
+  void nextTick(() => { if (body.value) body.value.scrollTop = body.value.scrollHeight; });
   if (mode === "mock") {
     answer.value = "자유 질문은 실제 분석 API가 필요합니다. 업무 화면에서 준비된 시연 결과를 확인하세요.";
     status.value = "시연 안내"; return;
@@ -168,7 +259,7 @@ async function ask() {
   running.value = true; status.value = "접수 중"; sending.value = true;
   try {
     const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: asked.value });
-    if (g === generation) w.activeTask = taskId;
+    if (g === generation) { currentTask = taskId; w.activeTask = taskId; }
   } catch (e) {
     // 접수에 실패하면 쓴 글을 돌려놓는다 — 다시 쓰지 않아도 되게
     if (g === generation) { err.value = (e as Error).message; running.value = false; question.value = text; }
@@ -178,7 +269,13 @@ async function ask() {
 }
 </script>
 <template>
-  <aside class="ai-panel">
+  <aside class="ai-panel" :style="panelStyle">
+    <div
+      class="panel-resizer"
+      title="끌어서 너비 조절 · 두 번 눌러 기본 너비"
+      @pointerdown="startResize"
+      @dblclick="panelWidth = undefined"
+    />
     <header>
       <h3><Sparkles :size="17" /> 업무 분석</h3>
       <button
@@ -189,16 +286,47 @@ async function ask() {
         <PanelRightClose :size="18" />
       </button>
     </header>
-    <div class="ai-body">
+    <div ref="body" class="ai-body">
       <span class="eyebrow">선택한 업무</span>
-      <select v-model="w.context" class="context" aria-label="선택한 업무">
-        <option value="">선택 없음</option>
-        <!-- 결품 항목처럼 목록에 없는 업무를 화면에서 눌렀을 때도 그대로 보이게 -->
-        <option v-if="w.context && !knownContexts.has(w.context)" :value="w.context">{{ w.context }}</option>
-        <optgroup v-for="g in contextGroups" :key="g.label" :label="g.label">
-          <option v-for="o in g.options" :key="o.value" :value="o.value">{{ o.text }}</option>
-        </optgroup>
-      </select>
+      <div class="context-picker">
+        <input
+          class="context-search"
+          role="combobox"
+          :aria-expanded="ctxOpen"
+          aria-label="선택한 업무 검색"
+          :value="ctxOpen ? ctxSearch : ctxLabel"
+          :placeholder="ctxOpen ? `번호·제품·부품 이름으로 검색 · ${ctxResults.length - 1}건` : '선택 없음 — 눌러서 검색·선택'"
+          @focus="openContext"
+          @click="ctxOpen || openContext()"
+          @input="ctxSearch = ($event.target as HTMLInputElement).value; ctxOpen = true; ctxActive = 0"
+          @keydown="onContextKey"
+          @blur="ctxOpen = false"
+        /><button
+          v-if="w.context && !ctxOpen"
+          type="button"
+          class="context-clear"
+          aria-label="선택 없음으로"
+          @mousedown.prevent="pickContext('')"
+        >
+          ×
+        </button>
+        <!-- mousedown.prevent: 누르는 순간 입력칸 blur로 목록이 닫히기 전에 고른다 -->
+        <ul v-if="ctxOpen" ref="ctxList" class="context-results" role="listbox">
+          <template v-for="(o, i) in ctxResults" :key="o.group + o.value">
+            <li v-if="o.group && o.group !== ctxResults[i - 1]?.group" class="context-group">{{ o.group }}</li>
+            <li
+              role="option"
+              :aria-selected="o.value === w.context"
+              :class="{ active: i === ctxActive, picked: o.value === w.context }"
+              @mousedown.prevent="pickContext(o.value)"
+              @mouseenter="ctxActive = i"
+            >
+              {{ o.text }}
+            </li>
+          </template>
+          <li v-if="ctxResults.length === 1" class="context-empty">"{{ ctxSearch }}"에 맞는 업무가 없습니다</li>
+        </ul>
+      </div>
       <span class="badge success">{{
         mode === "mock" ? "시연 결과" : "실시간 API"
       }}</span
@@ -222,9 +350,6 @@ async function ask() {
         <p class="caption">
           {{ w.data?.policyVersion }}<br />사전 정의된 예시 · 실시간 계산 아님
         </p>
-        <RouterLink v-if="w.approver" class="button primary wide" to="/solutions"
-          >해결안 비교하기 →</RouterLink
-        >
         <details class="evidence">
           <summary>판정 근거 확인</summary>
           <p>기획안 A1~A3 시연 결과 / INV-001, INV-002, ECN-001</p>
@@ -234,25 +359,18 @@ async function ask() {
           </p>
         </details></template
       >
+      <!-- 지난 대화 (decisions 6.36). 카드·근거는 [다시 열기]로 그 작업을 열어 본다 -->
+      <div v-for="(t, i) in history" :key="i" class="chat-turn">
+        <div v-if="t.question" class="chat-question">{{ t.question }}</div>
+        <AnswerBlocks v-if="t.answer" :text="t.answer" />
+        <p v-else class="caption">{{ t.status }}</p>
+        <button v-if="t.taskId" class="text-button" @click="reopen(i)">이 작업 다시 열기 →</button>
+      </div>
       <div v-if="asked" class="chat-question">{{ asked }}</div>
       <div v-if="status !== '분석 준비'" class="progress" role="status">
         {{ status }}
       </div>
-      <div v-if="blocks.length" class="answer">
-        <template v-for="(b, i) in blocks" :key="i"
-          ><p v-if="b.kind === 'lead'" class="answer-lead">{{ b.text }}</p
-          ><p v-else-if="b.kind === 'callout'" class="answer-callout">{{ b.text }}</p
-          ><h4 v-else-if="b.kind === 'heading'" :class="b.tone">{{ b.text }}</h4
-          ><ul v-else-if="b.kind === 'list'">
-            <li v-for="(item, j) in b.items" :key="j">
-              <small v-if="item.where">{{ item.where }}</small
-              ><span>{{ item.what }}</span
-              ><em v-if="item.note" :class="item.tone">{{ item.note }}</em>
-            </li>
-          </ul
-          ><p v-else>{{ b.text }}</p></template
-        >
-      </div>
+      <AnswerBlocks :text="answer" />
       <div v-if="err" class="error">
         {{ err }}<button v-if="w.activeTask" @click="openExisting(w.activeTask)">현재 작업 다시 연결</button>
       </div>

@@ -6,7 +6,6 @@ import {
   CalendarDays,
   Boxes,
   Truck,
-  GitCompareArrows,
   ClipboardCheck,
   History,
   PanelRightOpen,
@@ -29,7 +28,6 @@ const nav = [
   ["/plans", "생산계획", CalendarDays],
   ["/materials", "자재 · BOM", Boxes],
   ["/purchasing", "발주 · 입고", Truck],
-  ["/solutions", "해결안 비교", GitCompareArrows],
   ["/approvals", "승인 대기함", ClipboardCheck],
   ["/history", "작업 이력", History],
 ] as const;
@@ -42,16 +40,9 @@ const title = computed(() => route.meta.title);
 watch(
   () => route.path,
   (path) => {
-    if (["/solutions", "/approvals"].includes(path)) w.panel = false;
+    if (path === "/approvals") w.panel = false;
   },
   { immediate: true },
-);
-// 해결안 비교를 보던 중 역할을 바꾸거나 다른 계정으로 들어오면 주소 이동이 없어 라우터 검사가 안 돈다
-watch(
-  () => w.approver,
-  (approver) => {
-    if (!approver && route.path === "/solutions") router.replace("/");
-  },
 );
 watch(
   () => w.epoch,
@@ -75,7 +66,7 @@ window.addEventListener("session-expired", () => {
       <div class="workspace-label">가온스마트 <span>WORKSPACE</span></div>
       <nav aria-label="주 탐색">
         <RouterLink
-          v-for="[path, label, icon] in nav.filter(([p]) => p !== '/solutions' || w.approver)"
+          v-for="[path, label, icon] in nav"
           :key="path"
           :to="path"
           :class="{ active: route.path === path }"

@@ -130,6 +130,13 @@ class Tasks {
                 where task_id = ? and type = 'PROPOSAL_PROGRESS'
                 order by payload->>'proposalId', seq desc""", String.class, id).stream().map(this::read).toList());
         if (user.getSubject().equals(t.get("userId"))) t.put("reviewReady", approvals.reviewReady(id));
+        t.put("traces", db.queryForList("""
+                select payload::text from (
+                    select distinct on (payload->>'traceId') payload, seq from task_event
+                    where task_id = ? and type = 'TRACE'
+                    order by payload->>'traceId', seq desc
+                ) t order by seq""", String.class, id).stream()
+                .map(s -> safeTrace(this.<Map<String, Object>>read(s))).toList());
         return t;
     }
 
@@ -370,6 +377,7 @@ class Tasks {
     /** 이벤트 종류로 작업 상태를 정한다. 끝난 작업은 다시 바꾸지 않는다 */
     private void updateStatus(String id, String type, Map<String, Object> e) {
         switch (type) {
+            case "TRACE" -> { /* Telemetry must not transition business state. */ }
             case "DONE" -> db.update("""
                     update ai_task set status = 'DONE', answer = ?, result = ?::jsonb, sources = ?::jsonb, finished_at = now()
                     where task_id = ? and status not in ('DONE', 'FAILED')""",
@@ -418,7 +426,9 @@ class Tasks {
     private Map<String, Object> row(String id) {
         List<Map<String, Object>> rows = db.queryForList("""
                 select task_id, user_id, role, question, trigger, status, answer, result::text as result, sources::text as sources,
-                       created_at::text as created_at, finished_at::text as finished_at
+                       created_at::text as created_at, finished_at::text as finished_at,
+                       (select payload::text from task_event where task_id = ai_task.task_id
+                        and type = 'TRACE' order by seq desc limit 1) as trace
                 from ai_task where task_id = ?""", id);
         if (rows.isEmpty()) throw new ApiError("NOT_FOUND", "작업 " + id + "을(를) 찾을 수 없습니다.", "작업 목록(GET /api/ai/tasks)에서 ID를 확인하세요.");
         Map<String, Object> r = rows.getFirst();
@@ -427,7 +437,28 @@ class Tasks {
                 "answer", r.get("answer"),
                 "result", r.get("result") == null ? null : read((String) r.get("result")),
                 "sources", r.get("sources") == null ? null : read((String) r.get("sources")),
+                "trace", r.get("trace") == null ? null : safeTrace(read((String) r.get("trace"))),
                 "createdAt", r.get("created_at"), "finishedAt", r.get("finished_at"));
+    }
+
+    /** Only fixed telemetry fields; credentials, business payloads and arbitrary links are never exposed. */
+    private Map<String, Object> safeTrace(Map<String, Object> raw) {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        for (String key : List.of("traceId", "previousTraceId", "executionKind", "outcome", "durationMs",
+                "llmCalls", "toolCalls", "toolErrors", "inputTokens", "outputTokens", "retryCount", "fallbackCount",
+                "summaryCount", "promptVersion", "tracingEnabled", "costUsd", "costSource"))
+            if (raw.containsKey(key)) safe.put(key, raw.get(key));
+        Object link = raw.get("traceUrl");
+        if (link instanceof String s) {
+            try {
+                java.net.URI uri = java.net.URI.create(s);
+                String host = uri.getHost();
+                if ("https".equals(uri.getScheme()) && uri.getUserInfo() == null && host != null
+                        && (host.equals("smith.langchain.com") || host.endsWith(".smith.langchain.com")))
+                    safe.put("traceUrl", s);
+            } catch (IllegalArgumentException ignored) { }
+        }
+        return safe;
     }
 
     private String write(Object o) {

@@ -195,6 +195,36 @@ class ApprovalRecovery(unittest.IsolatedAsyncioTestCase):
         await self.runner.recover_reproposals()
         self.emit.assert_not_awaited()
 
+    async def test_observed_resume_links_runs_and_done_stays_last(self):
+        await self.runner.process_observed(await self.enqueue())
+        rows = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s ORDER BY id", (self.task,))
+        first = next(r["payload"]["traceId"] for r in rows if r["payload"]["type"] == "TRACE")
+        await self.runner.process_observed(await self.enqueue("DECISION", "B"))
+        await self.runner.process_observed(await self.enqueue("DECISION", "A"))
+        rows = await self.store.query("SELECT payload FROM agent.workflow_outbox WHERE task_id=%s ORDER BY id", (self.task,))
+        events = [r["payload"] for r in rows]
+        traces = [e for e in events if e["type"] == "TRACE"]
+        self.assertEqual(len({e["traceId"] for e in traces}), 3)
+        self.assertTrue(any(e.get("previousTraceId") == first for e in traces))
+        self.assertEqual(events[-1]["type"], "DONE")
+        self.assertTrue(all(e.get("traceId") for e in events))
+        self.assertEqual(len(self.writes), 2)
+
+    async def test_observed_timeout_holds_work_without_replaying_a_change(self):
+        command = await self.enqueue()
+        async def slow(_):
+            await asyncio.sleep(1)
+        with patch.object(self.runner, "process", side_effect=slow), patch("approval_runner.WORK_TIMEOUT", 0.01):
+            await self.runner.process_observed(command)
+        row = (await self.store.query("SELECT status FROM agent.workflow_command WHERE command_id=%s", (command["command_id"],)))[0]
+        self.assertEqual(row["status"], "HELD")
+        events = [r["payload"] for r in await self.store.query(
+            "SELECT payload FROM agent.workflow_outbox WHERE task_id=%s ORDER BY id", (self.task,))]
+        self.assertTrue(any(e["type"] == "WORKFLOW_NOTICE" for e in events))
+        self.assertEqual(events[-1]["outcome"], "HELD")
+        self.assertFalse(any(e["type"] in {"DONE", "FAILED"} for e in events))
+        self.assertEqual(self.writes, [])
+
     async def test_changed_cost_blocks_one_card_but_other_executes(self):
         await self.start()
         self.options["A"]["added_cost"] = 99

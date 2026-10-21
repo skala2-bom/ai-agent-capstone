@@ -172,7 +172,7 @@ class Approvals {
     @GetMapping("/api/approvals")
     List<Map<String, Object>> list(@RequestParam(required = false) String status, @AuthenticationPrincipal Jwt user) {
         boolean all = Auth.allows(user.getClaimAsString("role"), "APPROVER");
-        // 초안·보내지 않음은 팀장의 목록·필터·집계에서 제외한다 (decisions 6.36)
+        // 초안·보내지 않음은 팀장의 목록·필터·집계에서 제외한다 (decisions 6.39)
         return db.queryForList("""
                 select approval_id from approval
                 where (cast(? as text) is null or status = ?)

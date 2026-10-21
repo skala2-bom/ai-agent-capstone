@@ -72,6 +72,7 @@ export function parseFrame(frame: string): AgentEvent | null {
       "PROPOSAL_PROGRESS",
       "TASK_REVIEW_READY",
       "WORKFLOW_NOTICE",
+      "TRACE",
       "DONE",
       "FAILED",
     ].includes(e.type) ||
