@@ -5,7 +5,7 @@ const props = defineProps<{
   decision: "APPROVED" | "REJECTED";
   summary: string;
   reason?: string;
-  purpose?: "review" | "execute" | "cancel";
+  purpose?: "review" | "execute" | "cancel" | "request-reject" | "plan-execute";
 }>();
 const emit = defineEmits<{ confirm: []; cancel: [] }>();
 const dialog = ref<HTMLDialogElement>();
@@ -13,6 +13,8 @@ const approve = computed(() => props.decision === "APPROVED");
 const title = computed(() => props.purpose === "review" ? "이 제안의 검토를 완료할까요?"
   : props.purpose === "execute" ? "검토한 수정안을 함께 실행할까요?"
   : props.purpose === "cancel" ? "이 작업을 전체 취소할까요?"
+  : props.purpose === "request-reject" ? "부서 요청을 최종 거절할까요?"
+  : props.purpose === "plan-execute" ? "생산계획 변경을 확정할까요?"
   : approve.value ? "이 해결안을 승인할까요?" : "이 해결안을 거절할까요?");
 function keepFocus(event: KeyboardEvent) {
   if (event.key !== "Tab") return;
@@ -43,6 +45,8 @@ onBeforeUnmount(() => dialog.value?.close());
       <p v-if="purpose === 'review'">검토 완료 표시만 남깁니다. 발주 변경은 task의 승인 및 실행에서 진행합니다.</p>
       <p v-else-if="purpose === 'execute'">현재 데이터로 전체 문제 해결 여부를 재검증합니다. 통과한 경우에만 선택한 변경을 함께 반영합니다.</p>
       <p v-else-if="purpose === 'cancel'">이 task의 제안과 수동 수정안을 취소합니다. 발주 변경은 실행하지 않습니다.</p>
+      <p v-else-if="purpose === 'request-reject'">요청을 종료하고 작성한 사유를 요청 부서에 전달합니다. 확정된 입고 지연 사실은 유지됩니다.</p>
+      <p v-else-if="purpose === 'plan-execute'">현재 데이터로 재검증한 뒤 생산계획을 함께 변경합니다. 발주·입고 정보는 변경하지 않습니다.</p>
       <p v-else-if="approve">승인하면 검증 후 발주 변경이 실행됩니다. 내용을 확인해 주세요.</p>
       <template v-else>
         <p>아래 사유로 거절하며, AI가 대안을 다시 검토합니다.</p>
@@ -54,7 +58,7 @@ onBeforeUnmount(() => dialog.value?.close());
           type="button"
           :class="approve ? 'primary' : 'reject-confirm'"
           @click="emit('confirm')"
-        >{{ purpose === "review" ? "검토 완료" : purpose === "execute" ? "전체 승인 및 실행" : purpose === "cancel" ? "전체 취소" : approve ? "승인하기" : "거절하기" }}</button>
+        >{{ purpose === "request-reject" ? "최종 거절 및 사유 전달" : purpose === "plan-execute" ? "생산계획 변경 확정" : purpose === "review" ? "검토 완료" : purpose === "execute" ? "전체 승인 및 실행" : purpose === "cancel" ? "전체 취소" : approve ? "승인하기" : "거절하기" }}</button>
       </div>
     </dialog>
   </Teleport>

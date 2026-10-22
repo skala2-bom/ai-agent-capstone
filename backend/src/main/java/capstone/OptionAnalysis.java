@@ -44,7 +44,7 @@ class OptionAnalysis {
         this.impact = impact;
     }
 
-    /** 날짜 여유: 첫 결품일보다 이만큼 일찍 받는 안도 함께 낸다. 협력사가 며칠 늦어도 버티게 (decisions 6.46) */
+    /** 날짜 여유: 첫 결품일보다 이만큼 일찍 받는 안도 함께 낸다. 협력사가 며칠 늦어도 버티게 (decisions 6.47) */
     static final int BUFFER_DAYS = 3;
 
     Map<String, Object> compare(List<Map<String, Object>> whatif, Set<String> items) {
@@ -54,7 +54,7 @@ class OptionAnalysis {
     /**
      * @param whatif     결품을 만든 가정 변경. 비우면 지금 상태 (변경이 이미 DB에 반영된 경우)
      * @param items      이 부품의 결품만 푼다. 비우면 모든 결품
-     * @param constraint 팀장이 재요청하며 정한 조건 {@code {po_id?, new_due_date?, split_qty?}} (decisions 6.46).
+     * @param constraint 팀장이 재요청하며 정한 조건 {@code {po_id?, new_due_date?, split_qty?}} (decisions 6.47).
      *                   비우면 기본 후보(딱 맞춤 · 안전재고까지 · 날짜 여유)를, 주면 결품 해결안을 그 조건으로만 만들고
      *                   못 지키는 이유를 {@code constraint_notes}에 담는다
      */
@@ -150,7 +150,7 @@ class OptionAnalysis {
                 .comparing((Map<String, Object> o) -> !"INV-001".equals(o.get("target_rule")))
                 .thenComparing(o -> !(boolean) o.get("resolves"))
                 .thenComparing(o -> !((List<?>) o.get("side_effects")).isEmpty())
-                // 결품을 막고도 안전재고 미만이 남는 안보다 안전재고까지 채우는 안을 먼저 (decisions 6.46)
+                // 결품을 막고도 안전재고 미만이 남는 안보다 안전재고까지 채우는 안을 먼저 (decisions 6.47)
                 .thenComparing(o -> !Boolean.TRUE.equals(o.get("safety_ok")))
                 .thenComparing(o -> RISK.indexOf((String) o.get("risk")))
                 .thenComparing(o -> (long) o.get("added_cost")));

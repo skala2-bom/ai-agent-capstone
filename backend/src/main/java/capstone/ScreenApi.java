@@ -227,7 +227,13 @@ class ScreenApi {
                 .formatted(po.get("po_id"), po.get("item_id"), (int) po.get("qty"), body.get("_before"), po.get("due_date"), body.get("reason"));
         List<Map<String, Object>> whatif = List.of(
                 InternalApi.m("op", "request_due_date_change", "po_id", po.get("po_id"), "new_due_date", po.get("due_date")));
-        return tasks.start(userId, "PLANNER", question, "SYSTEM", whatif);
+        String task = tasks.start(userId, "PLANNER", question, "SYSTEM", whatif);
+        tasks.addEvent(task, InternalApi.m("type", "SUPPLIER_DELAY_FACT", "poId", po.get("po_id"),
+                "before", InternalApi.m("due_date", body.get("_before")),
+                "after", InternalApi.m("po_id", po.get("po_id"), "item_id", po.get("item_id"), "qty", po.get("qty"),
+                        "due_date", po.get("due_date"), "status", po.get("status")),
+                "reason", body.get("reason"), "recordedBy", userId));
+        return task;
     }
 
     /**

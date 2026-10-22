@@ -1,4 +1,4 @@
-"""팀장 조건 재제안 (decisions 6.46): 조건을 계산 서비스에 넘기고, 고르는 건 코드가, 못 풀면 이유를 돌려준다."""
+"""팀장 조건 재제안 (decisions 6.47): 조건을 계산 서비스에 넘기고, 고르는 건 코드가, 못 풀면 이유를 돌려준다."""
 import sys
 import unittest
 from pathlib import Path

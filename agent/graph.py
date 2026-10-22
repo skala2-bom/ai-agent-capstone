@@ -105,6 +105,8 @@ def next_turn(state: dict) -> int:
 # ---------------------------------------------------------------------------
 
 class AgentState(TypedDict, total=False):
+    coordination: dict | None
+    plan_changes: list[dict]
     messages: Annotated[list, add_messages]   # 대화 (이어 붙임)
     task_id: str
     thread_id: str
@@ -153,7 +155,7 @@ class AgentState(TypedDict, total=False):
     proposals: list[dict]                    # immutable option/verification + per-card lifecycle
     active_proposal: str | None
     replan_target: str | None
-    replan_constraint: dict | None            # 팀장이 재요청하며 정한 {po_id?, new_due_date?, split_qty?} (decisions 6.46)
+    replan_constraint: dict | None            # 팀장이 재요청하며 정한 {po_id?, new_due_date?, split_qty?} (decisions 6.47)
     processed_commands: list[str]            # inbox replay after a checkpoint/worker crash
     workflow_version: int
     batch_context: dict
@@ -449,6 +451,16 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
 async def classify_intent(state: AgentState) -> dict:
     plans = await load_plans(state)
     out = {"plans": plans}
+    coordination = state.get("coordination") or {}
+    if coordination.get("mode") == "SOLVE":
+        ops = [W.normalize(o) for o in coordination.get("planOps") or []]
+        errors = W.validate_ops(ops, plans) + W.coordination_errors(coordination, ops)
+        if coordination.get("direction") != "PLAN_TO_BUY" or state.get("role") != "BUYER":
+            errors.append("구매 담당자의 연결된 해결 요청만 실행안을 만들 수 있습니다.")
+        if errors:
+            return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
+        return {**out, "intent": "ADJUST", "whatif_ops": ops,
+                "notice": "생산관리가 동의한 날짜·수량을 유지하여 해결안을 찾습니다. 최종 실행 시 발주와 생산계획을 함께 반영합니다."}
     # 자동 작업(SC4 입고 지연 입력 후)은 backend가 whatif를 채워 보낸다. 모델이 추측할 이유가 없다 (contracts 2.6)
     if state.get("whatif_source") == "backend":
         ops = [W.normalize(o) for o in state.get("whatif_ops") or []]
@@ -479,6 +491,21 @@ async def classify_intent(state: AgentState) -> dict:
         # 권한표: 발주 조정 요청은 구매·팀장만 (A2). 역할을 모르면 가장 좁은 권한으로 본다
         intent = "IMPACT"
         notices.append("발주 조정 요청은 구매 담당자·팀장만 할 수 있어 영향 분석으로 답합니다.")
+    if coordination:
+        if coordination.get("direction") == "PLAN_TO_BUY" and intent != "QA":
+            if not ops:
+                ops = [W.normalize(o) for o in coordination.get("planOps") or []]
+            errors = W.coordination_errors(coordination, ops)
+            if errors:
+                return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
+            intent = "IMPACT"
+            notices.append("추가 질문은 분석만 합니다. 실행은 부서 요청에 연결된 기존 해결 작업에서 진행하세요.")
+        elif coordination.get("direction") == "BUY_TO_PLAN" and intent != "QA":
+            errors = W.coordination_errors(coordination, ops)
+            if errors:
+                return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
+            intent = "IMPACT"
+            notices = ["확정된 입고 지연을 기준으로 분석했습니다. 생산계획은 부서 요청함에서 변경안을 검증한 뒤 확정하세요."]
     # notice는 해결안 실행 뒤 다시 쓰이므로(refresh_impact) 이어받은 가정은 따로 둔다
     return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited}
 
@@ -838,7 +865,7 @@ def outcome_code(state: dict) -> str:
     error = state.get("evidence_error") or ""
     if error.startswith("작업당 제안 한도") or state.get("reject_count", 0) > MAX_REJECTS:
         return "LIMIT"
-    if error.startswith("요청 조건("):   # 팀장 조건으로는 못 푼다: 오류가 아니라 대안 없음, 이유는 detail로 (6.46)
+    if error.startswith("요청 조건("):   # 팀장 조건으로는 못 푼다: 오류가 아니라 대안 없음, 이유는 detail로 (6.47)
         return "NO_ALTERNATIVE"
     return "REVIEW_FAILED" if error else "NO_ALTERNATIVE"
 
@@ -952,7 +979,7 @@ def after_batch(state: AgentState) -> str:
 
 
 def after_registration(state: AgentState) -> str:
-    if state.get("workflow_version") == 3 and state.get("proposals") and state.get("batch_status") not in {"COMPLETED", "CANCELLED"}:
+    if state.get("workflow_version") == 3 and state.get("proposals") and state.get("batch_status") not in {"COMPLETED", "CANCELLED", "REJECTED"}:
         if not all(p["status"] == "WITHDRAWN" for p in state["proposals"]):
             return "approval_gate"
     return "approval_gate" if any(p["status"] in WAITING for p in state.get("proposals") or []) else "respond"
@@ -974,7 +1001,9 @@ def approval_gate(state: AgentState) -> dict:
                 "batch_error": None, "executions": result.get("executions", []),
                 "current_impact": result.get("impact", state.get("current_impact")),
                 "current_ops": result.get("remainingWhatif", state.get("current_ops", [])),
-                "notice": "task 전체를 취소했습니다. 발주 변경은 실행하지 않았습니다." if result["status"] == "CANCELLED" else None,
+                "plan_changes": result.get("planChanges", []),
+                "notice": ("부서 요청이 최종 거절되었습니다: " + str(result.get("reason", ""))) if result["status"] == "REJECTED"
+                    else "task 전체를 취소했습니다. 발주 변경은 실행하지 않았습니다." if result["status"] == "CANCELLED" else None,
                 "processed_commands": [*state.get("processed_commands", []), decision["command_id"]]}
     if state.get("workflow_version") == 3 and decision.get("decision") == "APPROVED":
         raise ValueError("개별 승인으로 실행할 수 없습니다. task 검토 명령을 사용하세요.")
@@ -999,7 +1028,7 @@ def approval_gate(state: AgentState) -> dict:
                     "rejections": [*state.get("rejections", []), {"proposal_id": p["proposal_id"],
                                    "option_id": p["option"]["option_id"], "reason": decision.get("reason")}],
                     "replan_target": p["target"],
-                    # 팀장이 날짜·수량을 정해 재요청하면 그 조건으로만 다시 계산한다 (decisions 6.46). 숫자는 입력칸 값 그대로
+                    # 팀장이 날짜·수량을 정해 재요청하면 그 조건으로만 다시 계산한다 (decisions 6.47). 숫자는 입력칸 값 그대로
                     "replan_constraint": decision.get("constraint") or None})
     return updates
 
@@ -1147,7 +1176,11 @@ def _adjust_answer(state: AgentState) -> str:
              if p["status"] == "BLOCKED" and p["target"] not in blocked]
     if held:
         parts.append("거절·보류 결과:\n" + "\n".join("- " + h for h in held))
-    if state.get("whatif_ops"):
+    if state.get("plan_changes"):
+        parts.append("생산관리의 요청에 따라 생산계획도 함께 변경했습니다:\n" + "\n".join(
+            f"- {p['planId']}: {p['before']['plan_date']} · {p['before']['qty']}개 → {p['after']['plan_date']} · {p['after']['qty']}개"
+            for p in state["plan_changes"]))
+    elif state.get("whatif_ops"):
         parts.append("질문의 생산계획 가정은 저장하지 않았습니다. 아래는 현재 DB에 그 가정을 더해 다시 분석한 결과입니다.")
     if impact is not None:
         parts.append(describe_impact(impact, plans))
@@ -1200,6 +1233,9 @@ def respond(state: AgentState) -> dict:
         else:
             next_actions.append({"type": "REQUEST_ADJUST", "label": "구매팀에 해결 요청"})
     result = {"intent": intent, "whatif": state.get("whatif_ops") or [], "impact": impact or None}
+    if state.get("coordination"):
+        result["coordinationId"] = state["coordination"]["id"]
+        result["plan_changes"] = state.get("plan_changes") or []
     if intent == "ADJUST":
         result.update({k: state.get(k) for k in
                        ("targets", "selected_option", "pick_reason", "verify_log", "decision", "executed")})

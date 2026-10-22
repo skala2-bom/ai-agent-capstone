@@ -182,7 +182,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
         </tr>
         <tr v-if="a.status === 'REJECTED' && outcomes[a.id]" class="outcome-row">
           <td colspan="5">
-            <!-- 재제안이 생겼으면 바로 아래 카드가 설명이다. 한 줄만 (6.46 가독성) -->
+            <!-- 재제안이 생겼으면 바로 아래 카드가 설명이다. 한 줄만 (6.47 가독성) -->
             <div v-if="outcomes[a.id].code === 'REPROPOSED'" class="outcome success compact">↳ 재제안을 아래에 만들었습니다</div>
             <div v-else class="outcome" :class="outcomeTone[outcomes[a.id].code]">
               <b>↳ {{ outcomes[a.id].item_name }} · {{ outcomeLabel[outcomes[a.id].code] ?? outcomes[a.id].code }}</b>
@@ -229,7 +229,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       </dd>
       <dt>대상 발주</dt>
       <dd>{{ option.po }}</dd>
-      <!-- 사유가 제목 문장과 같으면 위 제목으로 충분하다 (6.46 가독성) -->
+      <!-- 사유가 제목 문장과 같으면 위 제목으로 충분하다 (6.47 가독성) -->
       <template v-if="approvalTitle(option.reason) !== approvalTitle(option.name)"
         ><dt>선정 사유</dt>
         <dd>{{ approvalTitle(option.reason) }}</dd></template

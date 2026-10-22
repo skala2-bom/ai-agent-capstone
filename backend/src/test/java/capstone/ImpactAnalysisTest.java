@@ -112,7 +112,7 @@ class ImpactAnalysisTest {
         assertThat(postpone).containsEntry("type", "DUE_DATE_CHANGE").containsEntry("side_effects", List.of());
     }
 
-    /** decisions 6.46: 팀장 조건(날짜·분할 수량·발주)으로만 결품 대안을 만들고, 못 지키면 이유와 가장 빠른 가능일을 준다 */
+    /** decisions 6.47: 팀장 조건(날짜·분할 수량·발주)으로만 결품 대안을 만들고, 못 지키면 이유와 가장 빠른 가능일을 준다 */
     @Test
     void 팀장_조건으로만_결품_대안을_만들고_불가능하면_이유를_준다() {
         var hub = List.of(op("reschedule_plan", "plan_id", "PP-05", "new_date", "2026-11-25"));

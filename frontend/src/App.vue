@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -13,6 +13,7 @@ import {
   Hexagon,
 } from "lucide-vue-next";
 import { useWorkspace, names } from "./stores/workspace";
+import { useCoordination } from "./stores/coordination";
 import { mode } from "./services/api";
 import type { Role } from "./types";
 import AiPanel from "./components/AiPanel.vue";
@@ -23,12 +24,19 @@ const environmentMenu = ref(false);
 const w = useWorkspace(),
   route = useRoute(),
   router = useRouter();
+const coordination = useCoordination();
+let coordinationPoll: ReturnType<typeof setInterval> | undefined;
+const refreshRequests = () => { if (document.visibilityState !== "hidden") void coordination.refresh(); };
+watch(() => w.session?.token, () => { coordination.clear(); void coordination.refresh(); }, {immediate:true});
+onMounted(() => { coordinationPoll = setInterval(refreshRequests, 5000); window.addEventListener("focus", refreshRequests); });
+onBeforeUnmount(() => { clearInterval(coordinationPoll); window.removeEventListener("focus", refreshRequests); });
 const nav = [
   ["/", "업무 현황", LayoutDashboard],
   ["/plans", "생산계획", CalendarDays],
   ["/materials", "자재 · BOM", Boxes],
   ["/purchasing", "발주 · 입고", Truck],
   ["/approvals", "승인 대기함", ClipboardCheck],
+  ["/requests", "부서 요청함", ClipboardCheck],
   ["/history", "작업 이력", History],
 ] as const;
 const roleLabel: Record<Role, string> = {
@@ -80,7 +88,7 @@ window.addEventListener("session-expired", () => {
             >{{
               w.data.approvals.filter((a) => a.status === "PENDING").length
             }}</span
-          ></RouterLink
+          ><span v-if="path === '/requests' && coordination.unread" class="nav-count">{{ coordination.unread }}</span></RouterLink
         >
       </nav>
       <div class="sidebar-bottom">
@@ -97,6 +105,7 @@ window.addEventListener("session-expired", () => {
           >워크스페이스 <span class="slash">/</span> <b>{{ title }}</b></span
         >
         <div class="top-actions">
+          <RouterLink v-if="mode === 'api'" to="/requests" class="button" :aria-label="`부서 요청 알림 ${coordination.unread}건`">부서 알림 <b v-if="coordination.unread" role="status">{{ coordination.unread }}</b></RouterLink>
           <button
             v-if="mode === 'mock'"
             class="environment-switch"

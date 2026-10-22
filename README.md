@@ -6,6 +6,7 @@
 > - [docs/contracts.md](docs/contracts.md) — **파트 경계를 넘는 약속.** 내 파트 것만 보면 된다
 > - [docs/decisions.md](docs/decisions.md) — 무엇이 정해졌고, 왜 그렇게 정했는지
 > - [docs/harness-validation.md](docs/harness-validation.md) — Harness 8요소 구현·비용 0 검증 결과·LangSmith 연결·시연 절차
+> - [docs/coordination-requests.md](docs/coordination-requests.md) — 생산·구매 양방향 요청, 최종 거절 알림, 발주·생산계획 일괄 실행 및 검증
 > - [docs/BOM_Agent_아키텍처.md](docs/BOM_Agent_아키텍처.md) — 전체 구조와 각 파트가 하는 일
 
 ```

@@ -91,12 +91,16 @@ class Tasks {
     @PostMapping("/api/ai/tasks")
     @ResponseStatus(HttpStatus.ACCEPTED)
     Map<String, String> createTask(@RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
+        String coordinationId = body.get("coordinationId");
+        if (coordinationId != null && !coordinationId.isBlank()) return startCoordination(coordinationId, body, user, false);
         String parent = body.get("parentTaskId");
         String parentThread = null;
         if (parent != null && !parent.isBlank()) {
             if (!row(parent).get("userId").equals(user.getSubject()))
                 throw new ApiError("ROLE_NOT_ALLOWED", "본인의 작업에만 이어서 질문할 수 있습니다.", "새 대화로 질문하세요.");
             parentThread = db.queryForObject("select thread_id from ai_task where task_id = ?", String.class, parent);
+            var linked = new CoordinationStore(db, json).linked(parent);
+            if (!linked.isEmpty()) return startCoordination((String) linked.get("id"), body, user, true);
         }
         return Map.of("taskId", start(user.getSubject(), user.getClaimAsString("role"), body.getOrDefault("question", ""), "USER", null, parentThread));
     }
@@ -113,6 +117,27 @@ class Tasks {
      * @param parentThreadId 이어서 묻는 질문이면 앞 작업의 thread. 아니면 null
      */
     String start(String userId, String role, String question, String trigger, List<Map<String, Object>> whatif, String parentThreadId) {
+        return start(userId, role, question, trigger, whatif, parentThreadId, null);
+    }
+
+    Map<String, String> startCoordination(String id, Map<String, String> body, Jwt user, boolean continuation) {
+        var store = new CoordinationStore(db, json);
+        return store.events.tx.execute(tx -> {
+            store.lock(id); var r = store.get(id); CoordinationStore.assigned(r, user);
+            boolean solve = "PLAN_TO_BUY".equals(r.get("direction")) && !continuation;
+            if (solve && r.get("solutionTaskId") instanceof String existing) return Map.of("taskId", existing);
+            String parent = body.get("parentTaskId");
+            if (parent != null && (!user.getSubject().equals(row(parent).get("userId"))
+                    || !id.equals(store.linked(parent).get("id")))) throw CoordinationRequests.denied("같은 요청의 본인 작업에만 이어서 질문할 수 있습니다.");
+            String mode = solve ? "SOLVE" : "BUY_TO_PLAN".equals(r.get("direction")) ? "PLAN_REVIEW" : "CHAT";
+            String task = start(user.getSubject(), user.getClaimAsString("role"), body.getOrDefault("question", "이 요청의 해결 방법을 알려 주세요."),
+                    "USER", null, parent, store.agentContext(r, mode));
+            if (solve) store.save(r, m("solutionTaskId", task, "status", "IN_PROGRESS"));
+            return Map.of("taskId", task);
+        });
+    }
+
+    String start(String userId, String role, String question, String trigger, List<Map<String, Object>> whatif, String parentThreadId, Map<String, Object> coordination) {
         String id = UUID.randomUUID().toString();
         // threadId는 taskId와 같게 쓴다. 승인 후 재개 때 agent checkpointer에서 같은 대화를 꺼내는 열쇠다
         db.update("insert into ai_task (task_id, thread_id, user_id, role, question, trigger) values (?, ?, ?, ?, ?, ?)",
@@ -125,7 +150,18 @@ class Tasks {
         req.put("question", question);
         req.put("whatif", whatif);
         if (parentThreadId != null) req.put("parentThreadId", parentThreadId);
-        enqueue(id, "start", req);
+        if (coordination != null) {
+            req.put("coordination", coordination);
+            var events = new TaskEventLog(db, json);
+            events.append(id, m("type", CoordinationStore.LINK, "coordinationId", coordination.get("id"), "mode", coordination.get("mode")));
+            events.append(id, m("type", "COORDINATION_START", "body", req));
+        }
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() { enqueue(id, "start", req); }
+                });
+        } else enqueue(id, "start", req);
         return id;
     }
 
@@ -145,6 +181,11 @@ class Tasks {
                 where task_id = ? and type = 'PROPOSAL_PROGRESS'
                 order by payload->>'proposalId', seq desc""", String.class, id).stream().map(this::read).toList());
         if (user.getSubject().equals(t.get("userId"))) t.put("reviewReady", approvals.reviewReady(id));
+        var coordination = new CoordinationStore(db, json);
+        var linked = coordination.linked(id);
+        if (!linked.isEmpty()) t.put("coordination", coordination.view(linked, user));
+        var delay = coordination.events.latest(id, "SUPPLIER_DELAY_FACT");
+        if (!delay.isEmpty()) t.put("supplierDelay", true);
         t.put("traces", db.queryForList("""
                 select payload::text from (
                     select distinct on (payload->>'traceId') payload, seq from task_event
@@ -358,6 +399,14 @@ class Tasks {
     @PostMapping("/internal/tasks/{id}/events")
     Map<String, Object> receiveEvent(@PathVariable String id, @RequestBody Map<String, Object> event) {
         Task task = find(id);  // 없는 작업이면 404
+        if (String.valueOf(event.get("type")).startsWith("COORDINATION_") || "SUPPLIER_DELAY_FACT".equals(event.get("type")))
+            throw ApiError.invalid("부서 요청 기록은 사용자 API에서만 작성합니다.", "요청의 동의·담당·종료 상태는 Agent가 변경할 수 없습니다.");
+        var linked = new CoordinationStore(db, json).linked(id);
+        if (!linked.isEmpty() && CoordinationStore.TERMINAL.contains(linked.get("status"))) {
+            if ("APPROVAL_REQUIRED".equals(event.get("type"))) throw TaskBatchExecution.conflict("이미 종료된 부서 요청입니다.");
+            if (!("COMPLETED".equals(linked.get("status")) && "DONE".equals(event.get("type")) && id.equals(linked.get("solutionTaskId"))))
+                return Map.of(); // delayed progress cannot reopen a completed/rejected request; committed completion may finish its answer
+        }
         if ("APPROVAL_REQUIRED".equals(event.get("type"))) return approvalRequired(task, event);
         addEvent(id, event);
         return Map.of();
@@ -394,6 +443,7 @@ class Tasks {
             Map<String, Object> e = new TaskEventLog(db, json).append(id, event);
             String type = String.valueOf(e.get("type"));
             updateStatus(id, type, e);
+            if ("SUPPLIER_DELAY_FACT".equals(type)) return;
             boolean finished = "DONE".equals(type) || "FAILED".equals(type);
             for (SseEmitter emitter : List.copyOf(emitters.getOrDefault(id, List.of()))) {
                 send(emitter, e);
@@ -405,7 +455,7 @@ class Tasks {
     /** 이벤트 종류로 작업 상태를 정한다. 끝난 작업은 다시 바꾸지 않는다 */
     private void updateStatus(String id, String type, Map<String, Object> e) {
         switch (type) {
-            case "TRACE" -> { /* Telemetry must not transition business state. */ }
+            case "TRACE", "SUPPLIER_DELAY_FACT" -> { /* Metadata must not prevent delivery of a QUEUED task. */ }
             case "DONE" -> db.update("""
                     update ai_task set status = 'DONE', answer = ?, result = ?::jsonb, sources = ?::jsonb, finished_at = now()
                     where task_id = ? and status not in ('DONE', 'FAILED')""",
@@ -420,7 +470,7 @@ class Tasks {
     }
 
     private List<Map<String, Object>> events(String id) {
-        return db.queryForList("select payload::text from task_event where task_id = ? order by seq", String.class, id)
+        return db.queryForList("select payload::text from task_event where task_id = ? and type not like 'COORDINATION_%' and type <> 'SUPPLIER_DELAY_FACT' order by seq", String.class, id)
                 .stream().map(s -> this.<Map<String, Object>>read(s)).toList();
     }
 

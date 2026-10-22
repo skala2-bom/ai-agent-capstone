@@ -5,6 +5,9 @@ import ApprovalConfirm from "./ApprovalConfirm.vue";
 import ProposalTitle from "./ProposalTitle.vue";
 import ProposalReview from "./ProposalReview.vue";
 import TaskBatchActions from "./TaskBatchActions.vue";
+import CoordinationRequestForm from "./CoordinationRequestForm.vue";
+import { useCoordination } from "../stores/coordination";
+import type { CoordinationRequest } from "../services/coordination";
 import ServerResult from "./ServerResult.vue";
 import AnswerBlocks from "./AnswerBlocks.vue";
 import { sourceCards } from "../services/answer";
@@ -15,6 +18,9 @@ import { scenarios } from "../mocks/fixtures";
 import type { AgentEvent } from "../types";
 import { Sparkles, ArrowUp, PanelRightClose } from "lucide-vue-next";
 const w = useWorkspace();
+const coordination = useCoordination();
+const requestForm = ref(false), supplierDelay = ref(false);
+const linkedRequest = computed(() => coordination.items.find(r => r.id === coordination.activeRequestId));
 let batchPoll: ReturnType<typeof setInterval> | undefined;
 onMounted(() => { batchPoll = setInterval(() => { if (w.activeTask) void w.refreshApprovals().catch(() => {}); }, 3000); });
 onBeforeUnmount(() => clearInterval(batchPoll));
@@ -45,6 +51,7 @@ function resetAll() {
 }
 function newConversation() {
   archive(); clear(); currentTask = undefined; w.activeTask = undefined;
+  coordination.activeRequestId = undefined; coordination.chatDraft = undefined;
 }
 const sending = ref(false);
 // 패널 너비: 왼쪽 경계를 끌어서 바꾼다 (decisions 6.38). 이 브라우저에만 기억한다 — 사람마다 화면이 달라서
@@ -151,9 +158,10 @@ function clear() {
   running.value = false; readOnlyTask.value = false;
   answer.value = ""; result.value = undefined; sources.value = undefined; events.value = [];
   status.value = "분석 준비"; err.value = ""; asked.value = "";
+  supplierDelay.value = false; requestForm.value = false;
 }
 // 업무를 바꾸면 이전 답변은 지운다. 입력 중이던 질문 글은 남긴다 — 질문을 쓰고 나서 업무를 고를 수도 있다
-watch(() => w.context, () => { archive(); clear(); currentTask = undefined; w.activeTask = undefined; });
+watch(() => w.context, () => { archive(); clear(); currentTask = undefined; w.activeTask = undefined; coordination.activeRequestId = undefined; });
 // "선택한 업무" 목록: 데이터의 모든 생산계획·발주·자재 (decisions 6.32).
 // value는 각 화면에서 항목을 누를 때 넣는 문구와 같다 — 그래야 화면에서 누른 업무가 여기서 그대로 선택돼 보인다.
 // 보이는 글자에만 날짜·수량을 더한다. AI에게 보내는 문구에 수량을 넣으면 질문의 가정 변경으로 잘못 읽을 수 있다
@@ -229,7 +237,7 @@ function subscribe(taskId: string, g: number) {
     if (acc.terminal) { running.value = false; stop(); }
   }, (m) => { if (g === generation) err.value = m; });
 }
-interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string; question?: string;
+interface TaskDetail { taskId: string; userId: string; trigger: string; status: string; answer?: string; question?: string; coordination?: CoordinationRequest; supplierDelay?: boolean;
   result?: Record<string, unknown>; sources?: unknown; }
 async function openExisting(taskId: string) {
   if (taskId !== currentTask) archive();
@@ -243,6 +251,9 @@ async function openExisting(taskId: string) {
       if (g !== generation) return;
       answer.value = task.answer ?? ""; result.value = task.result; sources.value = task.sources;
       asked.value = task.question ?? "";
+      supplierDelay.value = !!task.supplierDelay;
+      coordination.activeRequestId = task.coordination?.id;
+      if (task.coordination) void coordination.load(task.coordination.id);
       if (task.userId === w.session?.userId || task.trigger === "SYSTEM") {
         subscribe(taskId, g); // Full SSE replay restores every proposal without a new task.
         return;
@@ -258,6 +269,15 @@ async function openExisting(taskId: string) {
   await fetchDetail();
 }
 watch(() => w.activeTask, (id) => { if (id && mode === "api") void openExisting(id); }, { immediate: true });
+watch(() => linkedRequest.value?.status, status => {
+  if (currentTask && ["REJECTED", "CANCELLED"].includes(status ?? "")) void openExisting(currentTask);
+});
+watch(() => coordination.chatDraft, draft => {
+  if (!draft) return;
+  archive(); clear(); currentTask = undefined; w.activeTask = undefined;
+  coordination.activeRequestId = draft.id; question.value = draft.question;
+  coordination.chatDraft = undefined;
+}, {immediate: true});
 /** Enter = 전송, Shift+Enter = 줄바꿈. 한글 조합 중 Enter는 글자 확정이라 보내지 않는다 (안 그러면 끝 글자가 잘리거나 두 번 간다) */
 function onEnter(e: KeyboardEvent) {
   if (e.isComposing || e.keyCode === 229 || e.shiftKey) return;
@@ -273,7 +293,7 @@ async function ask() {
   clear();
   w.activeTask = undefined;
   const g = generation;
-  asked.value = w.context ? `${w.context}\n${text}` : text;
+  asked.value = !coordination.activeRequestId && w.context ? `${w.context}\n${text}` : text;
   question.value = "";
   void nextTick(() => { if (body.value) body.value.scrollTop = body.value.scrollHeight; });
   if (mode === "mock") {
@@ -283,7 +303,8 @@ async function ask() {
   running.value = true; status.value = "접수 중"; sending.value = true;
   try {
     const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST",
-      parent ? { question: asked.value, parentTaskId: parent } : { question: asked.value });
+      parent ? { question: asked.value, parentTaskId: parent } : { question: asked.value,
+        ...(coordination.activeRequestId ? {coordinationId: coordination.activeRequestId} : {}) });
     if (g === generation) { currentTask = taskId; w.activeTask = taskId; }
   } catch (e) {
     // 접수에 실패하면 쓴 글을 돌려놓는다 — 다시 쓰지 않아도 되게
@@ -392,10 +413,19 @@ async function ask() {
         <button v-if="t.taskId" class="text-button" @click="reopen(i)">이 작업 다시 열기 →</button>
       </div>
       <div v-if="asked" class="chat-question">{{ asked }}</div>
+      <div v-if="linkedRequest" class="card">
+        <b>연결된 부서 요청 · {{ linkedRequest.requesterName }}</b><p>{{ linkedRequest.message }}</p>
+        <RouterLink :to="{path:'/requests',query:{id:linkedRequest.id}}">요청 내용·처리 상태 보기 →</RouterLink>
+      </div>
       <div v-if="status !== '분석 준비'" class="progress" role="status">
         {{ status }}
       </div>
       <AnswerBlocks :text="answer" />
+      <button v-if="mode === 'api' && currentTask && !running && result?.intent === 'IMPACT' &&
+        ((w.session?.role === 'PLANNER' && Array.isArray(result.whatif) && result.whatif.length && result.whatif.every((o: any) => ['reschedule_plan','change_plan_qty'].includes(o.op))) || (w.session?.role === 'BUYER' && supplierDelay))"
+        @click="requestForm = true">{{ w.session?.role === 'PLANNER' ? '구매팀에 해결 요청' : '생산팀에 일정 조정 요청' }}</button>
+      <RouterLink v-if="linkedRequest?.direction === 'BUY_TO_PLAN' && currentTask && !running && Array.isArray(result?.whatif) && result.whatif.length"
+        :to="{path:'/requests',query:{id:linkedRequest.id,analysisTaskId:currentTask}}" @click="w.panel = false">이 생산계획 변경안 검토 →</RouterLink>
       <div v-if="err" class="error">
         {{ err }}<button v-if="w.activeTask" @click="openExisting(w.activeTask)">현재 작업 다시 연결</button>
       </div>
@@ -428,6 +458,8 @@ async function ask() {
       </details>
       <p v-if="taskProblem" class="task-problem"><strong>전체 문제 설명</strong><br />{{ taskProblem }}</p>
       <TaskBatchActions v-if="w.activeTask" :task-id="w.activeTask" />
+      <CoordinationRequestForm v-if="requestForm && currentTask" :task-id="currentTask" :parent-request-id="linkedRequest?.id"
+        @close="requestForm = false" @sent="requestForm = false; w.panel = false" />
       <TaskReview v-if="w.activeTask && w.session?.role === 'BUYER' && (hasDrafts || w.taskReviews[w.activeTask]?.attempt)" :key="w.activeTask" :task-id="w.activeTask" />
       <article
         v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED' && cardState(x) !== 'DRAFT' && (w.session?.role !== 'APPROVER' || cardState(x) !== 'WITHDRAWN'))"

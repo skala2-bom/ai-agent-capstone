@@ -30,6 +30,18 @@ OP_ARGS: dict[str, list[str]] = {
     "cancel_po": ["po_id"],
 }
 DATE_ARGS = {"new_date", "new_due_date"}
+PLAN_OPS = {"reschedule_plan", "change_plan_qty"}
+
+
+def coordination_errors(context: dict, ops: list[dict]) -> list[str]:
+    if any(o.get("op") not in PLAN_OPS for o in ops):
+        return ["부서 요청의 생산계획 검토에서는 생산 날짜·수량만 바꿀 수 있습니다. 발주 변경은 구매 승인 절차가 필요합니다."]
+    if context.get("direction") == "PLAN_TO_BUY":
+        expected = sorted((normalize(o) for o in context.get("planOps") or []), key=lambda o: (o.get("plan_id", ""), o["op"]))
+        actual = sorted((normalize(o) for o in ops), key=lambda o: (o.get("plan_id", ""), o["op"]))
+        if actual != expected:
+            return ["생산관리가 전송한 날짜·수량과 다릅니다. 조건 변경은 생산관리의 새 요청이 필요합니다."]
+    return []
 QTY_ARGS = {"new_qty", "split_qty"}
 PO_ID = re.compile(r"^PO-\d{4}-\d{3}$")
 

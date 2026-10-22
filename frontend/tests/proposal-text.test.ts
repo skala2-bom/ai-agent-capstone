@@ -3,7 +3,7 @@ import { proposalText } from "../src/services/proposal-text";
 
 const tail = " (실제 발주 변경입니다. 협력사 협의·확약 여부를 확인한 뒤 승인하세요.)";
 
-describe("해결안 제목 줄이기 (decisions 6.46)", () => {
+describe("해결안 제목 줄이기 (decisions 6.47)", () => {
   it("재제안·분할·여유 표시를 나눈다", () => {
     expect(proposalText("[재제안 2차 · 이전 요청 APR-71534f35] PO-2609-001(MCU 500개, 12/12 입고)에서 150개만 떼어 11/22에 먼저 받는다 (결품일보다 3일 일찍, 안전재고분 50개 더)" + tail))
       .toEqual({ revision: 2, main: "MCU 150개를 11/22에 먼저 받기", po: "PO-2609-001 · 12/12 입고 500개에서 나눔", tags: ["3일 여유", "안전재고 +50"] });

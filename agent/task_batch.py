@@ -86,6 +86,34 @@ async def initialize(runner, snapshot, cfg):
     return True
 
 
+async def sync_coordination_terminal(runner, snapshot, cfg):
+    state = snapshot.values
+    if not state.get("coordination") or state.get("batch_status") in {"COMPLETED", "CANCELLED", "REJECTED"}:
+        return False
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(f"{G.BACKEND_URL}/internal/tasks/{state['task_id']}/coordination",
+            headers={"X-Service-Token": os.getenv("SERVICE_TOKEN", "")})
+        response.raise_for_status()
+        context = response.json()
+    if context.get("status") not in {"REJECTED", "CANCELLED", "COMPLETED"}:
+        return False
+    result = context.get("result") or {"status": context["status"], "executions": [], "reason": context.get("reason")}
+    pending = [i for t in snapshot.tasks for i in t.interrupts]
+    if not pending:
+        return False
+    gate = pending[0]
+    if gate.value.get("stage") == "decisions":
+        await runner.graph.ainvoke(Command(resume={gate.id: {"decision": "BATCH_DONE", "result": result,
+            "command_id": "coordination-terminal:" + state["task_id"]}}), cfg)
+    elif gate.value.get("stage") == "register":
+        await runner.graph.aupdate_state(cfg, {"batch_status": context["status"], "notice": "부서 요청이 종료되었습니다: " + str(context.get("reason") or "")})
+        await runner.graph.ainvoke(Command(resume={gate.id: {p["proposal_id"]: {"status": "WITHDRAWN", "reason": "부서 요청 종료"}
+            for p in gate.value["proposals"]}}), cfg)
+    else:
+        return False
+    return True
+
+
 def manual_proposal(state, parent, command):
     args = command.get("args") or {}
     if set(args) != {"po_id", "new_qty", "new_due_date"} or args["po_id"] != parent["option"]["args"].get("po_id"):
@@ -128,7 +156,7 @@ async def process(runner, command, cfg):
         return
     resuming = state.get("batch_last_request") == body["requestId"] and state.get("batch_status") in {"EXECUTING", "UNKNOWN"}
     if not resuming and (state.get("batch_revision", 0) != body["expectedRevision"]
-                         or state.get("batch_status") in {"EXECUTING", "UNKNOWN", "COMPLETED", "CANCELLED"}):
+                         or state.get("batch_status") in {"EXECUTING", "UNKNOWN", "COMPLETED", "CANCELLED", "REJECTED"}):
         # Report the rejected command without changing the accepted review/version.
         await runner.store.event(state["task_id"], {"type": "WORKFLOW_NOTICE", "requestId": body["requestId"],
             "message": "검토 상태가 바뀌어 요청을 반영하지 않았습니다. 최신 상태를 확인하세요."})

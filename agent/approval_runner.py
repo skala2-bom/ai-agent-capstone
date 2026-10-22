@@ -148,6 +148,8 @@ class ApprovalRunner:
         cfg = config(thread_id)
         while True:
             snapshot = await self.graph.aget_state(cfg)
+            if await B.sync_coordination_terminal(self, snapshot, cfg):
+                continue
             pending = interrupts(snapshot)
             if pending and pending[0].value.get("stage") == "register":
                 if await B.initialize(self, snapshot, cfg):

@@ -218,7 +218,7 @@ def scenario(case_id):
         "SC1": ["split_po"],
         "SC2": ["split_po", "split_po", "change_po_qty"],
         "SC3": ["cancel_po", "request_due_date_change"],
-        "SC4": ["request_due_date_change"],   # 6.46: 안전재고까지 채우는 전량 당기기가 추천
+        "SC4": ["request_due_date_change"],   # 6.47: 안전재고까지 채우는 전량 당기기가 추천
     }[case_id]
     assert sorted(e["tool"] for e in result["executions"]) == sorted(expected_tools), task["answer"]
     assert len(decisions) == len(expected_tools)
@@ -256,7 +256,7 @@ def rejection():
     assert revised, "구매 재검토 없이 재제안이 팀장에게 전달되어야 합니다."
     assert revised["previousApprovalId"] == initial["approval_id"]
     assert revised["taskProblem"] == initial["taskProblem"] and revised["memo"] == initial["memo"]
-    # 6.46: 거절한 안(400개 11/25) 다음 후보는 같은 수량을 3일 일찍 받는 안
+    # 6.47: 거절한 안(400개 11/25) 다음 후보는 같은 수량을 3일 일찍 받는 안
     assert (revised["tool"], revised["args"]) == ("split_po", {"po_id": "PO-2609-001", "split_qty": 400, "new_due_date": "2026-11-22"}), revised
     progress = request("GET", f"/api/ai/tasks/{task_id}/approval-progress", "approver")
     assert set(progress) == {"progress"} and any(p["approvalId"] == initial["approval_id"] for p in progress["progress"])
@@ -458,7 +458,7 @@ def follow_up():
     second = request("POST", "/api/ai/tasks", json={"question": "그럼 해결 방법 만들어 줘", "parentTaskId": first["taskId"]})["taskId"]
     cards = wait_cards(second, 1)
     assert [(c["tool"], c["args"]) for c in cards] == [
-        ("split_po", {"po_id": "PO-2609-001", "split_qty": 400, "new_due_date": "2026-11-25"})], cards   # 6.46: 안전재고까지
+        ("split_po", {"po_id": "PO-2609-001", "split_qty": 400, "new_due_date": "2026-11-25"})], cards   # 6.47: 안전재고까지
     task, _ = finish_task(second, approve=True)
     assert task["result"]["intent"] == "ADJUST" and W.same_ops(task["result"]["whatif"], [hub])
     assert "앞 질문의 가정을 이어서 계산했습니다" in task["answer"], task["answer"]

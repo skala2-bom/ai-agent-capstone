@@ -1,5 +1,5 @@
 // 해결안 문장(agent의 summary)을 화면용으로 줄인다: 핵심 한 줄 + 발주 정보 + 작은 표시.
-// summary는 backend OptionAnalysis·agent가 정해진 모양으로 만든다 (decisions 6.46). 모양이 다르면 원문을 그대로 쓴다.
+// summary는 backend OptionAnalysis·agent가 정해진 모양으로 만든다 (decisions 6.47). 모양이 다르면 원문을 그대로 쓴다.
 // ponytail: 문장을 읽어 나눈다. 카드에 칸(buffer·revision)이 생기면 그 칸을 읽도록 바꾼다
 
 export interface ProposalText {
