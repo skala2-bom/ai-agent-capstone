@@ -169,6 +169,29 @@ class TasksTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void 이어서_묻는_질문은_본인_작업에만_붙고_새_작업에_앞_thread를_넘긴다() {
+        String mine = insertTask("buyer", "BUYER");
+        reset(queue);
+        String child = tasks.createTask(Map.of("question", "그럼 해결 방법 만들어 줘", "parentTaskId", mine), BUYER).get("taskId");
+        assertThat(child).isNotEqualTo(mine);
+        Map<String, Object> body = (Map<String, Object>) sent(TaskQueue.TASKS).get("body");
+        assertThat(body).containsEntry("threadId", child).containsEntry("parentThreadId", mine);
+
+        // 남의 작업에는 이어 묻지 못하고, 작업도 만들어지지 않는다
+        String others = insertTask("planner", "PLANNER");
+        Integer before = db.queryForObject("select count(*) from ai_task", Integer.class);
+        assertThatThrownBy(() -> tasks.createTask(Map.of("question", "q", "parentTaskId", others), BUYER))
+                .isInstanceOfSatisfying(ApiError.class, e -> assertThat(e.code).isEqualTo("ROLE_NOT_ALLOWED"));
+        assertThat(db.queryForObject("select count(*) from ai_task", Integer.class)).isEqualTo(before);
+
+        // 앞 작업 없이 물으면 전과 같다
+        reset(queue);
+        tasks.createTask(Map.of("question", "q"), BUYER);
+        assertThat((Map<String, Object>) sent(TaskQueue.TASKS).get("body")).doesNotContainKey("parentThreadId");
+    }
+
+    @Test
     void 모든_역할은_본인의_작업만_조회한다_시스템_작업도_동일하다() {
         String buyers = insertTask("buyer", "BUYER");
         String planners = insertTask("planner", "PLANNER");

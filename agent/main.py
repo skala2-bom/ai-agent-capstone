@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
         await saver.setup()
         app_graph = G.builder.compile(checkpointer=saver)
         G.execution_store = store
+        G.app_graph = app_graph
         runner = ApprovalRunner(app_graph, store, initial_state)
         runner.start()
         try:
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
             await O.shutdown()
     finally:
         G.execution_store = None
+        G.app_graph = None
         await checkpoints.close()
         await store.close()
 
@@ -74,6 +76,7 @@ class TaskIn(BaseModel):
     role: str | None = None
     question: str = ""
     whatif: list[dict] | None = None
+    parentThreadId: str | None = None   # 이어서 묻는 질문이면 앞 작업의 thread (decisions 6.44)
 
 
 class ResumeIn(BaseModel):
@@ -102,12 +105,13 @@ def initial_state(command):
         "task_id": body.taskId, "thread_id": thread_id, "trace_id": trace_id,
         "user_id": body.userId, "role": body.role, "question": body.question,
         "whatif_source": "backend" if body.whatif is not None else "agent",
+        "parent_thread_id": body.parentThreadId,
         # 이번 실행의 값은 비우고 시작한다 (같은 thread의 이전 실행 값이 섞이지 않게).
-        # whatif_ops는 backend가 줄 때만 넣는다 — 안 주면 이전 대화의 변경을 이어 쓸 수 있게 둔다.
+        # whatif_ops는 backend가 줄 때만 넣는다. 이어 묻기는 같은 thread가 아니라 parent_thread_id로 앞 작업을 읽는다.
         "turn_count": 0, "tool_counts": {}, "impact": None, "targets": [], "options": [], "recommended": None,
         "tried": [], "selected_option": None, "pick_reason": None, "verify": None, "verify_log": [],
         "verify_count": 0, "reject_count": 0, "rejections": [], "decision": None, "executed": None,
-        "evidence": [], "clarify": None, "notice": None, "failure": None, "answer": None,
+        "evidence": [], "clarify": None, "notice": None, "inherited": None, "failure": None, "answer": None,
         "current_impact": None, "current_ops": [], "scope": [], "active_target": None,
         "blocked": {}, "executions": [], "search_hits": [], "qa_searched": False, "evidence_error": None,
         "next_actions": [], "result": None,

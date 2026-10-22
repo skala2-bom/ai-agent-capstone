@@ -20,7 +20,8 @@ docker compose -p capstone-ai-test -f tests/compose.yml run --rm tests python -u
 - `test_ai_rag.py`: 순수 판정·실행 보호·출처 검증, 실제 pgvector의 색인/갱신/검색/트랜잭션/권한.
 - `integration_scenarios.py`: 매 시나리오 시드를 초기화하고 로그인 → 질문 → MCP → RAG → 개별 검토 → task 전체 실행 → DB 이력 → SSE를 검사한다.
 - `test_task_batch.py`: 체크·수동 수정안은 미실행, 대안 없음 후 대기, 전체 취소, 실행 응답 유실 재확인.
-- `integration_task_batch.py`: 실제 API에서 제외한 문제 잔존 시 전체 차단, AI 대안 소진 후 수동 수정, 중복 실행·오래된 검토·같은 발주의 task 충돌 차단.
+- `integration_task_batch.py`: 실제 API에서 제외한 문제 잔존 시 전체 차단, AI 대안 소진 후 수동 수정, 중복 실행·오래된 검토·같은 발주의 task 충돌 차단. 대화 이어하기로 생성한 여러 품목 task도 검토 전 미실행·전체 실행을 검사한다.
+- `follow-up`: 앞 질문의 가정 계승, 새 주제 분리, 다른 사용자 작업의 이어 묻기 차단. `python -u integration_scenarios.py --only follow-up`으로 따로 실행할 수 있다.
 - `draft`: 작업 전체 전송/철회, 전체 문제 설명·개인 메모 보존, 고정 품목 문제, 부분 요청 거부·재시도, 팀장 비노출 및 실행 여부를 검사한다.
 - `reject`: 최초 구매 전송 후 팀장만 API를 조회하여 재제안을 직접 받는지 확인한다. 전체 문제·이전 구매 메모 계승과 팀장 승인 전 실행 없음도 검사한다.
 - `manual-private`: 수동 입고 수량·예정일 변경 → 이력·자동 분석, 본인 작업만 목록·상세·SSE 조회, 팀장과 동일 역할의 다른 사용자 접근 차단을 확인한다. `reject`는 별도 승인 진행 API도 확인한다.

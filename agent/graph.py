@@ -59,6 +59,7 @@ MAX_ACTIONS = 10            # 한 작업에서 실제 실행할 수 있는 변�
 MAX_PROPOSALS = MAX_ACTIONS * (MAX_REJECTS + 1)
 MAX_ADJUST_TURNS = int(os.getenv("MAX_ADJUST_TURNS", "64"))
 execution_store = None      # lifespan injects the durable agent-only journal
+app_graph = None            # lifespan이 넣는다. 이어 묻기에서 앞 작업의 저장된 State를 읽는다 (decisions 6.44)
 
 PROMPTS = Path(__file__).parent / "prompts"
 
@@ -115,8 +116,10 @@ class AgentState(TypedDict, total=False):
     intent: str                               # IMPACT | ADJUST | QA | CLARIFY
     whatif_ops: list[dict]                    # 가정 변경 (contracts 2.2 형식)
     whatif_source: str                        # agent(질문에서 뽑음) | backend(자동 작업, contracts 2.6)
+    parent_thread_id: str | None              # 이어서 묻는 질문이면 앞 작업의 thread (backend가 소유자 확인 후 넘김)
     clarify: str | None                       # 되물을 내용
     notice: str | None                        # 답변 앞에 붙일 안내 (예: 권한 때문에 IMPACT로 답함)
+    inherited: str | None                     # 이어 묻기로 앞 작업에서 이어받은 가정 (답변 맨 앞에 밝힌다, 6.44)
     failure: str | None                       # 도구 오류로 끝낼 때
     impact: dict | None                       # analyze_impact 결과 (변경 적용 후, 해결안 적용 전)
     current_impact: dict | None               # 가장 최근 DB + 아직 적용되지 않은 사용자 가정
@@ -398,10 +401,13 @@ def describe_impact(impact: dict, plans: list[dict]) -> str:
 # 노드: classify_intent
 # ---------------------------------------------------------------------------
 
-async def classify_question(question: str, plans: list[dict], turns: int = 0) -> tuple[W.Classification, list[str], int]:
+async def classify_question(question: str, plans: list[dict], turns: int = 0,
+                            previous: dict | None = None) -> tuple[W.Classification, list[str], int]:
     """질문 → (분류, 검증 오류, 모델 호출 수). 평가 스크립트도 이 함수를 그대로 쓴다.
 
     모델이 뽑은 whatif가 검사를 통과하지 못하면 오류를 알려 주고 한 번 더 기회를 준다.
+    previous는 이어 묻는 질문일 때 앞 작업의 질문·가정이다. 모델은 이번 질문에서 새로 바뀐 것만 뽑고
+    follow_up을 정한다. 앞 가정과 합치는 건 classify_intent의 코드가 한다.
     """
     def check(c: W.Classification) -> list[str]:
         ops = [W.normalize(o) for o in c.whatif]
@@ -417,8 +423,11 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0) ->
         except ValueError:
             c = W.Classification(intent="IMPACT", unclear="날짜를 읽지 못했습니다. 실제 월/일을 확인해 주세요.")
         return c, check(c), turns
-    msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans))),
-            HumanMessage(question)]
+    msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans)))]
+    if previous:
+        msgs.append(SystemMessage(prompt("classify_follow_up", PREV_QUESTION=previous["question"],
+                                         PREV_WHATIF=json.dumps(previous["whatif_ops"], ensure_ascii=False))))
+    msgs.append(HumanMessage(question))
     if W.explicit_adjust_request(question):
         msgs.append(SystemMessage(prompt("classify_adjust")))
     for attempt in range(2):
@@ -447,7 +456,8 @@ async def classify_intent(state: AgentState) -> dict:
             return {**out, "intent": "CLARIFY", "clarify": "자동 작업의 가정 변경이 올바르지 않습니다: " + "; ".join(errors)}
         return {**out, "intent": "IMPACT", "whatif_ops": ops}
 
-    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0))
+    previous = await previous_turn(state)
+    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0), previous)
     if turns > MAX_TURNS:
         raise LimitExceeded(f"모델 호출이 {MAX_TURNS}회를 넘었습니다.")
     out["turn_count"] = turns
@@ -455,15 +465,46 @@ async def classify_intent(state: AgentState) -> dict:
         return {**out, "intent": "CLARIFY", "clarify": c.unclear or "; ".join(errors)}
     ops = [W.normalize(o) for o in c.whatif]
     intent = c.intent
-    # 같은 대화에서 "그럼 해결 방법 찾아 줘"처럼 변경을 다시 말하지 않으면, 앞에서 분석한 변경을 이어서 쓴다
-    if intent == "ADJUST" and not ops and state.get("whatif_ops"):
-        ops = state["whatif_ops"]
-    notice = None
+    notices, inherited = [], None
+    # 이어 묻기 (decisions 6.44): "그럼 해결 방법 만들어 줘"처럼 변경을 다시 말하지 않거나 "거기에 …"처럼 덧붙이면
+    # 앞 작업의 가정에 이번 변경을 얹는다. 새 주제(follow_up 아님)는 앞 가정을 쓰지 않는다
+    if previous and previous["whatif_ops"] and intent in ("IMPACT", "ADJUST") and (c.follow_up or (intent == "ADJUST" and not ops)):
+        kept = [o for o in previous["whatif_ops"] if W.op_target(W.normalize(o)) not in {W.op_target(n) for n in ops}]
+        ops = W.merge_ops(previous["whatif_ops"], ops)
+        if kept:
+            # 가정은 저장되지 않는다 — 무엇을 이어받았는지 답변에 밝힌다 (안전성 재현 1·3)
+            inherited = "앞 질문의 가정을 이어서 계산했습니다: " + ", ".join(op_text(o, plans) for o in kept)
     if intent == "ADJUST" and state.get("role") not in ("BUYER", "APPROVER"):
         # 권한표: 발주 조정 요청은 구매·팀장만 (A2). 역할을 모르면 가장 좁은 권한으로 본다
         intent = "IMPACT"
-        notice = "발주 조정 요청은 구매 담당자·팀장만 할 수 있어 영향 분석으로 답합니다."
-    return {**out, "intent": intent, "whatif_ops": ops, "notice": notice}
+        notices.append("발주 조정 요청은 구매 담당자·팀장만 할 수 있어 영향 분석으로 답합니다.")
+    # notice는 해결안 실행 뒤 다시 쓰이므로(refresh_impact) 이어받은 가정은 따로 둔다
+    return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited}
+
+
+async def previous_turn(state: AgentState) -> dict | None:
+    """앞 작업의 질문과 (이어받은 것까지 합친) 가정. 앞 작업이 승인 대기 중이어도 저장된 State에서 읽는다."""
+    parent = state.get("parent_thread_id")
+    if not parent or app_graph is None:
+        return None
+    values = (await app_graph.aget_state({"configurable": {"thread_id": parent}})).values
+    if not values:
+        return None
+    return {"question": values.get("question", ""), "whatif_ops": values.get("whatif_ops") or []}
+
+
+def op_text(op: dict, plans: list[dict]) -> str:
+    """가정 변경 한 줄. 답변에 이어받은 가정을 밝힐 때 쓴다."""
+    o = W.normalize(op)
+    plan = plan_label(plans, o.get("plan_id")) if o.get("plan_id") else None
+    return {
+        "reschedule_plan": lambda: f"{plan} → {o.get('new_date')}",
+        "change_plan_qty": lambda: f"{plan} → {o.get('new_qty'):,}대",
+        "request_due_date_change": lambda: f"{o.get('po_id')} 입고 → {o.get('new_due_date')}",
+        "split_po": lambda: f"{o.get('po_id')}에서 {o.get('split_qty'):,}개를 {o.get('new_due_date')}에 먼저",
+        "change_po_qty": lambda: f"{o.get('po_id')} → {o.get('new_qty'):,}개",
+        "cancel_po": lambda: f"{o.get('po_id')} 취소",
+    }.get(o["op"], lambda: json.dumps(o, ensure_ascii=False))()
 
 
 def route_intent(state: AgentState) -> str:
@@ -1117,6 +1158,8 @@ def respond(state: AgentState) -> dict:
                 answer = (answer + "\n\n" if answer else "") + describe_impact(impact, plans)
     if state.get("notice"):
         answer = f"({state['notice']})\n{answer}"
+    if state.get("inherited"):
+        answer = f"({state['inherited']})\n{answer}"
     if state.get("evidence"):
         answer += "\n\n확인한 근거:\n" + "\n".join(
             f"- {s['title']} 제{s['clause_no']}조 ({s['version']})" for s in state["evidence"])

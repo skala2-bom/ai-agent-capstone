@@ -91,7 +91,28 @@ def conflicting_tasks_and_stale_review():
     print("PASS 오래된 검토 차단 / 같은 발주의 다른 task 실행 후 재검증 차단 / 중복 실행 방지", flush=True)
 
 
+def follow_up_multi_item_review():
+    """Main's conversation inheritance must create a fresh v3 review, not resume the parent approval."""
+    S.reset_seed()
+    case = next(c for c in S.CASES if c["id"] == "SC2")
+    parent, _ = S.finish_task(S.start(case["question"]))
+    child = S.request("POST", "/api/ai/tasks", json={
+        "question": "그럼 결품과 과잉 해결 방법 만들어 줘.", "parentTaskId": parent["taskId"]})["taskId"]
+    assert child != parent["taskId"]
+    cards = S.wait_cards(child, 3, "PENDING")
+    state, _ = S.batch_command(child, "CONFIRM", cards[0])
+    assert state["mode"] == "BATCH" and len(state["entries"]) == 3
+    assert sum(e["reviewStatus"] == "CONFIRMED" for e in state["entries"]) == 1
+    assert not state["canExecute"] and mutations() == 0
+    assert S.request("GET", f"/api/ai/tasks/{parent['taskId']}")["status"] == "DONE"
+    task, _ = S.finish_task(child, approve=True)
+    assert S.W.same_ops(task["result"]["whatif"], case["whatif"])
+    assert "앞 질문의 가정을 이어서 계산했습니다" in task["answer"]
+    assert len(task["result"]["executions"]) == mutations() == 3
+    print("PASS 여러 품목 영향 질문 → 이어서 해결 요청 → 새 task의 독립 검토 → 3건 전체 실행", flush=True)
+
+
 if __name__ == "__main__":
-    for check in (excluded_problem_blocks_all, no_alternative_then_manual, conflicting_tasks_and_stale_review):
+    for check in (excluded_problem_blocks_all, no_alternative_then_manual, conflicting_tasks_and_stale_review, follow_up_multi_item_review):
         check()
     print("ALL TASK BATCH CHECKS PASSED", flush=True)

@@ -1,19 +1,21 @@
 # 파트 간 계약
 
-> **2026-10-22 로컬 변경 — task 전체 실행**: 신규 v3 작업은 개별 승인이 검토 체크이며 즉시 실행되지 않는다. task 단위 재검증·원자 실행 및 수동 수정안 계약은 [task-batch-approval.md](task-batch-approval.md)를 따른다. 아래 기존 부품별 승인·실행 설명은 v2 작업에 해당한다. DB 구조 변경 없음.
+> **2026-10-22 변경 — task 전체 실행**: 신규 v3 작업은 개별 승인이 검토 체크이며 즉시 실행되지 않는다. task 단위 재검증·원자 실행 및 수동 수정안 계약은 [task-batch-approval.md](task-batch-approval.md)를 따른다. 아래 기존 부품별 승인·실행 설명은 v2 작업에 해당한다. DB 구조 변경 없음.
 
 > **이 문서의 역할**: 파트 경계를 넘는 약속만 모았다. 여기 적힌 것은 **바꾸려면 상대 파트와 합의**해야 하고, 여기 없는 것은 각 파트가 알아서 정하면 된다.
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-21 — 아래 "최근 변경" 표의 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
+> **갱신**: 2026-10-22 — 아래 "최근 변경" 표의 44~45번 (Phase 2). 2026-10-21 — 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
 
-## 최근 변경 — 각 파트가 확인할 것 (10/20~10/21, 모든 파트)
+## 최근 변경 — 각 파트가 확인할 것 (10/20~10/22, 모든 파트)
 
 > 맨 위에 두는 이유: 계약이 바뀐 줄이 문서 곳곳에 흩어져 있어서, 무엇이 바뀌었고 **누가 무엇을 해야 하는지**를 한 번에 보게 하려는 것이다. 다음 변경이 생기면 이 표를 새로 쓴다.
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 45 | **Task 전체 검토·실행** — 개별 승인은 체크만 저장. 수정 필요는 AI 재요청/직접 수정안으로 분기. task 전체 재검증 후 선택한 변경을 원자 반영하고 실패 시 원복. 대화 이어하기로 생성한 작업에도 동일 적용 | decisions 6.45, [상세 계약·검증](task-batch-approval.md) | 검토 상태·전체 실행/취소 API와 공통 UI 사용 | 신규 v3 작업·영속 검토 상태·전체 실행 결과 사용. DB 구조 유지 |
+| 44 | **이어 묻기 (Phase 2)** — `POST /api/ai/tasks`에 선택 칸 `parentTaskId`. backend는 **본인 작업인지** 확인(아니면 403 `ROLE_NOT_ALLOWED`, 작업 안 만듦)하고 새 작업·새 thread를 만들어 `/agent/tasks`에 `parentThreadId`를 넘긴다. agent는 앞 작업의 저장된 State에서 질문·가정을 읽어, 이어 묻는 말이면 **앞 가정 + 이번 변경**으로 계산하고 답변 앞에 이어받은 가정을 밝힌다. 새 주제는 이어받지 않는다. 결과 계약(`DONE.result`)은 그대로 | 2.6, 3.1, decisions 6.44 | ✅ 반영함: 같은 대화의 다음 질문에 앞 작업 ID를 실어 보냄, 입력칸 아래 "앞 질문에 이어서 묻습니다 · [새 대화]". 선택한 업무를 바꾸면 끊김 | ✅ 반영함: `classify_follow_up.md`, `Classification.follow_up`, `merge_ops`(합치기는 코드), 가짜 모델 규칙에도 같은 처리 |
 | 43 | **작업 이력은 본인만** — 모든 역할에서 목록·상세·SSE를 작업 소유자로 제한. SYSTEM도 동일. 승인함 진행 정보는 별도 API | 3.1, decisions 6.43 | 승인함은 `/approval-progress` 사용. 타인 작업 결과 열기 제외 | AI 요청·승인 계약 유지 |
 | 42 | **입고 정보 수동 수정** — OPEN 발주의 예정 수량·날짜를 함께 저장, 사유 필수, 변경 이력과 자동 영향 분석 | 3.1, decisions 6.42 | 발주·입고 상세의 수량·일정 폼 연결 | 기존 승인 실행 도구 유지. DB 구조 변경 없음 |
 | 41 | **거절 후 재제안은 팀장에게 직접 전달** — 최초 제안만 구매 검토. 동일 작업·요청자·품목의 실제 거절을 검증한 재제안은 PENDING으로 등록. 전체 문제·이전 구매 메모 계승. 작업 카드에서 원 질문 숨김 | 3.3, decisions 6.40 | 작업 카드에는 전체 문제만 표시. 재제안 이전 카드 ID로 배치 | APPROVAL_REQUIRED에 previousApprovalId. 이미 등록된 재제안 초안은 정확한 approvalId로 복구. 승인 자동 실행 금지 |
@@ -428,7 +430,8 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 // POST /agent/tasks
 { "taskId": "...", "threadId": "...", "userId": "u-01", "role": "BUYER",
   "question": "허브를 11/25로 당기면?",
-  "whatif": null }
+  "whatif": null,
+  "parentThreadId": null }   // 이어 묻는 질문이면 앞 작업의 thread (10/22 추가, 44번). 소유자 확인은 backend가 끝냈다
 ```
 
 **`whatif`를 누가 채우나** — 문서가 두 가지로 읽혀서 여기서 못 박는다.
@@ -472,7 +475,7 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 | Method | Path | 응답 | 권한 |
 |---|---|---|---|
 | POST | `/api/auth/login` | ✅ `{token, user_id, name, role, expires_at}` | 모두 |
-| POST | `/api/ai/tasks` | ✅ `202 {taskId}` | 로그인 |
+| POST | `/api/ai/tasks` | ✅ `202 {taskId}`. 요청 `{question, parentTaskId?}` — `parentTaskId`는 이어 묻기(44번), 본인 작업이 아니면 403 | 로그인 |
 | GET | `/api/ai/tasks/{id}` | ✅ 작업 한 건 (아래) | 작업 소유자만. 다른 사람은 역할·trigger 무관하게 403 |
 | GET | `/api/ai/tasks/{id}/stream` | ✅ `text/event-stream` | 요청자 (다른 사람이면 403) |
 | GET | `/api/ai/tasks/{id}/approval-progress` | `{progress:[{approvalId, proposalStatus, outcome}]}`. 질문·답변·분석 결과·trace 없음. 조회 가능한 카드만 반환 | 승인 요청자 또는 전달된 카드가 있는 APPROVER. DRAFT·WITHDRAWN은 팀장 비노출 |
