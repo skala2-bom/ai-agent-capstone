@@ -421,9 +421,31 @@ def manual_and_private():
     print("PASS 입고 수량·당김 일정 수동 저장 → 변경 이력·자동 분석 / 전 역할·동일 역할 간 본인 이력·상세·SSE만 조회", flush=True)
 
 
+def follow_up():
+    """이어 묻기 (decisions 6.44): 앞 질문의 가정을 이어받아 해결안을 만들고, 새 주제·남의 작업은 이어받지 않는다."""
+    reset_seed()
+    hub = {"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25"}
+    first, _ = finish_task(start("허브를 11/25로 당기면 문제 있어?"))
+    assert first["result"]["intent"] == "IMPACT" and W.same_ops(first["result"]["whatif"], [hub])
+    second = request("POST", "/api/ai/tasks", json={"question": "그럼 해결 방법 만들어 줘", "parentTaskId": first["taskId"]})["taskId"]
+    cards = wait_cards(second, 1)
+    assert [(c["tool"], c["args"]) for c in cards] == [
+        ("split_po", {"po_id": "PO-2609-001", "split_qty": 100, "new_due_date": "2026-11-25"})], cards
+    task, _ = finish_task(second, approve=True)
+    assert task["result"]["intent"] == "ADJUST" and W.same_ops(task["result"]["whatif"], [hub])
+    assert "앞 질문의 가정을 이어서 계산했습니다" in task["answer"], task["answer"]
+    third = request("POST", "/api/ai/tasks", json={"question": "지금 생산 계획대로 가면 부품 문제 있어?", "parentTaskId": second})["taskId"]
+    task, _ = finish_task(third)
+    assert task["result"]["whatif"] == [] and "앞 질문의 가정" not in task["answer"]
+    res = HTTP.post(BASE + "/api/ai/tasks", headers={"Authorization": "Bearer " + TOKENS["planner"]},
+                    json={"question": "그럼 해결 방법은?", "parentTaskId": first["taskId"]})
+    assert res.status_code == 403, res.status_code
+    print("PASS 이어 묻기: 앞 가정 이어받아 해결안 → 새 주제는 이어받지 않음 → 남의 작업엔 이어 묻기 403", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "manual-private", "recovery-prepare", "recovery-finish"])
+    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "manual-private", "follow-up", "recovery-prepare", "recovery-finish"])
     args = parser.parse_args()
     for _ in range(60):
         try:
@@ -433,7 +455,7 @@ def main():
             pass
         time.sleep(1)
     checks = {"golden": golden_read_only, **{s: lambda s=s: scenario(s) for s in ("SC1", "SC2", "SC3", "SC4")},
-              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa, "manual-private": manual_and_private,
+              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa, "manual-private": manual_and_private, "follow-up": follow_up,
               "recovery-prepare": recovery_prepare, "recovery-finish": recovery_finish}
     for name in args.only or [k for k in checks if not k.startswith("recovery-")]:
         checks[name]()

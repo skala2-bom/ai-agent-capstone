@@ -57,6 +57,9 @@ class Classification(BaseModel):
     unclear: str | None = Field(
         None, description="계획 ID·날짜·수량을 하나로 정할 수 없을 때만 부족한 정보. "
                           "의도 선택 이유를 쓰지 않는다. 질문에 원래 생산일과 새 날짜가 있어 계획을 특정할 수 있으면 null.")
+    follow_up: bool = Field(
+        False, description="앞 질문에 이어서 묻는 말이면 true (예: '그럼 해결 방법은?', '거기에 스위치도 900대로 늘리면?'). "
+                           "이전 대화가 없거나 새 주제면 false.")
 
 
 def normalize(op: dict | BaseModel) -> dict:
@@ -124,6 +127,21 @@ def consistency_errors(question: str, ops: list[dict], plans: list[dict]) -> lis
     return errors
 
 
+def op_target(op: dict) -> tuple:
+    """같은 대상에 같은 종류의 변경인가를 가르는 열쇠. 이어 묻기에서 새 값이 앞 값을 덮어쓴다."""
+    return (op.get("op"), op.get("plan_id") or op.get("po_id"))
+
+
+def merge_ops(previous: list[dict], new: list[dict]) -> list[dict]:
+    """앞 질문의 가정에 이번 질문의 변경을 얹는다 (decisions 6.44). 같은 대상·종류는 이번 값으로 바꾼다.
+
+    합치는 건 코드가 한다 — 모델은 이번 질문에서 새로 바뀐 것만 뽑는다. 숫자를 모델이 옮겨 적다 틀리지 않게.
+    """
+    new = [normalize(o) for o in new]
+    replaced = {op_target(o) for o in new}
+    return [normalize(o) for o in previous if op_target(normalize(o)) not in replaced] + new
+
+
 def same_ops(a: list[dict], b: list[dict]) -> bool:
     """두 whatif가 같은가. 순서는 보지 않는다 (같은 계획을 두 번 바꾸는 질문은 없다고 본다)."""
     key = lambda o: tuple(sorted((k, str(v)) for k, v in normalize(o).items()))
@@ -152,8 +170,16 @@ def infer_date(month: int, day: int) -> str:
     return (d if d > BASE_DATE else date(BASE_DATE.year + 1, month, day)).isoformat()
 
 
+# "그럼 해결 방법은?", "거기에 …", "그 상태에서 …"처럼 앞 질문을 받는 말
+FOLLOW_UP = re.compile(r"^\s*(그럼|그러면|거기에|여기에|거기서|그 상태에서|추가로|이어서)|그거|그걸|그것|앞(의|에서)?\s*(질문|가정|결과)")
+
+
 def rule_classify(question: str, plans: list[dict]) -> Classification:
     """키 없이도 평가셋 질문이 돌도록 하는 단순 규칙. 실제 서비스에서는 모델이 한다."""
+    return _rule_classify(question, plans).model_copy(update={"follow_up": bool(FOLLOW_UP.search(question))})
+
+
+def _rule_classify(question: str, plans: list[dict]) -> Classification:
     q = question
     if re.search(r"해결|대안|방법|조정", q):
         intent = "ADJUST"

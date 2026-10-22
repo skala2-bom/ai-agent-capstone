@@ -83,11 +83,26 @@ class Tasks {
      * <p>요청자(JWT의 sub·role)를 작업에 저장하고 agent에 넘긴다. agent는 이 값을 {@code X-User-Id}·{@code X-Role}
      * 헤더로 도구 호출에 실어 보낸다 (contracts.md 1.1). 역할을 질문이나 도구 인자에서 받지 않는 이유:
      * 그건 사용자나 모델이 바꿀 수 있는 값이다.
+     *
+     * <p>{@code parentTaskId}를 주면 그 작업에 이어서 묻는 질문이다 (decisions 6.44). 새 작업·새 thread는 그대로 만들고,
+     * agent가 앞 작업의 질문·가정을 읽을 수 있게 앞 작업의 threadId만 넘긴다. 작업 조회와 같은 규칙으로
+     * <b>본인 작업에만</b> 이어 물을 수 있다 (6.43) — 남의 질문·가정을 넘겨받지 못하게.
      */
     @PostMapping("/api/ai/tasks")
     @ResponseStatus(HttpStatus.ACCEPTED)
     Map<String, String> createTask(@RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
-        return Map.of("taskId", start(user.getSubject(), user.getClaimAsString("role"), body.getOrDefault("question", ""), "USER", null));
+        String parent = body.get("parentTaskId");
+        String parentThread = null;
+        if (parent != null && !parent.isBlank()) {
+            if (!row(parent).get("userId").equals(user.getSubject()))
+                throw new ApiError("ROLE_NOT_ALLOWED", "본인의 작업에만 이어서 질문할 수 있습니다.", "새 대화로 질문하세요.");
+            parentThread = db.queryForObject("select thread_id from ai_task where task_id = ?", String.class, parent);
+        }
+        return Map.of("taskId", start(user.getSubject(), user.getClaimAsString("role"), body.getOrDefault("question", ""), "USER", null, parentThread));
+    }
+
+    String start(String userId, String role, String question, String trigger, List<Map<String, Object>> whatif) {
+        return start(userId, role, question, trigger, whatif, null);
     }
 
     /**
@@ -95,8 +110,9 @@ class Tasks {
      *
      * @param whatif 사람이 물은 작업이면 null — 질문에서 뽑는 건 agent의 classify_intent가 한다.
      *               시스템이 만든 작업이면 backend가 이미 아는 변경을 채운다 (contracts.md 2.6)
+     * @param parentThreadId 이어서 묻는 질문이면 앞 작업의 thread. 아니면 null
      */
-    String start(String userId, String role, String question, String trigger, List<Map<String, Object>> whatif) {
+    String start(String userId, String role, String question, String trigger, List<Map<String, Object>> whatif, String parentThreadId) {
         String id = UUID.randomUUID().toString();
         // threadId는 taskId와 같게 쓴다. 승인 후 재개 때 agent checkpointer에서 같은 대화를 꺼내는 열쇠다
         db.update("insert into ai_task (task_id, thread_id, user_id, role, question, trigger) values (?, ?, ?, ?, ?, ?)",
@@ -108,6 +124,7 @@ class Tasks {
         req.put("role", role);
         req.put("question", question);
         req.put("whatif", whatif);
+        if (parentThreadId != null) req.put("parentThreadId", parentThreadId);
         enqueue(id, "start", req);
         return id;
     }

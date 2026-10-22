@@ -15,7 +15,8 @@ const question = ref("");
 // 보낸 질문 (말풍선). 입력칸은 보내면 비운다 — 일반 채팅처럼 (decisions 6.35)
 const asked = ref("");
 // 지난 대화 기록 (decisions 6.36): 새 질문을 보내거나 다른 작업을 열면 지금 대화를 위로 올린다.
-// 화면 기록일 뿐 AI가 앞 대화를 기억하는 것은 아니다 — 질문마다 따로 처리된다
+// 같은 대화에서 다음 질문을 보내면 지금 작업을 parentTaskId로 함께 보내 AI가 앞 질문의 가정을 이어받는다 (6.44).
+// 선택한 업무를 바꾸거나 [새 대화]를 누르면 끊긴다
 interface Turn { question: string; answer: string; status: string; taskId?: string }
 const history = ref<Turn[]>([]);
 let currentTask: string | undefined;
@@ -34,6 +35,9 @@ function reopen(i: number) {
 }
 function resetAll() {
   clear(); history.value = []; currentTask = undefined;
+}
+function newConversation() {
+  archive(); clear(); currentTask = undefined; w.activeTask = undefined;
 }
 const sending = ref(false);
 // 패널 너비: 왼쪽 경계를 끌어서 바꾼다 (decisions 6.38). 이 브라우저에만 기억한다 — 사람마다 화면이 달라서
@@ -245,6 +249,7 @@ async function ask() {
   const text = question.value.trim();
   if (!text || sending.value) return;
   archive();
+  const parent = currentTask;
   currentTask = undefined;
   clear();
   w.activeTask = undefined;
@@ -258,7 +263,8 @@ async function ask() {
   }
   running.value = true; status.value = "접수 중"; sending.value = true;
   try {
-    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST", { question: asked.value });
+    const { taskId } = await request<{ taskId: string }>("/ai/tasks", w.session?.token, "POST",
+      parent ? { question: asked.value, parentTaskId: parent } : { question: asked.value });
     if (g === generation) { currentTask = taskId; w.activeTask = taskId; }
   } catch (e) {
     // 접수에 실패하면 쓴 글을 돌려놓는다 — 다시 쓰지 않아도 되게
@@ -442,7 +448,10 @@ async function ask() {
         rows="3"
       />
       <div>
-        <small>{{
+        <small v-if="mode !== 'mock' && w.activeTask"
+          >앞 질문에 이어서 묻습니다 ·
+          <button type="button" class="text-button" @click="newConversation">새 대화</button></small
+        ><small v-else>{{
           mode === "mock" ? "데모 · 자유 질문 미연결" : "업무 분석"
         }}</small
         ><button
