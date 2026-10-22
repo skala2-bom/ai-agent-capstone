@@ -308,6 +308,22 @@ class InternalApi {
     }
 
     /** 변경 하나의 앞단에서 모은 것 */
+    Map<String, Object> updatePurchaseApproved(String id, Map<String, Object> body) {
+        return tx.execute(t -> {
+            Change c = begin(id, body, "update_purchase");
+            LocalDate due = checkLeadTime(c.po(), body.get("new_due_date"));
+            if (!(body.get("new_qty") instanceof Number n) || n.intValue() <= 0 || n.doubleValue() != n.intValue())
+                throw ApiError.invalid("수량은 양의 정수여야 합니다.", "수정안을 다시 확인하세요.");
+            int qty = ((Number) body.get("new_qty")).intValue();
+            int moq = db.queryForObject("select moq from item where item_id=?", Integer.class, c.po().get("item_id"));
+            if (qty < moq) throw ApiError.invalid("최소 발주 수량 " + moq + "개 미만입니다.", "수량을 다시 확인하세요.");
+            db.update("update purchase_order set qty=?, due_date=? where po_id=?", qty, due, id);
+            Map<String, Object> after = m("po_id", id, "item_id", c.po().get("item_id"), "qty", qty, "due_date", due.toString());
+            approvals.executed(c.approvalId(), c.requester(), "update_purchase", id, c.before(), after);
+            return m("po_id", id, "before", c.before(), "after", after, "status", "OPEN");
+        });
+    }
+
     record Change(Map<String, Object> po, Map<String, Object> before, String approvalId, String requester) {}
 
     /**

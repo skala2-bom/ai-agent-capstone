@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "../stores/workspace";
 import type { Purchase } from "../types";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
+import { batchLocked } from "../services/task-batch";
 const w = useWorkspace(),
   q = ref(""),
   tab = ref("발주 · 입고"),
@@ -20,6 +22,16 @@ const w = useWorkspace(),
   supplier = ref(""),
   from = ref(""),
   to = ref("");
+const route = useRoute(), router = useRouter();
+const taskId = computed(() => typeof route.query.taskId === "string" ? route.query.taskId : "");
+const approvalId = computed(() => typeof route.query.approvalId === "string" ? route.query.approvalId : "");
+const taskEditing = computed(() => !!taskId.value && !!approvalId.value);
+const taskLocked = computed(() => taskEditing.value && (batchLocked(w.batchStates[taskId.value]) || !!w.batchPending[taskId.value]));
+watch(() => [route.query.poId, w.data?.purchases], () => {
+  if (!taskEditing.value) return;
+  const purchase = w.data?.purchases.find(p => p.id === route.query.poId);
+  if (purchase && selected.value?.id !== purchase.id) open(purchase);
+}, {immediate: true});
 const rows = computed(() =>
   w.data!.purchases.filter(
     (p) =>
@@ -44,7 +56,13 @@ const editable = computed(() => !!selected.value && selected.value.received === 
   && ["OPEN", "입고 예정", "지연 통보"].includes(selected.value.status));
 const changed = computed(() => !!selected.value && (date.value !== selected.value.date || qty.value !== selected.value.qty));
 async function savePurchase() {
-  if (!editable.value || !changed.value) return;
+  if (!editable.value || !changed.value || taskLocked.value) return;
+  if (taskEditing.value) {
+    if (await w.sendBatch(taskId.value, "MANUAL", approvalId.value, {
+      reason: reason.value, args: {po_id: selected.value!.id, new_qty: qty.value, new_due_date: date.value},
+    })) await router.push("/approvals");
+    return;
+  }
   if (
     await w.save({
       type: "purchase",
@@ -118,7 +136,7 @@ async function savePurchase() {
               {{ (p.qty - p.received).toLocaleString() }}
             </td>
             <td><Badge :text="p.status" /></td>
-            <td><button @click="open(p)">상세 보기</button></td>
+            <td><button :disabled="taskEditing && p.id !== route.query.poId" @click="open(p)">상세 보기</button></td>
           </tr>
         </tbody>
       </table>
@@ -170,6 +188,8 @@ async function savePurchase() {
   <Drawer v-if="selected" title="발주 · 입고 상세" @close="selected = undefined"
     ><span class="eyebrow">{{ selected.id }}</span>
     <h2>{{ selected.item }} · {{ selected.supplier }}</h2>
+    <p v-if="taskEditing" class="warning-box">이 task의 수정안을 작성합니다. 발주는 아직 변경하지 않으며, 승인 대기함에서 검토 후 함께 실행합니다.</p>
+    <p v-if="taskEditing && w.batchErrors[taskId]" class="error">{{ w.batchErrors[taskId] }}</p>
     <div class="comparison">
       <div>
         <small>변경 전</small><b>{{ selected.date }}</b><span>{{ selected.qty.toLocaleString() }}개</span>
@@ -201,9 +221,9 @@ async function savePurchase() {
         >변경 사유<textarea v-model="reason" required rows="3" :disabled="!w.buyer || !editable || w.busy" /></label
       ><button
         class="primary"
-        :disabled="!w.buyer || !editable || w.busy || !changed || !reason.trim() || !Number.isInteger(qty) || qty < 1 || !date"
+        :disabled="!w.buyer || !editable || w.busy || taskLocked || !changed || !reason.trim() || !Number.isInteger(qty) || qty < 1 || !date"
       >
-        입고 정보 저장
+        {{ taskEditing ? '수정안 확정' : '입고 정보 저장' }}
       </button>
     </form>
     <button

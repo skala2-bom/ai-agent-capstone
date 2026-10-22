@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, computed, watch, nextTick } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from "vue";
 import TaskReview from "./TaskReview.vue";
 import ApprovalConfirm from "./ApprovalConfirm.vue";
+import ProposalReview from "./ProposalReview.vue";
+import TaskBatchActions from "./TaskBatchActions.vue";
 import ServerResult from "./ServerResult.vue";
 import AnswerBlocks from "./AnswerBlocks.vue";
 import { sourceCards } from "../services/answer";
@@ -12,6 +14,9 @@ import { scenarios } from "../mocks/fixtures";
 import type { AgentEvent } from "../types";
 import { Sparkles, ArrowUp, PanelRightClose } from "lucide-vue-next";
 const w = useWorkspace();
+let batchPoll: ReturnType<typeof setInterval> | undefined;
+onMounted(() => { batchPoll = setInterval(() => { if (w.activeTask) void w.refreshApprovals().catch(() => {}); }, 3000); });
+onBeforeUnmount(() => clearInterval(batchPoll));
 const question = ref("");
 // 보낸 질문 (말풍선). 입력칸은 보내면 비운다 — 일반 채팅처럼 (decisions 6.35)
 const asked = ref("");
@@ -415,6 +420,7 @@ async function ask() {
         </article>
       </details>
       <p v-if="taskProblem" class="task-problem"><strong>전체 문제 설명</strong><br />{{ taskProblem }}</p>
+      <TaskBatchActions v-if="w.activeTask" :task-id="w.activeTask" />
       <TaskReview v-if="w.activeTask && w.session?.role === 'BUYER' && (hasDrafts || w.taskReviews[w.activeTask]?.attempt)" :key="w.activeTask" :task-id="w.activeTask" />
       <article
         v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED' && cardState(x) !== 'DRAFT' && (w.session?.role !== 'APPROVER' || cardState(x) !== 'WITHDRAWN'))"
@@ -428,7 +434,9 @@ async function ask() {
         <p v-if="w.data?.approvals.find(a => a.id === e.approvalId)?.memo" class="task-problem">
           개인 메모: {{ w.data?.approvals.find(a => a.id === e.approvalId)?.memo }}
         </p>
-        <template v-if="cardStatus(e) === '승인 대기' && w.session?.role === 'APPROVER' && cardState(e) === 'PENDING'"
+        <ProposalReview v-if="w.batchStates[e.taskId]?.mode === 'BATCH' && w.data?.approvals.find(a => a.id === e.approvalId)"
+          :approval="w.data!.approvals.find(a => a.id === e.approvalId)!" />
+        <template v-else-if="cardStatus(e) === '승인 대기' && w.session?.role === 'APPROVER' && cardState(e) === 'PENDING' && w.batchStates[e.taskId]?.mode === 'LEGACY'"
           ><label
             >거절 사유<textarea
               v-model="approvalReasons[e.approvalId!]"

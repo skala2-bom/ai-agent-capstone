@@ -83,6 +83,16 @@ class ResumeIn(BaseModel):
     reason: str | None = None
 
 
+class BatchIn(BaseModel):
+    requestId: str
+    expectedRevision: int
+    action: Literal["CONFIRM", "UNCONFIRM", "NEEDS_EDIT", "REPLAN", "MANUAL", "EXCLUDE", "EXECUTE", "CANCEL"]
+    approvalId: str | None = None
+    reason: str = ""
+    args: dict | None = None
+    actorId: str
+
+
 def initial_state(command):
     body = TaskIn(**command["payload"])
     thread_id = body.threadId or body.taskId
@@ -102,7 +112,8 @@ def initial_state(command):
         "blocked": {}, "executions": [], "search_hits": [], "qa_searched": False, "evidence_error": None,
         "next_actions": [], "result": None,
         "proposals": [], "active_proposal": None, "replan_target": None,
-        "processed_commands": [command["command_id"]], "workflow_version": 2,
+        "processed_commands": [command["command_id"]], "workflow_version": 3,
+        "batch_revision": 0, "batch_status": "REVIEW", "manager_reviews": {},
     }
     if body.whatif is not None:
         graph_input["whatif_ops"] = body.whatif
@@ -132,11 +143,24 @@ async def resume(task_id: str, body: ResumeIn):
         raise HTTPException(422, "거절 사유가 필요합니다.")
     thread = body.threadId or task_id
     snapshot = await app_graph.aget_state(config(thread))
-    if snapshot.values and snapshot.values.get("workflow_version") != 2:
+    if snapshot.values and snapshot.values.get("workflow_version") not in (2, 3):
         raise HTTPException(409, "이전 버전의 승인 대기 작업입니다. 기존 버전에서 마무리한 뒤 전환하세요.")
     # Accept even while registration/execution is running: the inbox drains in order.
     try:
         fresh = await store.receive("decision:" + body.approvalId, task_id, thread, "DECISION", body.model_dump())
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"accepted": True, "duplicate": not fresh}
+
+
+@app.post("/agent/tasks/{task_id}/batch", status_code=202)
+async def review_batch(task_id: str, body: BatchIn):
+    require_store()
+    key = "batch:" + task_id + ":" + body.requestId
+    try:
+        fresh = await store.receive(key, task_id, task_id, "BATCH", body.model_dump())
+        if not fresh:
+            await store.query("UPDATE agent.workflow_command SET status='PENDING', error=NULL WHERE command_id=%s AND kind='BATCH' AND status='HELD'", (key,))
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     return {"accepted": True, "duplicate": not fresh}
@@ -157,6 +181,6 @@ async def health(response: Response):
     if not ok:
         response.status_code = 503
     return {"ok": ok,
-            "checkpointer": "postgres" if store else "unavailable", "workflow_version": 2,
+            "checkpointer": "postgres" if store else "unavailable", "workflow_version": 3,
             "model": "openai" if G.llm is not None else "fake",
             "tracingConfigured": O.client() is not None, "promptVersion": O.prompt_version()}

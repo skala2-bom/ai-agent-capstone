@@ -4,6 +4,8 @@ import { useWorkspace } from "../stores/workspace";
 import TaskReview from "../components/TaskReview.vue";
 import ApprovalNote from "../components/ApprovalNote.vue";
 import ApprovalConfirm from "../components/ApprovalConfirm.vue";
+import ProposalReview from "../components/ProposalReview.vue";
+import TaskBatchActions from "../components/TaskBatchActions.vue";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
 import { mode, request } from "../services/api";
@@ -19,9 +21,11 @@ interface Outcome { code: string; item_name?: string; message: string; next_acti
 const outcomes = ref<Record<string, Outcome>>({});
 const outcomeLabel: Record<string, string> = {
   REPROPOSED: "재제안 생성", NO_ALTERNATIVE: "대안 없음", REVIEW_FAILED: "검토 실패", LIMIT: "재제안 한도",
+  MANUAL: "직접 수정안 생성",
 };
 const outcomeTone: Record<string, string> = {
   REPROPOSED: "success", NO_ALTERNATIVE: "warning", REVIEW_FAILED: "danger", LIMIT: "warning",
+  MANUAL: "success",
 };
 /** 거절 카드가 있는 작업만 진행 상태를 읽는다. 작업이 아직 안 끝나도 거절 건의 결과는 먼저 보인다 */
 async function loadOutcomes() {
@@ -35,7 +39,7 @@ async function loadOutcomes() {
 }
 const selected = computed(() => w.data?.approvals.find((a) => a.id === selectedId.value));
 const visibleApprovals = computed(() => (w.data?.approvals ?? []).filter(a =>
-  w.session?.role !== "APPROVER" || !["DRAFT", "WITHDRAWN"].includes(a.status)));
+  w.session?.role !== "APPROVER" || (a.status !== "DRAFT" && (a.status !== "WITHDRAWN" || w.batchStates[a.taskId]?.mode === "BATCH"))));
 const rows = computed(() => visibleApprovals.value.filter((a) => !filter.value || a.status === filter.value));
 const optionsById = computed(() => new Map(w.data?.options.map((o) => [o.id, o]) ?? []));
 function approvalTitle(text = "") {
@@ -147,6 +151,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
           <p v-else-if="!group.all.some(a => a.status === 'DRAFT')" class="caption">작성된 전체 문제 설명이 없습니다.</p>
           <p class="caption">{{ group.all.length }}건<template v-if="group.all.some(a => a.status === 'DRAFT')"> · 검토 전 {{ group.all.filter(a => a.status === 'DRAFT').length }}건</template> · 승인 대기 {{ group.all.filter(a => a.status === 'PENDING').length }}건 · 실행 완료 {{ group.all.filter(a => a.status === 'EXECUTED').length }}건</p>
           <button v-if="mode === 'api' && group.all.some(a => a.requesterId === w.session?.userId)" @click="w.openTask(group.taskId)">작업 결과</button>
+          <TaskBatchActions :task-id="group.taskId" />
           <TaskReview v-if="mode === 'api' && w.session?.role === 'BUYER' && (group.all.some(a => a.status === 'DRAFT') || w.taskReviews[group.taskId]?.attempt)"
             :task-id="group.taskId" compact />
         </td></tr>
@@ -165,7 +170,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
               new Date(a.at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
             }}
           </td>
-          <td><Badge :text="a.status" /></td>
+          <td><ProposalReview v-if="w.batchStates[a.taskId]?.mode === 'BATCH'" :approval="a" compact /><Badge v-else :text="a.status" /></td>
           <td>
             <button
               @click="
@@ -209,7 +214,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     v-if="selected && option"
     title="발주 변경 승인 상세"
     @close="selectedId = undefined"
-    ><Badge :text="selected.status" />
+    ><Badge v-if="w.batchStates[selected.taskId]?.mode !== 'BATCH'" :text="selected.status" />
     <h2>{{ approvalTitle(option.name) }}</h2>
     <dl>
       <dt>요청자</dt>
@@ -262,6 +267,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     <div v-else class="card">
       <template v-if="option.action === 'cancel'">{{ option.po }} · 발주 취소</template>
       <template v-else-if="option.action === 'qty'">{{ option.po }} · {{ selected.beforeQty }}개 → {{ option.qty }}개<br />입고일 {{ option.date }} 유지</template>
+      <template v-else-if="option.action === 'manual'">{{ option.po }} · {{ selected.beforeQty }}개 → {{ option.qty }}개<br />입고일 {{ selected.beforeDate }} → {{ option.date }}</template>
       <template v-else>{{ option.po }} · {{ option.qty }}개<br />입고일 {{ selected.beforeDate }} → {{ option.date }}</template>
     </div>
     <!-- API 모드: AI가 검색해 실제로 읽은 조항 (승인 카드의 evidence). AI 패널 근거 카드와 같은 모양 -->
@@ -281,8 +287,9 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     </details>
     <p v-else class="caption">시연용 승인 카드입니다.</p>
     <p v-if="selected.status === 'DRAFT'" class="caption">전체 문제 설명과 개인 메모는 작업 카드에서 작성하고, 작업 단위로 전송해 주세요.</p>
+    <ProposalReview v-if="w.batchStates[selected.taskId]?.mode === 'BATCH'" :approval="selected" />
     <form
-      v-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER'"
+      v-else-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER' && (mode === 'mock' || w.batchStates[selected.taskId]?.mode === 'LEGACY')"
       @submit.prevent="requestDecision('REJECTED')"
     >
       <label
@@ -321,7 +328,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
         시연: 실행 완료 이벤트 수신
       </button>
     </div>
-    <p v-if="selected.status === 'REJECTED'">
+    <p v-if="selected.status === 'REJECTED' && w.batchStates[selected.taskId]?.mode !== 'BATCH'">
       거절 사유: {{ selected.reason }}<br />{{
         mode === "api"
           ? "AI가 기존 후보 중 다른 대안을 검토합니다. 가능한 안이 없으면 보류하며, 수량을 임의로 고치지는 않습니다."

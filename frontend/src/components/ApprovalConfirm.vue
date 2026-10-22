@@ -5,11 +5,15 @@ const props = defineProps<{
   decision: "APPROVED" | "REJECTED";
   summary: string;
   reason?: string;
+  purpose?: "review" | "execute" | "cancel";
 }>();
 const emit = defineEmits<{ confirm: []; cancel: [] }>();
 const dialog = ref<HTMLDialogElement>();
 const approve = computed(() => props.decision === "APPROVED");
-const title = computed(() => approve.value ? "이 해결안을 승인할까요?" : "이 해결안을 거절할까요?");
+const title = computed(() => props.purpose === "review" ? "이 제안의 검토를 완료할까요?"
+  : props.purpose === "execute" ? "검토한 수정안을 함께 실행할까요?"
+  : props.purpose === "cancel" ? "이 작업을 전체 취소할까요?"
+  : approve.value ? "이 해결안을 승인할까요?" : "이 해결안을 거절할까요?");
 function keepFocus(event: KeyboardEvent) {
   if (event.key !== "Tab") return;
   const buttons = dialog.value?.querySelectorAll<HTMLButtonElement>("button");
@@ -36,7 +40,10 @@ onBeforeUnmount(() => dialog.value?.close());
     >
       <h2>{{ title }}</h2>
       <p class="confirmation-summary">{{ summary }}</p>
-      <p v-if="approve">승인하면 검증 후 발주 변경이 실행됩니다. 내용을 확인해 주세요.</p>
+      <p v-if="purpose === 'review'">검토 완료 표시만 남깁니다. 발주 변경은 task의 승인 및 실행에서 진행합니다.</p>
+      <p v-else-if="purpose === 'execute'">현재 데이터로 전체 문제 해결 여부를 재검증합니다. 통과한 경우에만 선택한 변경을 함께 반영합니다.</p>
+      <p v-else-if="purpose === 'cancel'">이 task의 제안과 수동 수정안을 취소합니다. 발주 변경은 실행하지 않습니다.</p>
+      <p v-else-if="approve">승인하면 검증 후 발주 변경이 실행됩니다. 내용을 확인해 주세요.</p>
       <template v-else>
         <p>아래 사유로 거절하며, AI가 대안을 다시 검토합니다.</p>
         <div class="confirmation-reason"><strong>거절 사유</strong><p>{{ reason }}</p></div>
@@ -47,7 +54,7 @@ onBeforeUnmount(() => dialog.value?.close());
           type="button"
           :class="approve ? 'primary' : 'reject-confirm'"
           @click="emit('confirm')"
-        >{{ approve ? "승인하기" : "거절하기" }}</button>
+        >{{ purpose === "review" ? "검토 완료" : purpose === "execute" ? "전체 승인 및 실행" : purpose === "cancel" ? "전체 취소" : approve ? "승인하기" : "거절하기" }}</button>
       </div>
     </dialog>
   </Teleport>

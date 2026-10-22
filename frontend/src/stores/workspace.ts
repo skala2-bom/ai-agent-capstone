@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { Session, Workspace, Command, Role, TaskReviewReady, TaskReviewRequest } from "../types";
 import { gateway, mode, fetchApprovals, decideApproval, reviewTask as submitTaskReview, request, toApprovals, toHistory } from "../services/api";
+import type { BatchState, BatchAction, BatchCommand } from "../services/task-batch";
 export const names: Record<Role, string> = {
   PLANNER: "김계획",
   BUYER: "박구매",
@@ -18,6 +19,46 @@ export const useWorkspace = defineStore("workspace", () => {
   const panel = ref(false);
   const activeTask = ref<string>();
   const deciding = ref<Record<string, boolean>>({});
+  const batchStates = ref<Record<string, BatchState>>({});
+  const batchPending = ref<Record<string, BatchCommand | undefined>>({});
+  const batchErrors = ref<Record<string, string>>({});
+  async function refreshBatches() {
+    if (mode !== "api" || !session.value || !data.value) return;
+    const e = epoch.value;
+    const ids = [...new Set(data.value.approvals.filter(a => a.status !== "DRAFT").map(a => a.taskId))];
+    await Promise.all(ids.map(async id => {
+      try {
+        const state = await request<BatchState>(`/ai/tasks/${encodeURIComponent(id)}/batch`, session.value?.token);
+        if (e !== epoch.value) return;
+        if ((state.stateVersion ?? state.revision ?? -1) < (batchStates.value[id]?.stateVersion ?? batchStates.value[id]?.revision ?? -1)) return;
+        batchStates.value[id] = state;
+        if (state.lastRequestId === batchPending.value[id]?.requestId) batchPending.value[id] = undefined;
+        else if (batchPending.value[id] && (state.revision ?? 0) > batchPending.value[id]!.expectedRevision) {
+          batchPending.value[id] = undefined;
+          batchErrors.value[id] = "다른 검토가 먼저 반영됐습니다. 최신 내용을 확인한 뒤 다시 선택하세요.";
+        }
+      } catch (err) { if (e === epoch.value) batchErrors.value[id] = (err as Error).message; }
+    }));
+  }
+  async function sendBatch(taskId: string, action: BatchAction, approvalId?: string, extra: Partial<BatchCommand> = {}, retry?: BatchCommand) {
+    if (batchPending.value[taskId] || session.value?.role !== "APPROVER") return false;
+    const state = batchStates.value[taskId];
+    if (state?.mode !== "BATCH" || state.revision === undefined) return false;
+    const body: BatchCommand = retry ?? {requestId: crypto.randomUUID(), expectedRevision: state.revision, action,
+      approvalId: approvalId ?? null, reason: "", args: null, ...extra};
+    const e = epoch.value;
+    batchPending.value[taskId] = body; batchErrors.value[taskId] = "";
+    try {
+      await request(`/ai/tasks/${encodeURIComponent(taskId)}/batch`, session.value.token, "POST", body);
+      if (e !== epoch.value) return false;
+      notice.value = action === "EXECUTE" ? "전체 재검증과 실행을 요청했습니다." : action === "CANCEL" ? "작업 전체 취소를 요청했습니다." : "검토 요청을 접수했습니다. 발주는 아직 변경하지 않았습니다.";
+      await refreshApprovals();
+      return true;
+    } catch (err) {
+      if (e === epoch.value) { batchErrors.value[taskId] = (err as Error).message; batchPending.value[taskId] = undefined; }
+      return false;
+    }
+  }
   interface ReviewState {
     taskProblem: string; memos: Record<string, string>; ready?: TaskReviewReady;
     busy: boolean; error: string; loading: boolean;
@@ -55,6 +96,7 @@ export const useWorkspace = defineStore("workspace", () => {
           result.approvals = data.value.approvals;
         }
         data.value = result;
+        await refreshBatches();
       }
     } catch (e) {
       if (g === generation) error.value = (e as Error).message;
@@ -99,6 +141,7 @@ export const useWorkspace = defineStore("workspace", () => {
     panel.value = false;
     activeTask.value = undefined;
     deciding.value = {};
+    batchStates.value = {}; batchPending.value = {}; batchErrors.value = {};
     taskReviews.value = {};
     approvalVersion++;
     refreshSequence++;
@@ -135,6 +178,7 @@ export const useWorkspace = defineStore("workspace", () => {
     data.value.options = [...data.value.options.filter((x) => !ids.has(x.id)), ...result.options];
     data.value.approvals = result.approvals;
     approvalVersion++;
+    await refreshBatches();
   }
   async function decide(id: string, decision: "APPROVED" | "REJECTED", reason: string) {
     if (mode === "mock") return save({ type: "approval", id, decision, reason });
@@ -261,6 +305,7 @@ export const useWorkspace = defineStore("workspace", () => {
     panel,
     activeTask,
     deciding,
+    batchStates, batchPending, batchErrors, refreshBatches, sendBatch,
     decide,
     reviewTask, taskReview, taskReviews, loadTaskReview,
     refreshApprovals,

@@ -13,6 +13,7 @@ import os
 from langgraph.types import Command
 
 import graph as G
+import task_batch as B
 import observability as O
 
 log = logging.getLogger(__name__)
@@ -149,6 +150,8 @@ class ApprovalRunner:
             snapshot = await self.graph.aget_state(cfg)
             pending = interrupts(snapshot)
             if pending and pending[0].value.get("stage") == "register":
+                if await B.initialize(self, snapshot, cfg):
+                    continue
                 bindings = {}
                 for proposal in pending[0].value["proposals"]:
                     bindings[proposal["proposal_id"]] = await self.register(task_id, proposal)
@@ -156,6 +159,8 @@ class ApprovalRunner:
                 continue
             await self.progress(task_id, snapshot.values)
             await self.review_ready(task_id, snapshot)
+            if B.enabled(snapshot.values) and snapshot.values.get("proposals"):
+                await B.publish(self, snapshot.values)
             if not pending and not snapshot.next:
                 v = snapshot.values
                 await self.store.event(task_id, {"type": "DONE", "status": "DONE", "answer": v.get("answer"),
@@ -232,6 +237,10 @@ class ApprovalRunner:
     async def process(self, command):
         task_id, thread = command["task_id"], command["thread_id"]
         cfg = config(thread)
+        if command["kind"] == "BATCH":
+            await B.process(self, command, cfg)
+            await self.store.finish_command(command["command_id"])
+            return
         snapshot = await self.graph.aget_state(cfg)
         v = snapshot.values
         consumed = command["command_id"] in v.get("processed_commands", [])

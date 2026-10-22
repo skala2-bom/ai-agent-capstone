@@ -19,6 +19,7 @@ from langgraph.errors import NodeCancelledError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 import graph as G
+import task_batch as B
 from approval_store import ApprovalStore
 from approval_runner import ApprovalRunner, config, interrupts
 
@@ -120,6 +121,26 @@ class ApprovalRecovery(unittest.IsolatedAsyncioTestCase):
         await self.runner.process(await self.enqueue("DECISION", "A"))
         self.assertEqual(len(self.writes), 2)
         self.assertEqual((await self.values())["result"]["approval_summary"]["EXECUTED"], 2)
+
+    async def test_batch_review_survives_new_checkpoint_connection(self):
+        await self.start()
+        await self.graph.aupdate_state(self.cfg, {"workflow_version": 3, "batch_context": {"fingerprint": "test"},
+            "batch_revision": 0, "batch_status": "REVIEW", "manager_reviews": {}}, as_node="batch_idle")
+        await self.graph.ainvoke(None, self.cfg)
+        key = "batch-review:" + self.task
+        payload = {"requestId": key, "action": "CONFIRM", "approvalId": "APR-" + self.task + "B",
+                   "expectedRevision": 0, "actorId": "approver"}
+        await self.store.receive(key, self.task, self.task, "BATCH", payload)
+        command = (await self.store.query("select * from agent.workflow_command where command_id=%s", (key,)))[0]
+        await self.runner.process(command)
+        saver = await self.stack.enter_async_context(AsyncPostgresSaver.from_conn_string(self.dsn))
+        self.graph = G.builder.compile(checkpointer=saver)
+        self.runner = ApprovalRunner(self.graph, self.store, self.runner.initial_state)
+        await self.runner.process(command)
+        state = await self.values()
+        self.assertEqual(state["batch_revision"], 1)
+        self.assertEqual([e["reviewStatus"] for e in B.view(state)["entries"]], ["UNREVIEWED", "CONFIRMED"])
+        self.assertEqual(self.writes, [])
 
     async def test_decision_received_during_registration_is_not_lost(self):
         command = await self.enqueue("DECISION", "B")

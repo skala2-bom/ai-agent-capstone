@@ -31,7 +31,7 @@ import static capstone.InternalApi.m;
 class Approvals {
 
     /** 승인을 거쳐야 하는 도구 = business-mcp에서 destructive_hint가 붙는 도구 (contracts.md 2.1) */
-    static final Set<String> CHANGE_TOOLS = Set.of("request_due_date_change", "split_po", "change_po_qty", "cancel_po");
+    static final Set<String> CHANGE_TOOLS = Set.of("request_due_date_change", "split_po", "change_po_qty", "cancel_po", "update_purchase");
 
     private final JdbcTemplate db;
     private final ObjectMapper json;
@@ -111,6 +111,11 @@ class Approvals {
 
         String id = "APR-" + UUID.randomUUID().toString().substring(0, 8);
         Object amount = event.get("amount");
+        if ("update_purchase".equals(tool)) {
+            var quote = db.queryForMap("select p.due_date::text as due_date, m.expedite_cost_per_day from purchase_order p join supplier_metric m on m.supplier_id=p.supplier_id and m.item_id=p.item_id where p.po_id=?", args.get("po_id"));
+            long days = Math.max(0, java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(String.valueOf(args.get("new_due_date"))), java.time.LocalDate.parse((String) quote.get("due_date"))));
+            amount = days * toInt(args.get("new_qty")) * ((Number) quote.get("expedite_cost_per_day")).longValue();
+        }
         db.update("""
                 insert into approval (approval_id, task_id, tool, args, summary, amount, evidence, before, after, requested_by, status, problem, memo)
                 values (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?)""",
@@ -155,6 +160,7 @@ class Approvals {
                     m("po_id", poId, "qty", (int) po.get("qty") - toInt(args.get("split_qty")), "due_date", po.get("due_date")),
                     m("po_id", "(신규)", "qty", toInt(args.get("split_qty")), "due_date", args.get("new_due_date")));
             case "change_po_qty" -> m("po_id", poId, "qty", args.get("new_qty"), "due_date", po.get("due_date"));
+            case "update_purchase" -> m("po_id", poId, "qty", args.get("new_qty"), "due_date", args.get("new_due_date"));
             default -> m("po_id", poId, "status", "CANCELLED");   // cancel_po
         };
         return m("before", before, "after", after);
@@ -176,7 +182,8 @@ class Approvals {
         return db.queryForList("""
                 select approval_id from approval
                 where (cast(? as text) is null or status = ?)
-                  and ((not ? and requested_by = ?) or (? and status not in ('DRAFT', 'WITHDRAWN')))
+                  and ((not ? and requested_by = ?) or (? and (status not in ('DRAFT', 'WITHDRAWN')
+                    or (status='WITHDRAWN' and exists(select 1 from task_event e where e.task_id=approval.task_id and e.type='TASK_BATCH_RESULT')))))
                 order by requested_at""",
                 String.class, status, status, all, user.getSubject(), all).stream().map(this::card).toList();
     }
@@ -186,8 +193,10 @@ class Approvals {
     Map<String, Object> get(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         Map<String, Object> c = card(id);
         boolean mine = user.getSubject().equals(c.get("requested_by"));
+        boolean finalizedBatch = "WITHDRAWN".equals(c.get("status"))
+                && !new TaskEventLog(db, json).latest((String) c.get("task_id"), "TASK_BATCH_RESULT").isEmpty();
         if (!mine && (!Auth.allows(user.getClaimAsString("role"), "APPROVER")
-                || Set.of("DRAFT", "WITHDRAWN").contains(c.get("status"))))
+                || "DRAFT".equals(c.get("status")) || ("WITHDRAWN".equals(c.get("status")) && !finalizedBatch)))
             throw new ApiError("ROLE_NOT_ALLOWED", "다른 사람이 요청한 승인입니다.", "자기가 요청한 승인만 볼 수 있습니다. 전체는 구매팀장 계정으로 보세요.");
         return c;
     }
@@ -197,6 +206,8 @@ class Approvals {
      * 팀장이 자기가 요청한 건을 자기가 승인해도 된다 (decisions.md 1.5).
      */
     Map<String, Object> decide(String taskId, String approvalId, String decision, String reason, String approverId) {
+        if ("APPROVED".equals(decision) && !new TaskEventLog(db, json).latest(taskId, "TASK_BATCH_CONTEXT").isEmpty())
+            throw ApiError.invalid("개별 검토는 실행 승인이 아닙니다.", "task 전체 승인 및 실행을 사용하세요.");
         if (!"APPROVED".equals(decision) && !"REJECTED".equals(decision))
             throw ApiError.invalid("decision은 APPROVED 또는 REJECTED입니다: " + decision, "둘 중 하나로 다시 보내세요.");
         if ("REJECTED".equals(decision) && (reason == null || reason.isBlank()))

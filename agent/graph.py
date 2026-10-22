@@ -6,9 +6,10 @@
                              ├─ QA     → agent_qa ⇄ tools_rag ───────────────┤
                              ├─ ADJUST → 품목별 compare → 선택 → 검증 → 근거 → save_proposal
                              │            → check_batch → register_proposals → approval_gate
-                             │                 승인 → execute_change → record_execution → refresh_impact
-                             │                 거절 → 해당 대상만 compare → 재제안
-                             │            미결정/확인 필요 건이 없으면 → respond
+                             │                 v3: 검토 체크 / 수정 필요 → task_batch에서 상태 관리
+                             │                     task 실행 → backend 전체 재검증·원자 반영 → respond
+                             │                 AI 재요청 → 해당 대상만 compare → 재제안
+                             │                 v2 기존 작업: 개별 승인 → execute_change → refresh_impact
                              └─ CLARIFY ─────────────────────────────────────────────────→ respond → END
 
 모델(LLM)이 판단하는 노드: classify_intent, agent_impact, agent_qa, agent_adjust
@@ -151,6 +152,13 @@ class AgentState(TypedDict, total=False):
     replan_target: str | None
     processed_commands: list[str]            # inbox replay after a checkpoint/worker crash
     workflow_version: int
+    batch_context: dict
+    batch_revision: int
+    batch_status: str
+    batch_error: str | None
+    batch_last_request: str | None
+    batch_last_command: dict | None
+    manager_reviews: dict
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +861,7 @@ def approval_payload(p: dict) -> dict:
         "problem": problem_text(p.get("targets") or []),
         "option_id": opt["option_id"], "proposalId": p["proposal_id"], "revision": p["revision"],
         "replaces": p.get("replaces"), "previousApprovalId": p.get("previous_approval_id"), "itemId": opt["item_id"],
-        "verify": {"passed": True, "warnings_after": p["verify"].get("warnings_after", [])},
+        "verify": {"passed": p["verify"].get("passed", False), "warnings_after": p["verify"].get("warnings_after", [])},
     }
 
 
@@ -882,6 +890,9 @@ def after_batch(state: AgentState) -> str:
 
 
 def after_registration(state: AgentState) -> str:
+    if state.get("workflow_version") == 3 and state.get("proposals") and state.get("batch_status") not in {"COMPLETED", "CANCELLED"}:
+        if not all(p["status"] == "WITHDRAWN" for p in state["proposals"]):
+            return "approval_gate"
     return "approval_gate" if any(p["status"] in WAITING for p in state.get("proposals") or []) else "respond"
 
 
@@ -889,6 +900,22 @@ def approval_gate(state: AgentState) -> dict:
     """One persistent inbox wait; a decision identifies its own card, never list order."""
     decision = interrupt({"stage": "decisions"})
     proposals = [dict(p) for p in state["proposals"]]
+    if state.get("workflow_version") == 3 and decision.get("decision") == "BATCH_DONE":
+        result = decision["result"]
+        executed = {e["approval_id"] for e in result.get("executions", [])}
+        for p in proposals:
+            if p.get("approval_id") in executed:
+                p["status"] = "EXECUTED"
+            elif p["status"] == "PENDING":
+                p["status"] = "WITHDRAWN"
+        return {"proposals": proposals, "decision": decision, "batch_status": result["status"],
+                "batch_error": None, "executions": result.get("executions", []),
+                "current_impact": result.get("impact", state.get("current_impact")),
+                "current_ops": result.get("remainingWhatif", state.get("current_ops", [])),
+                "notice": "task 전체를 취소했습니다. 발주 변경은 실행하지 않았습니다." if result["status"] == "CANCELLED" else None,
+                "processed_commands": [*state.get("processed_commands", []), decision["command_id"]]}
+    if state.get("workflow_version") == 3 and decision.get("decision") == "APPROVED":
+        raise ValueError("개별 승인으로 실행할 수 없습니다. task 검토 명령을 사용하세요.")
     p = next(p for p in proposals if p.get("approval_id") == decision["approvalId"] and p["status"] == "PENDING")
     if decision["decision"] == "WITHDRAWN":
         # 요청자가 보내지 않음 (decisions 6.33): 재제안하지 않고 그 품목만 끝낸다. 다른 카드는 계속 기다린다
@@ -914,6 +941,8 @@ def approval_gate(state: AgentState) -> dict:
 
 
 def after_gate(state: AgentState) -> str:
+    if state["decision"].get("decision") == "BATCH_DONE":
+        return "respond"
     if state["decision"].get("decision") == "WITHDRAWN":
         return after_registration(state)
     if state["decision"].get("decision") == "APPROVED":
@@ -1044,7 +1073,7 @@ def _adjust_answer(state: AgentState) -> str:
     reviewed_targets = {p["target"] for p in reviewed if p["outcome"]["code"] != "REPROPOSED"}
     for p in reviewed:
         o = p["outcome"]
-        line = f"{o['item_name']}: {o['message']}"
+        line = f"{o.get('item_name') or target_name(state, p['target'])}: {o['message']}"
         if p.get("reason"):
             line += f" ({'메모' if o['code'] == 'WITHDRAWN' else '거절 사유'}: {p['reason']})"
         held.append(line + f" · {o['next_action']}")
@@ -1123,6 +1152,8 @@ def respond(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 builder = StateGraph(AgentState)
+builder.add_node("batch_idle", lambda state: {})
+builder.add_edge("batch_idle", "approval_gate")
 for name, fn in [("classify_intent", classify_intent), ("agent_impact", agent_impact), ("tools", tools),
                  ("agent_qa", agent_qa), ("tools_rag", tools_rag), ("adjust_prepare", adjust_prepare),
                  ("compare", compare), ("agent_adjust", agent_adjust), ("verify", verify),

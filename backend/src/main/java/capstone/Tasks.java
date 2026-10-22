@@ -209,6 +209,8 @@ class Tasks {
     Map<String, Object> decide(@PathVariable String id, @RequestBody Map<String, String> body, @AuthenticationPrincipal Jwt user) {
         Auth.require(user, "APPROVER");
         find(id);
+        if (!new TaskEventLog(db, json).latest(id, "TASK_BATCH_CONTEXT").isEmpty())
+            throw ApiError.invalid("이 작업은 task 단위로 검토·실행합니다.", "최신 승인 대기함의 검토 버튼을 사용하세요.");
         Map<String, Object> card = approvals.decide(id, body.get("approvalId"), body.get("decision"), body.get("reason"), user.getSubject());
         runningIfNoneWaiting(id);
         Map<String, Object> req = new HashMap<>();
@@ -283,7 +285,7 @@ class Tasks {
     // ------------------------------------------------------------------
 
     /** 대기열에 넣는다. RabbitMQ에도 못 넣으면 바로 FAILED — 안 남기면 화면이 영원히 기다린다 */
-    private void enqueue(String id, String kind, Map<String, Object> body) {
+    void enqueue(String id, String kind, Map<String, Object> body) {
         try {
             queue.convertAndSend(TaskQueue.TASKS, m("kind", kind, "taskId", id, "attempt", 1, "body", body));
         } catch (Exception e) {
@@ -302,12 +304,13 @@ class Tasks {
     @RabbitListener(queues = TaskQueue.TASKS)
     void deliver(Map<String, Object> msg) {
         String id = (String) msg.get("taskId");
-        boolean resume = "resume".equals(msg.get("kind"));
+        boolean batch = "batch".equals(msg.get("kind"));
+        boolean resume = batch || "resume".equals(msg.get("kind"));
         List<String> status = db.queryForList("select status from ai_task where task_id = ?", String.class, id);
         if (status.isEmpty()) return;  // DB를 지운 뒤 남은 메시지. 다시 넣으면 영원히 돈다
         if (resume ? List.of("DONE", "FAILED").contains(status.getFirst()) : !"QUEUED".equals(status.getFirst())) return;
         try {
-            agent.post().uri(resume ? "/agent/tasks/{id}/resume" : "/agent/tasks", id).body(msg.get("body")).retrieve().toBodilessEntity();
+            agent.post().uri(batch ? "/agent/tasks/{id}/batch" : resume ? "/agent/tasks/{id}/resume" : "/agent/tasks", id).body(msg.get("body")).retrieve().toBodilessEntity();
         } catch (Exception e) {
             int attempt = ((Number) msg.get("attempt")).intValue();
             Map<String, Object> next = new LinkedHashMap<>(msg);
@@ -371,13 +374,8 @@ class Tasks {
      */
     void addEvent(String id, Map<String, Object> event) {
         synchronized (lock(id)) {
-            Integer last = db.queryForObject("select max(seq) from task_event where task_id = ?", Integer.class, id);
-            Map<String, Object> e = new LinkedHashMap<>(event);
-            e.put("taskId", id);
-            e.put("seq", last == null ? 1 : last + 1);
-            e.put("ts", Instant.now().toString());
+            Map<String, Object> e = new TaskEventLog(db, json).append(id, event);
             String type = String.valueOf(e.get("type"));
-            db.update("insert into task_event (task_id, seq, type, payload) values (?, ?, ?, ?::jsonb)", id, e.get("seq"), type, write(e));
             updateStatus(id, type, e);
             boolean finished = "DONE".equals(type) || "FAILED".equals(type);
             for (SseEmitter emitter : List.copyOf(emitters.getOrDefault(id, List.of()))) {

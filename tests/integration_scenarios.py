@@ -10,7 +10,6 @@ from pathlib import Path
 import sys
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import psycopg
@@ -112,6 +111,27 @@ def submit_drafts(task_id, role="buyer"):
         request("POST", f"/api/ai/tasks/{task_id}/review/submit", role, json=body)
 
 
+def batch_state(task_id):
+    return request("GET", f"/api/ai/tasks/{task_id}/batch", "approver")
+
+
+def batch_command(task_id, action, card=None, **extra):
+    for _ in range(600):
+        state = batch_state(task_id)
+        if state.get("mode") == "BATCH" and "revision" in state:
+            break
+        time.sleep(0.1)
+    body = {"requestId": str(uuid.uuid4()), "expectedRevision": state["revision"], "action": action,
+            "approvalId": card["approval_id"] if card else None, "reason": "", "args": None, **extra}
+    request("POST", f"/api/ai/tasks/{task_id}/batch", "approver", json=body)
+    for _ in range(600):
+        state = batch_state(task_id)
+        if state.get("lastRequestId") == body["requestId"] and state.get("status") != "EXECUTING":
+            return state, body
+        time.sleep(0.1)
+    raise AssertionError(f"검토 명령 시간 초과: {action}, {state}")
+
+
 def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, timeout=240):
     decided = set()
     deadline = time.monotonic() + timeout
@@ -137,7 +157,7 @@ def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, 
         if not decided and initial_cards:
             with psycopg.connect(DSN) as conn:
                 assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
-        cards.reverse()  # Independent approvals must not depend on preparation order.
+        cards.reverse()  # Review order must not affect task-wide execution.
         for card in cards:
             if card["task_id"] != task_id or card["approval_id"] in decided:
                 continue
@@ -145,11 +165,16 @@ def finish_task(task_id, *, approve=False, reject_first=False, initial_cards=0, 
             assert card["evidence"], "근거 없는 승인 카드"
             assert all(e["uri"].startswith("doc://") and e["version"] == "v1.2" for e in card["evidence"])
             decision = "REJECTED" if reject_first and not decided else "APPROVED"
-            request("POST", f"/api/ai/tasks/{task_id}/approval", "approver", json={
-                "approvalId": card["approval_id"], "decision": decision,
-                "reason": "테스트: 분할 대신 다른 대안 요청" if decision == "REJECTED" else None})
+            state = batch_state(task_id)
+            entry = next((e for e in state.get("entries", []) if e.get("approvalId") == card["approval_id"]), None)
+            if not entry or entry["reviewStatus"] != "UNREVIEWED":
+                continue
+            decide_card(task_id, card, decision)
             decided.add(card["approval_id"])
             print(f"  {decision} {card['tool']} {card['args']}", flush=True)
+        if approve and cards and batch_state(task_id).get("canExecute"):
+            state, _ = batch_command(task_id, "EXECUTE")
+            assert state["status"] == "COMPLETED", state
         time.sleep(0.2)
     raise AssertionError(f"작업 시간 초과: {task_id}")
 
@@ -209,7 +234,7 @@ def scenario(case_id):
         if case_id == "SC3":
             assert conn.execute("select status from purchase_order where po_id='PO-2610-110'").fetchone()[0] == "CANCELLED"
             assert str(conn.execute("select due_date from purchase_order where po_id='PO-2610-103'").fetchone()[0]) == "2027-01-04"
-    print("PASS", case_id, "분석 → RAG → 개별 승인 → 실행 → 재분석 → SSE", flush=True)
+    print("PASS", case_id, "분석 → RAG → 개별 검토 → task 전체 실행 → 재분석 → SSE", flush=True)
 
 
 def rejection():
@@ -239,6 +264,8 @@ def rejection():
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
     decide_card(task_id, revised, "APPROVED")
+    state, _ = batch_command(task_id, "EXECUTE")
+    assert state["status"] == "COMPLETED", state
     task, _ = finish_task(task_id)
     assert [e["tool"] for e in task["result"]["executions"]] == ["request_due_date_change"], task["answer"]
     with psycopg.connect(DSN) as conn:
@@ -258,9 +285,8 @@ def wait_cards(task_id, count, status=None):
 
 
 def decide_card(task_id, card, decision):
-    return request("POST", f"/api/ai/tasks/{task_id}/approval", "approver", json={
-        "approvalId": card["approval_id"], "decision": decision,
-        "reason": "테스트: 분할 대신 다른 대안 요청" if decision == "REJECTED" else None})
+    return batch_command(task_id, "REPLAN" if decision == "REJECTED" else "CONFIRM", card,
+        reason="테스트: 분할 대신 다른 대안 요청" if decision == "REJECTED" else "")
 
 
 def mixed_approvals():
@@ -270,31 +296,30 @@ def mixed_approvals():
     cards = wait_cards(task_id, 3, "PENDING")
     first, reject, last = sorted(cards, key=lambda c: c["args"]["po_id"])
     decide_card(task_id, first, "APPROVED")
-    wait_cards(task_id, 1, "EXECUTED")
-    assert len(wait_cards(task_id, 2, "PENDING")) == 2, "미결정 카드가 독립적으로 대기해야 합니다."
+    assert len(wait_cards(task_id, 3, "PENDING")) == 3, "검토만 완료하면 모든 발주는 변경 전이어야 합니다."
     assert request("GET", f"/api/ai/tasks/{task_id}")["status"] != "DONE"
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(decide_card, task_id, reject, "REJECTED"), pool.submit(decide_card, task_id, last, "APPROVED")]
-        for f in futures:
-            f.result()
-    wait_cards(task_id, 2, "EXECUTED")
-    revised = wait_cards(task_id, 1, "PENDING")
+    decide_card(task_id, reject, "REJECTED")
+    decide_card(task_id, last, "APPROVED")
+    pending = wait_cards(task_id, 3, "PENDING")
+    revised = [c for c in pending if c.get("previousApprovalId") == reject["approval_id"]]
     assert len(revised) == 1 and revised[0]["tool"] == "request_due_date_change"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == 0
     task, _ = finish_task(task_id, approve=True)
     assert task["result"]["approval_summary"] == {"EXECUTED": 3, "REJECTED": 1, "BLOCKED": 0, "WITHDRAWN": 0}
     assert len(task["result"]["executions"]) == 3
     assert any(p.get("replaces") for p in task["result"]["proposals"])
-    # Backend delivery retries an identical decision after it has already executed.
+    # Backend delivery retries the identical task execution command.
     with psycopg.connect(DSN) as conn:
-        payload = conn.execute("select payload from agent.workflow_command where command_id=%s",
-                               ("decision:" + first["approval_id"],)).fetchone()[0]
+        payload = conn.execute("select payload from agent.workflow_command where task_id=%s and kind='BATCH' and payload->>'action'='EXECUTE'",
+                               (task_id,)).fetchone()[0]
         count = conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0]
     for _ in range(2):
-        reply = HTTP.post(f"http://agent:8000/agent/tasks/{task_id}/resume", json=payload)
+        reply = HTTP.post(f"http://agent:8000/agent/tasks/{task_id}/batch", json=payload)
         assert reply.status_code == 202 and reply.json()["duplicate"]
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == count == 3
-    print("PASS 3건 선등록 → 1건만 승인·실행 → 동시 승인/거절 → 해당 품목만 재제안 → 중복 재개 무시", flush=True)
+    print("PASS 3건 선등록 → 검토·수정 필요 → 해당 품목만 재제안 → task 전체 실행 → 중복 실행 방지", flush=True)
 
 
 def draft_review():
@@ -329,6 +354,8 @@ def draft_review():
         if send:
             for c in manager:
                 decide_card(task_id, c, "APPROVED")
+            state, _ = batch_command(task_id, "EXECUTE")
+            assert state["status"] == "COMPLETED", state
         else:
             for c in saved:
                 response = HTTP.get(BASE + f"/api/approvals/{c['approval_id']}", headers={"Authorization": "Bearer " + TOKENS["approver"]})
@@ -337,7 +364,7 @@ def draft_review():
         assert task["result"]["approval_summary"] == {"EXECUTED": 3 if send else 0, "REJECTED": 0, "BLOCKED": 0, "WITHDRAWN": 0 if send else 3}
         with psycopg.connect(DSN) as conn:
             assert conn.execute("select count(*) from change_history where approval_id is not null").fetchone()[0] == (3 if send else 0)
-        print("PASS 작업 전체 " + ("전송 → 팀장 개별 승인·실행" if send else "보내지 않음 → 팀장 비노출·실행 없음"), flush=True)
+        print("PASS 작업 전체 " + ("전송 → 팀장 검토 → 전체 실행" if send else "보내지 않음 → 팀장 비노출·실행 없음"), flush=True)
 
 
 def recovery_prepare():

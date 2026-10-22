@@ -140,7 +140,7 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
     const args = (c.args ?? {}) as Row;
     const before = (c.before ?? {}) as Row;
     const action: Option["action"] = ({ split_po: "split", request_due_date_change: "due-date",
-      change_po_qty: "qty", cancel_po: "cancel" } as Record<string, Option["action"]>)[String(c.tool)] ?? "reallocate";
+      change_po_qty: "qty", cancel_po: "cancel", update_purchase: "manual" } as Record<string, Option["action"]>)[String(c.tool)] ?? "reallocate";
     approvalTasks.set(id, String(c.task_id));
     approvals.push({
       id,
@@ -170,7 +170,8 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
       date: String(args.new_due_date ?? before.due_date ?? ""),
       resolves: true,
       verification: "VERIFIED",
-      impact: action === "qty" ? `발주 수량 ${before.qty} → ${args.new_qty}개`
+      impact: action === "manual" ? `수량 ${before.qty} → ${args.new_qty}개 · 입고일 ${before.due_date} → ${args.new_due_date}`
+        : action === "qty" ? `발주 수량 ${before.qty} → ${args.new_qty}개`
         : action === "cancel" ? "발주 취소 (CANCELLED)"
         : action === "due-date" ? `입고 예정일 ${before.due_date} → ${args.new_due_date}` : "분할 납품",
       risk: "",

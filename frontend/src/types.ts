@@ -45,7 +45,7 @@ export interface Scenario {
   issues: Issue[];
 }
 export interface Option {
-  action: "split" | "plan" | "new-po" | "reallocate" | "due-date" | "qty" | "cancel";
+  action: "split" | "plan" | "new-po" | "reallocate" | "due-date" | "qty" | "cancel" | "manual";
   id: string;
   revision: number;
   name: string;
@@ -181,6 +181,10 @@ export interface AgentEvent {
     | "TOOL_END"
     | "APPROVAL_REQUIRED"
     | "TASK_REVIEW_READY"
+    | "TASK_BATCH_STATE"
+    | "TASK_BATCH_CONTEXT"
+    | "TASK_BATCH_COMMAND"
+    | "TASK_BATCH_RESULT"
     | "PROPOSAL_PROGRESS"
     | "WORKFLOW_NOTICE"
     | "TRACE"
