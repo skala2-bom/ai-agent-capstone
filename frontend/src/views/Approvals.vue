@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useWorkspace } from "../stores/workspace";
 import TaskReview from "../components/TaskReview.vue";
 import ApprovalNote from "../components/ApprovalNote.vue";
+import ProposalTitle from "../components/ProposalTitle.vue";
 import ApprovalConfirm from "../components/ApprovalConfirm.vue";
 import ProposalReview from "../components/ProposalReview.vue";
 import TaskBatchActions from "../components/TaskBatchActions.vue";
@@ -156,12 +157,9 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
             :task-id="group.taskId" compact />
         </td></tr>
         <template v-for="a in group.rows" :key="a.id">
-        <tr>
+        <tr :class="{ reproposal: a.previousApprovalId }">
           <td>
-            <b>{{ approvalTitle(optionsById.get(a.optionId)?.name) }}</b
-            ><small>{{
-              w.data?.options.find((o) => o.id === a.optionId)?.item
-            }}</small>
+            <ProposalTitle :text="optionsById.get(a.optionId)?.name" />
             <ApprovalNote v-if="a.status === 'DRAFT' && w.session?.role === 'BUYER' && mode === 'api'" :card="a" />
           </td>
           <td>{{ a.requester }}</td>
@@ -184,7 +182,9 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
         </tr>
         <tr v-if="a.status === 'REJECTED' && outcomes[a.id]" class="outcome-row">
           <td colspan="5">
-            <div class="outcome" :class="outcomeTone[outcomes[a.id].code]">
+            <!-- 재제안이 생겼으면 바로 아래 카드가 설명이다. 한 줄만 (6.46 가독성) -->
+            <div v-if="outcomes[a.id].code === 'REPROPOSED'" class="outcome success compact">↳ 재제안을 아래에 만들었습니다</div>
+            <div v-else class="outcome" :class="outcomeTone[outcomes[a.id].code]">
               <b>↳ {{ outcomes[a.id].item_name }} · {{ outcomeLabel[outcomes[a.id].code] ?? outcomes[a.id].code }}</b>
               <p>{{ outcomes[a.id].message }}</p>
               <p><span>다음 행동</span> {{ outcomes[a.id].next_action }}</p>
@@ -215,7 +215,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     title="발주 변경 승인 상세"
     @close="selectedId = undefined"
     ><Badge v-if="w.batchStates[selected.taskId]?.mode !== 'BATCH'" :text="selected.status" />
-    <h2>{{ approvalTitle(option.name) }}</h2>
+    <h2><ProposalTitle :text="option.name" /></h2>
     <dl>
       <dt>요청자</dt>
       <dd>{{ selected.requester }}</dd>
@@ -229,8 +229,11 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
       </dd>
       <dt>대상 발주</dt>
       <dd>{{ option.po }}</dd>
-      <dt>선정 사유</dt>
-      <dd>{{ approvalTitle(option.reason) }}</dd>
+      <!-- 사유가 제목 문장과 같으면 위 제목으로 충분하다 (6.46 가독성) -->
+      <template v-if="approvalTitle(option.reason) !== approvalTitle(option.name)"
+        ><dt>선정 사유</dt>
+        <dd>{{ approvalTitle(option.reason) }}</dd></template
+      >
       <template v-if="option.role !== 'PLANNER'"
         ><dt>추가비용</dt>
         <dd>{{ option.addedCost.toLocaleString() }}원</dd></template

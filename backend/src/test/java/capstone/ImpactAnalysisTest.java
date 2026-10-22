@@ -112,6 +112,39 @@ class ImpactAnalysisTest {
         assertThat(postpone).containsEntry("type", "DUE_DATE_CHANGE").containsEntry("side_effects", List.of());
     }
 
+    /** decisions 6.46: 팀장 조건(날짜·분할 수량·발주)으로만 결품 대안을 만들고, 못 지키면 이유와 가장 빠른 가능일을 준다 */
+    @Test
+    void 팀장_조건으로만_결품_대안을_만들고_불가능하면_이유를_준다() {
+        var hub = List.of(op("reschedule_plan", "plan_id", "PP-05", "new_date", "2026-11-25"));
+        var r = options.compare(hub, Set.of("MCU"), Map.of("new_due_date", "2026-11-22", "split_qty", 150));
+        assertThat(list(r, "options")).extracting(o -> o.get("args"))
+                .containsExactly(Map.of("po_id", "PO-2609-001", "split_qty", 150, "new_due_date", "2026-11-22"),
+                        Map.of("po_id", "PO-2609-008", "split_qty", 150, "new_due_date", "2026-11-22"));
+        var first = list(r, "options").getFirst();
+        assertThat(first).containsEntry("resolves", true).containsEntry("recommended", true)
+                .containsEntry("buffer", Map.of("days", 3L, "extra_qty", 50));
+        // 발주를 정하지 않으면 그 날짜로 못 받는 발주도 이유와 함께 알려 준다
+        assertThat((List<?>) r.get("constraint_notes")).singleElement().asString().contains("PO-2610-108", "2026-12-15 이후");
+
+        // 리드타임상 못 받는 날짜: 대안 없이 가장 빠른 가능일을 알려 준다 (PO-2610-108은 10/20 발주 + 56일)
+        var late = options.compare(hub, Set.of("MCU"), Map.of("po_id", "PO-2610-108", "new_due_date", "2026-11-25"));
+        assertThat(list(late, "options")).isEmpty();
+        assertThat((List<?>) late.get("constraint_notes")).singleElement().asString().contains("2026-12-15 이후");
+
+        // 발주 수량 이상을 원하면 전량 당기기만
+        var whole = options.compare(hub, Set.of("MCU"), Map.of("po_id", "PO-2609-001", "split_qty", 500));
+        assertThat(list(whole, "options")).extracting(o -> o.get("type")).containsExactly("DUE_DATE_CHANGE");
+    }
+
+    @Test
+    void 조건_없는_결품_대안에는_딱_맞춘_안과_여유안이_함께_있고_안전재고까지_채우는_안을_추천한다() {
+        var r = options.compare(List.of(op("reschedule_plan", "plan_id", "PP-05", "new_date", "2026-11-25")), Set.of("MCU"));
+        var exact = list(r, "options").stream().filter(o -> Map.of("days", 0L, "extra_qty", 0).equals(o.get("buffer"))
+                && "PO-2609-001".equals(((Map<?, ?>) o.get("args")).get("po_id"))).findFirst().orElseThrow();
+        assertThat(exact).containsEntry("resolves", true).containsEntry("safety_ok", false).containsEntry("recommended", false);
+        assertThat(list(r, "options").getFirst()).containsEntry("recommended", true).containsEntry("safety_ok", true);
+    }
+
     // ------------------------------------------------------------------
     // 오류 — retry_hint가 비어 있지 않은가
     // ------------------------------------------------------------------

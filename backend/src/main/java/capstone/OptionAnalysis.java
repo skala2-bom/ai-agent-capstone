@@ -44,11 +44,27 @@ class OptionAnalysis {
         this.impact = impact;
     }
 
-    /**
-     * @param whatif 결품을 만든 가정 변경. 비우면 지금 상태 (변경이 이미 DB에 반영된 경우)
-     * @param items  이 부품의 결품만 푼다. 비우면 모든 결품
-     */
+    /** 날짜 여유: 첫 결품일보다 이만큼 일찍 받는 안도 함께 낸다. 협력사가 며칠 늦어도 버티게 (decisions 6.46) */
+    static final int BUFFER_DAYS = 3;
+
     Map<String, Object> compare(List<Map<String, Object>> whatif, Set<String> items) {
+        return compare(whatif, items, Map.of());
+    }
+
+    /**
+     * @param whatif     결품을 만든 가정 변경. 비우면 지금 상태 (변경이 이미 DB에 반영된 경우)
+     * @param items      이 부품의 결품만 푼다. 비우면 모든 결품
+     * @param constraint 팀장이 재요청하며 정한 조건 {@code {po_id?, new_due_date?, split_qty?}} (decisions 6.46).
+     *                   비우면 기본 후보(딱 맞춤 · 안전재고까지 · 날짜 여유)를, 주면 결품 해결안을 그 조건으로만 만들고
+     *                   못 지키는 이유를 {@code constraint_notes}에 담는다
+     */
+    Map<String, Object> compare(List<Map<String, Object>> whatif, Set<String> items, Map<String, Object> constraint) {
+        boolean constrained = constraint != null && !constraint.isEmpty();
+        String cPo = constrained && constraint.get("po_id") != null ? String.valueOf(constraint.get("po_id")) : null;
+        LocalDate cDate = constrained ? constraintDate(constraint.get("new_due_date")) : null;
+        Integer cQty = constrained && constraint.get("split_qty") != null ? ((Number) constraint.get("split_qty")).intValue() : null;
+        if (cQty != null && cQty <= 0) throw ApiError.invalid("split_qty는 1 이상이어야 합니다.", "받을 수량을 1개 이상으로 주세요.");
+        List<String> notes = new ArrayList<>();
         ImpactAnalysis.State st = impact.load(whatif);
         Map<String, Object> judged = impact.judge(st);
         List<Map<String, Object>> before = shortages(judged);
@@ -80,25 +96,50 @@ class OptionAnalysis {
             e.getValue().forEach(x -> targets.add(key(x)));
             LocalDate need = LocalDate.parse((String) e.getValue().getFirst().get("plan_date"));   // 첫 결품일
             int qty = e.getValue().stream().mapToInt(s -> -(int) s.get("projected_stock")).max().orElseThrow();
+            int safety = st.parts().get(item).safety();
             for (ImpactAnalysis.Po po : st.pos().values()) {
-                if (!po.item().equals(item) || !po.due().isAfter(need)) continue;
-                if (po.id().contains("~")) continue;   // whatif 안에서만 있는 가상 분할 발주. 실제로 부를 수 없다
+                if (!po.item().equals(item) || po.id().contains("~")) continue;   // ~ = whatif 안에서만 있는 가상 분할 발주
+                if (cPo != null && !cPo.equals(po.id())) continue;
                 Map<String, Object> metric = metrics.get(po.supplier() + "|" + item);
-                int lead = (int) metric.get("lead_time_days");
-                if (need.isBefore(ImpactAnalysis.earliestReceipt(po.orderDate(), lead))) continue;   // LT-001 불가
-
-                long days = ChronoUnit.DAYS.between(need, po.due());
+                LocalDate earliest = ImpactAnalysis.earliestReceipt(po.orderDate(), (int) metric.get("lead_time_days"));
+                // 후보 날짜·수량. 기본은 딱 맞춤(첫 결품일·부족량)에 여유안을 더하고, 팀장 조건이 있으면 그 값만 쓴다
+                List<LocalDate> dates;
+                List<Integer> qtys;
+                if (constrained) {
+                    LocalDate d = cDate != null ? cDate : need;
+                    if (!po.due().isAfter(d)) {
+                        if (cPo != null) notes.add("%s는 원래 입고일 %s가 요청일 %s보다 빨라 당길 필요가 없습니다.".formatted(po.id(), po.due(), d));
+                        continue;
+                    }
+                    if (d.isBefore(earliest)) {   // LT-001: 가장 빠른 가능일을 알려 준다 (도구의 retry_hint와 같은 방식)
+                        notes.add("%s는 리드타임상 %s 이후에만 받을 수 있어 요청일 %s는 불가능합니다.".formatted(po.id(), earliest, d));
+                        continue;
+                    }
+                    dates = List.of(d);
+                    qtys = List.of(cQty != null ? cQty : qty);
+                } else {
+                    if (!po.due().isAfter(need) || need.isBefore(earliest)) continue;   // 당길 게 없거나 LT-001 불가
+                    LocalDate early = need.minusDays(BUFFER_DAYS);
+                    dates = early.isBefore(earliest) ? List.of(need) : List.of(need, early);
+                    qtys = List.of(qty, qty + safety);   // 안전재고까지 채우는 양
+                }
                 int perUnitDay = (int) metric.get("expedite_cost_per_day");
                 String head = "%s(%s %,d개, %s 입고)".formatted(po.id(), names.get(item), po.qty(), po.due().format(MD));
-                if (qty < po.qty())
-                    options.add(option(whatif, base, targets, item, "SPLIT_PO",
-                            "%s에서 %,d개만 떼어 %s에 먼저 받는다".formatted(head, qty, need.format(MD)),
-                            "split_po", m("po_id", po.id(), "split_qty", qty, "new_due_date", need.toString()),
-                            qty * days * perUnitDay + (int) metric.get("split_fee"), metric, days));
-                options.add(option(whatif, base, targets, item, "DUE_DATE_CHANGE",
-                        "%s 전량을 %s에 받는다".formatted(head, need.format(MD)),
-                        "request_due_date_change", m("po_id", po.id(), "new_due_date", need.toString()),
-                        po.qty() * days * perUnitDay, metric, days));
+                for (LocalDate d : dates) {
+                    long days = ChronoUnit.DAYS.between(d, po.due());
+                    for (int q : new LinkedHashSet<>(qtys)) {
+                        if (q >= po.qty()) continue;   // 발주 전체를 넘으면 아래 전량 당기기와 같다
+                        options.add(buffered(option(whatif, base, targets, item, "SPLIT_PO",
+                                "%s에서 %,d개만 떼어 %s에 먼저 받는다".formatted(head, q, d.format(MD)) + label(need, d, q - qty),
+                                "split_po", m("po_id", po.id(), "split_qty", q, "new_due_date", d.toString()),
+                                q * days * perUnitDay + (int) metric.get("split_fee"), metric, days), need, d, q - qty));
+                    }
+                    if (!constrained || cQty == null || cQty >= po.qty())
+                        options.add(buffered(option(whatif, base, targets, item, "DUE_DATE_CHANGE",
+                                "%s 전량을 %s에 받는다".formatted(head, d.format(MD)) + label(need, d, 0),
+                                "request_due_date_change", m("po_id", po.id(), "new_due_date", d.toString()),
+                                po.qty() * days * perUnitDay, metric, days), need, d, po.qty() - qty));
+                }
             }
         }
 
@@ -109,6 +150,8 @@ class OptionAnalysis {
                 .comparing((Map<String, Object> o) -> !"INV-001".equals(o.get("target_rule")))
                 .thenComparing(o -> !(boolean) o.get("resolves"))
                 .thenComparing(o -> !((List<?>) o.get("side_effects")).isEmpty())
+                // 결품을 막고도 안전재고 미만이 남는 안보다 안전재고까지 채우는 안을 먼저 (decisions 6.46)
+                .thenComparing(o -> !Boolean.TRUE.equals(o.get("safety_ok")))
                 .thenComparing(o -> RISK.indexOf((String) o.get("risk")))
                 .thenComparing(o -> (long) o.get("added_cost")));
         // 추천은 부품마다 하나: 정렬상 첫 번째이면서 결품을 다 풀고 부작용이 없는 것.
@@ -121,12 +164,36 @@ class OptionAnalysis {
             // 부품·문제(결품/과잉)마다 하나. 같은 부품에 결품과 과잉이 같이 있으면 각각 추천한다
             o.put("recommended", usable && recommendedItems.add(o.get("item_id") + "|" + o.get("target_rule")));
         }
-        return m("policy_version", ImpactAnalysis.POLICY_VERSION,
+        Map<String, Object> out = m("policy_version", ImpactAnalysis.POLICY_VERSION,
                 "options", options,
                 // 결품 부품이 하나면 그 추천안, 여럿이면 첫 번째 추천안. 전부 보려면 options의 recommended=true.
                 // SC2처럼 부품이 여럿이면 추천안을 모두 승인해야 결품이 다 풀린다
                 "recommended_option_id", options.stream().filter(o -> (boolean) o.get("recommended"))
                         .map(o -> o.get("option_id")).findFirst().orElse(null));
+        if (constrained) out.put("constraint_notes", notes);
+        return out;
+    }
+
+    private static LocalDate constraintDate(Object value) {
+        if (value == null) return null;
+        try {
+            return LocalDate.parse(String.valueOf(value));
+        } catch (Exception e) {
+            throw ApiError.invalid("new_due_date를 읽지 못했습니다: " + value, "YYYY-MM-DD 형식으로 주세요. 예: 2026-11-22");
+        }
+    }
+
+    /** 이 안이 딱 맞춤보다 얼마나 여유 있는지. 화면·답변이 "왜 비싼지"를 보여 줄 수 있게 */
+    private static Map<String, Object> buffered(Map<String, Object> o, LocalDate need, LocalDate date, int extraQty) {
+        o.put("buffer", m("days", ChronoUnit.DAYS.between(date, need), "extra_qty", Math.max(extraQty, 0)));
+        return o;
+    }
+
+    private static String label(LocalDate need, LocalDate date, int extraQty) {
+        List<String> parts = new ArrayList<>();
+        if (date.isBefore(need)) parts.add("결품일보다 %d일 일찍".formatted(ChronoUnit.DAYS.between(date, need)));
+        if (extraQty > 0) parts.add("안전재고분 %,d개 더".formatted(extraQty));
+        return parts.isEmpty() ? "" : " (" + String.join(", ", parts) + ")";
     }
 
     /** 대안 하나를 실제로 적용해 다시 계산하고, 결과와 비용·위험을 붙인다. */
@@ -193,6 +260,10 @@ class OptionAnalysis {
                 "recommended", false,      // 아래 compare에서 부품마다 하나만 true로 바꾼다
                 "evidence", List.of());    // backend는 근거 문서를 모른다. agent가 search_docs 결과로 채운다
         if (saved != null) o.put("saved_amount", saved);   // 과잉 대안: 줄인 만큼 덜 사는 금액 (원, 마스킹 대상)
+        if (!excess) {   // 풀려던 생산에 안전재고 미만 경고도 남지 않나 (결품만 막고 재고 0인 안과 가른다)
+            @SuppressWarnings("unchecked") List<Map<String, Object>> warnings = (List<Map<String, Object>>) result.get("warnings");
+            o.put("safety_ok", warnings.stream().noneMatch(w -> targets.contains(key(w))));
+        }
         return o;
     }
 

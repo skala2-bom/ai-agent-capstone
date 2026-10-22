@@ -115,7 +115,7 @@ def initial_state(command):
         "current_impact": None, "current_ops": [], "scope": [], "active_target": None,
         "blocked": {}, "executions": [], "search_hits": [], "qa_searched": False, "evidence_error": None,
         "next_actions": [], "result": None,
-        "proposals": [], "active_proposal": None, "replan_target": None,
+        "proposals": [], "active_proposal": None, "replan_target": None, "replan_constraint": None,
         "processed_commands": [command["command_id"]], "workflow_version": 3,
         "batch_revision": 0, "batch_status": "REVIEW", "manager_reviews": {},
     }

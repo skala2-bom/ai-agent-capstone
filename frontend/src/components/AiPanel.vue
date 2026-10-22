@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from "vue";
 import TaskReview from "./TaskReview.vue";
 import ApprovalConfirm from "./ApprovalConfirm.vue";
+import ProposalTitle from "./ProposalTitle.vue";
 import ProposalReview from "./ProposalReview.vue";
 import TaskBatchActions from "./TaskBatchActions.vue";
 import ServerResult from "./ServerResult.vue";
@@ -432,9 +433,10 @@ async function ask() {
         v-for="e in events.filter((x) => x.type === 'APPROVAL_REQUIRED' && cardState(x) !== 'DRAFT' && (w.session?.role !== 'APPROVER' || cardState(x) !== 'WITHDRAWN'))"
         :key="e.approvalId"
         class="card"
+        :class="{ reproposal: e.replaces }"
       >
         <b>{{ cardLabel(e) }} · {{ e.itemId ?? e.approvalId }}</b>
-        <p>{{ e.summary }}</p>
+        <p><ProposalTitle :text="e.summary" /></p>
         <p v-if="progress(e)?.message">{{ progress(e)?.message }}</p>
         <p v-if="e.problem" class="task-problem"><strong>품목별 문제</strong><br />{{ e.problem }}</p>
         <p v-if="w.data?.approvals.find(a => a.id === e.approvalId)?.memo" class="task-problem">

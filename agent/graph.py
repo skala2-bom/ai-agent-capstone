@@ -153,6 +153,7 @@ class AgentState(TypedDict, total=False):
     proposals: list[dict]                    # immutable option/verification + per-card lifecycle
     active_proposal: str | None
     replan_target: str | None
+    replan_constraint: dict | None            # 팀장이 재요청하며 정한 {po_id?, new_due_date?, split_qty?} (decisions 6.46)
     processed_commands: list[str]            # inbox replay after a checkpoint/worker crash
     workflow_version: int
     batch_context: dict
@@ -668,16 +669,24 @@ async def compare(state: AgentState) -> dict:
     if (len(prepared) >= MAX_ACTIONS and not replan) or len(state.get("proposals") or []) >= MAX_PROPOSALS:
         return {"active_target": key, "targets": targets, "options": [], "selected_option": None,
                 "evidence_error": "작업당 제안 한도에 도달했습니다. 남은 대상은 새 작업으로 요청하세요."}
+    constraint = state.get("replan_constraint") if replan else None
     ok, res = await call_tool(state, "compare_options",
-                              {"whatif": state["current_ops"], "issues": targets})
+                              {"whatif": state["current_ops"], "issues": targets, **({"constraint": constraint} if constraint else {})})
     if not ok:
         return {"active_target": key, "targets": targets, "options": [], "selected_option": None,
                 "evidence_error": "대안 조회 실패: " + str(res)}
     options = [o for o in res.get("options", []) if W.target_key(o) == key]
+    constraint_error = None
+    if constraint and not any(o.get("resolves") and not o.get("side_effects") for o in options):
+        # 요청 조건으로는 못 푼다: 왜 안 되는지(리드타임상 가장 빠른 가능일 등)와 남는 문제를 팀장에게 그대로 돌려준다
+        left = next((o.get("remaining_issues") or o.get("side_effects") for o in options), None)
+        constraint_error = " ".join(["요청 조건(" + constraint_text(constraint) + ")으로는 해결안을 만들 수 없습니다.",
+                                     *res.get("constraint_notes", []),
+                                     *(["남는 문제: " + json.dumps(left, ensure_ascii=False)] if left else [])])
     return {"active_target": key, "targets": targets, "options": options,
             "recommended": next((o["option_id"] for o in options if o.get("recommended")), None),
             "selected_option": None, "decision": None, "verify": None, "verify_count": 0,
-            "evidence_error": None,
+            "evidence_error": constraint_error,
             "reject_count": sum(p["target"] == key and p["status"] == "REJECTED" for p in state.get("proposals") or [])}
 
 
@@ -688,6 +697,12 @@ def after_compare(state: AgentState) -> str:
 class Pick(BaseModel):
     option_id: str = Field(description="고른 후보의 option_id. 후보 목록에 있는 값만")
     reason: str = Field(description="왜 골랐는지 한두 문장")
+
+
+def constraint_text(c: dict) -> str:
+    """팀장 조건 한 줄: 발주 · 날짜 · 수량 중 정한 것만."""
+    parts = [c.get("po_id"), c.get("new_due_date"), f"{c['split_qty']:,}개" if c.get("split_qty") else None]
+    return " · ".join(str(x) for x in parts if x)
 
 
 def candidates(state: AgentState) -> list[dict]:
@@ -703,9 +718,13 @@ def candidates(state: AgentState) -> list[dict]:
 async def agent_adjust(state: AgentState) -> dict:
     """후보 중 **option_id 하나만** 고른다. 실행 인자는 코드가 후보에서 그대로 복사한다 (decisions 6.3)."""
     cands = candidates(state)
-    if not cands:
+    if not cands or state.get("evidence_error"):
         return {"selected_option": None}
     turns = state.get("turn_count", 0)
+    if state.get("replan_target") and state.get("replan_constraint"):
+        # 팀장 조건 재제안: 후보가 이미 그 조건으로만 계산돼 있다. 모델이 고르지 않고 계산 순서의 첫 안을 쓴다
+        return {"selected_option": cands[0], "turn_count": turns,
+                "pick_reason": "팀장 요청 조건(" + constraint_text(state["replan_constraint"]) + ")을 반영했습니다."}
     if llm is None:
         rec = state.get("recommended")
         pick = Pick(option_id=rec if rec in {o["option_id"] for o in cands} else cands[0]["option_id"],
@@ -819,6 +838,8 @@ def outcome_code(state: dict) -> str:
     error = state.get("evidence_error") or ""
     if error.startswith("작업당 제안 한도") or state.get("reject_count", 0) > MAX_REJECTS:
         return "LIMIT"
+    if error.startswith("요청 조건("):   # 팀장 조건으로는 못 푼다: 오류가 아니라 대안 없음, 이유는 detail로 (6.46)
+        return "NO_ALTERNATIVE"
     return "REVIEW_FAILED" if error else "NO_ALTERNATIVE"
 
 
@@ -839,7 +860,7 @@ def skip_target(state: AgentState) -> dict:
                  "side_effects": opt.get("side_effects", [])}, ensure_ascii=False)
     blocked[state["active_target"]] = reason
     updates = {"blocked": blocked, "selected_option": None, "decision": None, "evidence_error": None,
-               "replan_target": None}
+               "replan_target": None, "replan_constraint": None}
     proposals = with_outcome(state, state["active_target"], code, detail)
     if proposals is not None:
         updates["proposals"] = proposals
@@ -857,7 +878,7 @@ def save_proposal(state: AgentState) -> dict:
                       "option": state["selected_option"], "targets": state["targets"],
                       "verify": state["verify"], "pick_reason": state.get("pick_reason"),
                       "status": "PREPARED", "approval_id": None})
-    return {"proposals": proposals, "replan_target": None}
+    return {"proposals": proposals, "replan_target": None, "replan_constraint": None}
 
 
 async def check_batch(state: AgentState) -> dict:
@@ -977,7 +998,9 @@ def approval_gate(state: AgentState) -> dict:
                     "tried": [*state.get("tried", []), W.option_key(p["option"])],
                     "rejections": [*state.get("rejections", []), {"proposal_id": p["proposal_id"],
                                    "option_id": p["option"]["option_id"], "reason": decision.get("reason")}],
-                    "replan_target": p["target"]})
+                    "replan_target": p["target"],
+                    # 팀장이 날짜·수량을 정해 재요청하면 그 조건으로만 다시 계산한다 (decisions 6.46). 숫자는 입력칸 값 그대로
+                    "replan_constraint": decision.get("constraint") or None})
     return updates
 
 

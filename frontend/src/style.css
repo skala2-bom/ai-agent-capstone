@@ -2795,6 +2795,12 @@ select.context {
 .outcome.danger b { color: #be4b47; }
 .outcome.success { border-color: #247a62; background: #eaf5ef; }
 .outcome.success b { color: #247a62; }
+.outcome.compact { padding: 5px 12px; font-weight: 600; color: #247a62; }
+
+/* 재제안은 파란 줄로 원래 제안과 한눈에 구별한다 (decisions 6.46) */
+tr.reproposal > td:first-child { box-shadow: inset 3px 0 0 #4a6fd1; padding-left: 22px; }
+tr.reproposal > td { background: #f5f8ff; }
+.card.reproposal { border-left: 3px solid #4a6fd1; background: #f7f9ff; }
 
 /* 요청자 검토 (decisions 6.33) */
 .request-note {

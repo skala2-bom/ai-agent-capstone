@@ -155,7 +155,7 @@ def analyze_impact(whatif: list[dict]) -> dict:
 
 
 @mcp.tool(annotations=READ)
-def compare_options(issues: list[dict], whatif: list[dict] | None = None) -> dict:
+def compare_options(issues: list[dict], whatif: list[dict] | None = None, constraint: dict | None = None) -> dict:
     """결품·과잉(issues)을 푸는 해결 대안을 비교해 돌려준다 (contracts 2.3).
 
     whatif: analyze_impact에 넣었던 것과 같은 가정 변경. 결품은 가정 위에서만 생기므로 대안도 그 위에서 만든다.
@@ -166,9 +166,16 @@ def compare_options(issues: list[dict], whatif: list[dict] | None = None) -> dic
     resolves(그 품목·규칙의 문제를 해결하나), side_effects[{type(NEW_SHORTAGE|WORSENED_SHORTAGE), item_id,
     product_id, plan_id, plan_date, before_shortage_qty, after_shortage_qty, increase_qty}](이 대안 때문에 새로 생기거나
     커진 결품), remaining_issues[](풀려던 결품·과잉 중 남은 것), recommended}], recommended_option_id.
+    결품 대안은 딱 맞춘 안(첫 결품일·부족량)과 여유 안(안전재고까지 채우기, 3일 일찍 받기)을 함께 낸다.
+    각 대안의 buffer{days(결품일보다 며칠 일찍), extra_qty(부족량보다 더 받는 양)}, safety_ok(풀려던 생산에 안전재고 미만이 안 남음).
+    constraint: 팀장이 정한 조건 {po_id?, new_due_date?, split_qty?}. 주면 결품 대안을 그 조건으로만 만들고,
+    못 지키는 이유(리드타임상 가장 빠른 가능일 등)를 constraint_notes로 돌려준다.
     tool·args는 고치지 말고 그대로 쓴다. 모델이 인자를 다시 만들면 숫자가 틀어질 수 있다.
     """
-    return _call("POST", "/analysis/options", json={"whatif": whatif or [], "issues": issues})
+    body = {"whatif": whatif or [], "issues": issues}
+    if constraint:
+        body["constraint"] = constraint
+    return _call("POST", "/analysis/options", json=body)
 
 
 # ---------------------------------------------------------------------------

@@ -200,12 +200,16 @@ class InternalApi {
      * </ul>
      */
     @PostMapping("/analysis/options")
+    @SuppressWarnings("unchecked")
     Map<String, Object> compareOptions(@RequestBody(required = false) Map<String, Object> body) {
         Set<String> items = new HashSet<>();
         if (body != null && body.get("issues") instanceof List<?> issues)
             for (Object i : issues)
                 if (i instanceof Map<?, ?> issue && issue.get("item_id") != null) items.add(String.valueOf(issue.get("item_id")));
-        return options.compare(whatif(body), items);
+        // constraint: 팀장이 재요청하며 정한 날짜·분할 수량 (decisions 6.46). 없으면 기본 후보
+        Map<String, Object> constraint = body != null && body.get("constraint") instanceof Map<?, ?> c
+                ? new LinkedHashMap<>((Map<String, Object>) c) : Map.of();
+        return options.compare(whatif(body), items, constraint);
     }
 
     // ------------------------------------------------------------------
