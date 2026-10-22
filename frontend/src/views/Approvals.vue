@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useWorkspace } from "../stores/workspace";
 import TaskReview from "../components/TaskReview.vue";
 import ApprovalNote from "../components/ApprovalNote.vue";
+import ApprovalConfirm from "../components/ApprovalConfirm.vue";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
 import { mode, request } from "../services/api";
@@ -10,6 +11,7 @@ import type { Approval } from "../types";
 const w = useWorkspace();
 const selectedId = ref<string>();
 const reason = ref("");
+const confirmation = ref<{ id: string; decision: "APPROVED" | "REJECTED"; summary: string; reason: string }>();
 const filter = ref("");
 const pollError = ref("");
 // 거절 뒤 AI 재검토 결과 (decisions 6.30): approvalId → {code, item_name, message, next_action, detail}
@@ -85,8 +87,18 @@ const groups = computed(() => {
     .sort((a, b) => b.createdAt - a.createdAt);
 });
 const option = computed(() => w.data?.options.find((o) => o.id === selected.value?.optionId));
-async function decide(decision: "APPROVED" | "REJECTED") {
-  if (selected.value) await w.decide(selected.value.id, decision, reason.value);
+function requestDecision(decision: "APPROVED" | "REJECTED") {
+  if (!selected.value || !option.value || w.session?.role !== "APPROVER"
+    || selected.value.status !== "PENDING" || w.deciding[selected.value.id]) return;
+  if (decision === "REJECTED" && !reason.value.trim()) return;
+  confirmation.value = { id: selected.value.id, decision, summary: approvalTitle(option.value.name), reason: reason.value };
+}
+async function decide() {
+  const pending = confirmation.value;
+  confirmation.value = undefined;
+  if (!pending || w.session?.role !== "APPROVER") return;
+  if (w.data?.approvals.find(a => a.id === pending.id)?.status !== "PENDING") return;
+  await w.decide(pending.id, pending.decision, pending.reason);
 }
 let timer: ReturnType<typeof setTimeout> | undefined;
 let mounted = false;
@@ -271,7 +283,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     <p v-if="selected.status === 'DRAFT'" class="caption">전체 문제 설명과 개인 메모는 작업 카드에서 작성하고, 작업 단위로 전송해 주세요.</p>
     <form
       v-if="selected.status === 'PENDING' && w.session?.role === 'APPROVER'"
-      @submit.prevent="decide('REJECTED')"
+      @submit.prevent="requestDecision('REJECTED')"
     >
       <label
         >거절 사유 · 거절 시 필수<textarea
@@ -286,7 +298,7 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
           type="button"
           class="primary"
           :disabled="w.deciding[selected.id]"
-          @click="decide('APPROVED')"
+          @click="requestDecision('APPROVED')"
         >
           {{ w.deciding[selected.id] ? "접수 중…" : "승인 접수" }}
         </button>
@@ -319,6 +331,14 @@ onBeforeUnmount(() => { mounted = false; clearTimeout(timer); });
     <p v-if="selected.status === 'EXECUTED'">발주 변경이 실행되었습니다.</p>
     <p v-if="w.error" class="error">{{ w.error }}</p></Drawer
   >
+  <ApprovalConfirm
+    v-if="confirmation"
+    :decision="confirmation.decision"
+    :summary="confirmation.summary"
+    :reason="confirmation.reason"
+    @cancel="confirmation = undefined"
+    @confirm="decide"
+  />
 </template>
 <style scoped>
 .approval-group > td {

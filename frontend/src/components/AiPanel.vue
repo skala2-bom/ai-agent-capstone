@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch, nextTick } from "vue";
 import TaskReview from "./TaskReview.vue";
+import ApprovalConfirm from "./ApprovalConfirm.vue";
 import ServerResult from "./ServerResult.vue";
 import AnswerBlocks from "./AnswerBlocks.vue";
 import { sourceCards } from "../services/answer";
@@ -72,6 +73,7 @@ const docs = computed(() => sourceCards(sources.value));
 const approvalReasons = ref<Record<string, string>>({});
 const approvalStates = ref<Record<string, string>>({});
 const submitting = ref<Record<string, boolean>>({});
+const confirmation = ref<{ event: AgentEvent; decision: "APPROVED" | "REJECTED"; reason: string }>();
 const proposals = ref<Record<string, AgentEvent>>({});
 const readOnlyTask = ref(false);
 let stop = () => {};
@@ -104,11 +106,21 @@ function cardLabel(e: AgentEvent) {
     return { DRAFT: "검토 전 · 보낼지 정하세요", PENDING: "팀장 승인 대기", WITHDRAWN: "보내지 않음" }[s];
   return cardStatus(e);
 }
-async function decide(e: AgentEvent, decision: "APPROVED" | "REJECTED") {
+function requestDecision(e: AgentEvent, decision: "APPROVED" | "REJECTED") {
   const id = e.approvalId!;
-  if (submitting.value[id] || cardStatus(e) !== "승인 대기") return;
+  if (w.session?.role !== "APPROVER" || submitting.value[id]
+    || cardStatus(e) !== "승인 대기" || cardState(e) !== "PENDING") return;
   const reason = approvalReasons.value[id] ?? "";
   if (decision === "REJECTED" && !reason.trim()) return;
+  confirmation.value = { event: e, decision, reason };
+}
+async function decide() {
+  const pending = confirmation.value;
+  confirmation.value = undefined;
+  if (!pending || w.session?.role !== "APPROVER") return;
+  const { event: e, decision, reason } = pending;
+  const id = e.approvalId!;
+  if (submitting.value[id] || cardStatus(e) !== "승인 대기" || cardState(e) !== "PENDING") return;
   const g = generation;
   submitting.value[id] = true;
   try {
@@ -123,6 +135,7 @@ async function decide(e: AgentEvent, decision: "APPROVED" | "REJECTED") {
 }
 function clear() {
   generation++;
+  confirmation.value = undefined;
   stop(); clearTimeout(timer);
   approvalReasons.value = {}; approvalStates.value = {}; submitting.value = {}; proposals.value = {};
   running.value = false; readOnlyTask.value = false;
@@ -423,10 +436,10 @@ async function ask() {
             /></label
           ><button
             :disabled="submitting[e.approvalId!] || !approvalReasons[e.approvalId!]?.trim()"
-            @click="decide(e, 'REJECTED')"
+            @click="requestDecision(e, 'REJECTED')"
           >
             거절</button
-          ><button :disabled="submitting[e.approvalId!]" @click="decide(e, 'APPROVED')">
+          ><button :disabled="submitting[e.approvalId!]" @click="requestDecision(e, 'APPROVED')">
             승인 접수
           </button></template
         ><RouterLink to="/approvals">승인 대기함 열기</RouterLink>
@@ -455,6 +468,14 @@ async function ask() {
       </div>
     </form>
   </aside>
+  <ApprovalConfirm
+    v-if="confirmation"
+    :decision="confirmation.decision"
+    :summary="confirmation.event.summary ?? confirmation.event.approvalId ?? ''"
+    :reason="confirmation.reason"
+    @cancel="confirmation = undefined"
+    @confirm="decide"
+  />
 </template>
 
 <style scoped>
