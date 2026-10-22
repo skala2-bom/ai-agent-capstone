@@ -39,7 +39,8 @@ def no_alternative_then_manual():
     for _ in range(4):
         state, _ = S.batch_command(task, "REPLAN", parent, reason="이 대안은 불가합니다. 다른 방법을 검토해 주세요.")
         entry = state["entries"][0]
-        if (entry.get("outcome") or {}).get("code") == "NO_ALTERNATIVE":
+        # 6.47: 여유안이 늘어 대안 없음보다 재제안 한도(LIMIT)에 먼저 닿을 수 있다. 둘 다 AI 대안 소진이다
+        if (entry.get("outcome") or {}).get("code") in ("NO_ALTERNATIVE", "LIMIT"):
             break
         cards = [c for c in S.wait_cards(task, 1, "PENDING") if c["approval_id"] == entry["approvalId"]]
         assert len(cards) == 1, state
@@ -112,7 +113,29 @@ def follow_up_multi_item_review():
     print("PASS 여러 품목 영향 질문 → 이어서 해결 요청 → 새 task의 독립 검토 → 3건 전체 실행", flush=True)
 
 
+def replan_with_manager_constraint():
+    """팀장 조건 재요청 (decisions 6.47): 날짜·수량을 지킨 새 제안 / 불가능한 조건은 이유와 가장 빠른 가능일."""
+    S.reset_seed()
+    task, cards = prepare()
+    state, _ = S.batch_command(task, "REPLAN", cards[0], reason="협력사가 11/22에 150개까지 가능하다고 함",
+        args={"new_due_date": "2026-11-22", "split_qty": 150})
+    entry = state["entries"][0]
+    new = [c for c in S.wait_cards(task, 1, "PENDING") if c["approval_id"] == entry["approvalId"]]
+    assert len(new) == 1 and new[0]["tool"] == "split_po", state
+    assert new[0]["args"] == {"po_id": "PO-2609-001", "split_qty": 150, "new_due_date": "2026-11-22"}, new[0]
+    assert mutations() == 0
+    state, _ = S.batch_command(task, "REPLAN", new[0], reason="1월 발주만 쓰고 싶습니다",
+        args={"po_id": "PO-2610-108", "new_due_date": "2026-11-25"})
+    outcome = state["entries"][0]["outcome"]
+    assert outcome["code"] == "NO_ALTERNATIVE" and "2026-12-15 이후" in outcome["detail"], state
+    assert mutations() == 0
+    S.batch_command(task, "CANCEL")
+    S.finish_task(task)
+    print("PASS 팀장 조건 재요청 → 그 날짜·수량의 새 제안 / 불가능한 조건은 대안 없음 + 가장 빠른 가능일", flush=True)
+
+
 if __name__ == "__main__":
-    for check in (excluded_problem_blocks_all, no_alternative_then_manual, conflicting_tasks_and_stale_review, follow_up_multi_item_review):
+    for check in (excluded_problem_blocks_all, no_alternative_then_manual, conflicting_tasks_and_stale_review, follow_up_multi_item_review,
+                  replan_with_manager_constraint):
         check()
     print("ALL TASK BATCH CHECKS PASSED", flush=True)

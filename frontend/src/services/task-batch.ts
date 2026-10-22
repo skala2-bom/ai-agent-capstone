@@ -7,7 +7,7 @@ export interface BatchEntry {
   approvalId?: string; proposalId: string; revision: number; target: string;
   poId: string; itemId: string; summary: string; source: "AI" | "MANUAL";
   reviewStatus: string; reviewedBy?: string;
-  outcome?: {code: string; message: string; next_action: string};
+  outcome?: {code: string; message: string; next_action: string; detail?: string | null};
 }
 export interface BatchState {
   coordinationId?: string;

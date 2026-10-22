@@ -11,6 +11,23 @@ import graph as G
 import whatif as W
 
 
+def replan_constraint(args):
+    """팀장 조건 재요청 (decisions 6.47). 정한 칸만, 형식만 본다. 가능 여부는 계산 서비스(compare_options)가 판단한다."""
+    if not args:
+        return None
+    if set(args) - {"po_id", "new_due_date", "split_qty"}:
+        raise ValueError("재요청 조건은 발주·입고일·분할 수량만 줄 수 있습니다.")
+    c = {k: v for k, v in args.items() if v not in (None, "")}
+    if "split_qty" in c and (isinstance(c["split_qty"], bool) or not isinstance(c["split_qty"], int) or c["split_qty"] < 1):
+        raise ValueError("분할 수량은 1 이상의 정수여야 합니다.")
+    if "new_due_date" in c:
+        try:
+            datetime.strptime(c["new_due_date"], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            raise ValueError("입고일은 YYYY-MM-DD 형식이어야 합니다.") from None
+    return c or None
+
+
 def enabled(state):
     return state.get("workflow_version") == 3
 
@@ -200,11 +217,12 @@ async def process(runner, command, cfg):
             elif action == "REPLAN":
                 if parent["status"] != "PENDING":
                     raise ValueError("이미 거절·검토된 요청입니다. 직접 수정안을 작성해 주세요.")
+                replan_constraint(body.get("args"))   # 형식이 틀리면 카드를 거절하기 전에 막는다
                 await backend(state["task_id"], "reject", {"requestId": body["requestId"]})
                 snapshot = await save(runner, cfg, updates)
                 gate = next(i for t in snapshot.tasks for i in t.interrupts)
                 await runner.graph.ainvoke(Command(resume={gate.id: {"approvalId": parent["approval_id"], "decision": "REJECTED",
-                    "reason": body["reason"], "command_id": key}}), cfg)
+                    "reason": body["reason"], "constraint": replan_constraint(body.get("args")), "command_id": key}}), cfg)
             elif action == "MANUAL":
                 proposal = manual_proposal(state, parent, body)
                 await backend(state["task_id"], "reject", {"requestId": body["requestId"]})
