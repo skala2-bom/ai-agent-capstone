@@ -122,7 +122,8 @@ class CoordinationRequestsTest {
         assertThat(planDate()).isEqualTo("2026-12-14"); assertThat(poQty()).isEqualTo(500);
         var result = batch.complete(task, Map.of("requestId", "exec"));
         assertThat(result).containsEntry("status", "COMPLETED").containsEntry("remainingWhatif", List.of());
-        assertThat(planDate()).isEqualTo("2026-11-25"); assertThat(poQty()).isEqualTo(400);
+        // 6.47: 추천안이 안전재고까지 채우는 400개 분할이라 원 발주에 100개가 남는다 (전에는 100개 분할 → 400개)
+        assertThat(planDate()).isEqualTo("2026-11-25"); assertThat(poQty()).isEqualTo(100);
         assertThat(requests.get((String) r.get("id"), planner)).containsEntry("status", "COMPLETED").containsEntry("unread", true);
         batch.complete(task, Map.of("requestId", "exec"));
         assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isEqualTo(2);
