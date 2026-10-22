@@ -97,6 +97,42 @@ env -u OPENAI_API_KEY -u OPENAI_MODEL docker compose --env-file .env -p capstone
 실제 모델은 답변 문장이 달라도 된다. 추출한 가정·실행 도구·승인 건수·DB 변경·남은 문제는 고정 기대값으로 검사한다.
 실제 모델 실행 뒤 단위 테스트를 다시 실행하면 fixture 벡터가 색인된다. 실제 모델을 계속 검증하려면 `rag-index`를 다시 실행해야 한다.
 
+## 생산·구매 부서 요청 검사 (2026-10-22)
+
+상세 흐름·권한·파일·제약은 [부서 요청 구현 기록](../docs/coordination-requests.md). 개발 환경을 건드리지 않는 별도 프로젝트에서 실행한다. HTTP 시나리오와 브라우저 검사는 같은 테스트 DB를 초기화·변경하므로 **동시에 실행하지 않는다**.
+
+```bash
+# 실제 서비스 + 가짜 모델·테스트 임베딩. 개발 DB와 별도
+docker compose -p capstone-coordination-test -f tests/compose.yml up -d --build --wait
+# RAG·승인 러너·전체 실행·Harness·연결 컨텍스트 단위 검사
+docker compose -p capstone-coordination-test -f tests/compose.yml run --rm tests python -m unittest -v test_ai_rag test_approval_runner test_task_batch test_harness test_coordination
+docker compose -p capstone-coordination-test -f tests/compose.yml run --rm tests python -m unittest discover -v -s /repo/agent/tests
+# 기존 SC1~4·이어 묻기 등 전체 회귀
+docker compose -p capstone-coordination-test -f tests/compose.yml run --rm tests python -u integration_scenarios.py
+# 양방향·최종 거절·연결 요청 여섯 흐름. 각 시나리오에서 테스트 시드 초기화
+docker compose -p capstone-coordination-test -f tests/compose.yml run --rm tests python -u integration_coordination.py
+# Java: Docker 실행 필요(Testcontainers). Vue 검사도 별도로 실행
+mvn -f backend/pom.xml test
+npm --prefix frontend test -- --run
+npm --prefix frontend run build
+```
+
+신규 Java 검사: 공유 데이터 접근 범위, 요청 생성 중복, 동시 담당 접수, 해결 작업 단일화, Agent 메타 이벤트 위조 차단, 발주+계획 원자 실행, 계획 저장 실패 시 전체 원복, 동의 변경·오래된 정보 차단, 거절·실행 경쟁, 지연 사실 유지, 연결 요청 완료·거절 복귀.
+
+실제 Chrome 브라우저 검사에는 로컬 Google Chrome과 `playwright-core`가 필요하다. 앱 패키지에 테스트 의존성을 추가하지 않고 임시 경로에서 사용한다. 아래 스크립트는 `127.0.0.1:13004` 또는 `localhost:13004`만 허용한다.
+
+```bash
+docker compose -p capstone-coordination-test -f tests/compose.yml -f tests/compose.coordination-ui.yml up -d --build --wait frontend
+# 브라우저 검사는 시드 상태에서 시작
+docker compose -p capstone-coordination-test -f tests/compose.yml run --rm tests python -c "import integration_scenarios as s; s.reset_seed()"
+npm install --prefix /tmp/capstone-browser-check --no-save playwright-core@1.64.1
+PLAYWRIGHT_MODULE=/tmp/capstone-browser-check/node_modules/playwright-core node tests/browser_coordination.cjs
+# 전용 테스트 프로젝트만 정리
+docker compose -p capstone-coordination-test -f tests/compose.yml -f tests/compose.coordination-ui.yml --profile tools down -v
+```
+
+브라우저 검사: 생산 요청 전송·동의 → 구매 알림·접수·AI → 팀장 검토만으로는 미변경 → 전체 실행 팝업 취소·확정 → 생산계획 실제 반영, 해결안이 없는 요청의 최종 거절 사유 재조회, 구매 확정 지연 → 생산 AI → 변경안 검증·확정 → 구매 완료 알림. 성공 캡처는 macOS 기준 `/private/tmp/capstone-coordination-completed.png`에 저장한다.
+
 ## 정리
 
 테스트 기록을 지워도 될 때 **테스트 프로젝트만** 정리한다.

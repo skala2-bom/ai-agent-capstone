@@ -6,6 +6,7 @@ import type { Purchase } from "../types";
 import Drawer from "../components/Drawer.vue";
 import Badge from "../components/Badge.vue";
 import { batchLocked } from "../services/task-batch";
+import { mode, request } from "../services/api";
 const w = useWorkspace(),
   q = ref(""),
   tab = ref("발주 · 입고"),
@@ -23,6 +24,7 @@ const w = useWorkspace(),
   from = ref(""),
   to = ref("");
 const route = useRoute(), router = useRouter();
+const changeKind = ref("manual"), delaySaving = ref(false);
 const taskId = computed(() => typeof route.query.taskId === "string" ? route.query.taskId : "");
 const approvalId = computed(() => typeof route.query.approvalId === "string" ? route.query.approvalId : "");
 const taskEditing = computed(() => !!taskId.value && !!approvalId.value);
@@ -47,6 +49,7 @@ function open(p: Purchase) {
   date.value = p.date;
   qty.value = p.qty;
   reason.value = "";
+  changeKind.value = "manual";
   w.error = "";
   passed.value = p.passed;
   failed.value = p.failed;
@@ -61,6 +64,16 @@ async function savePurchase() {
     if (await w.sendBatch(taskId.value, "MANUAL", approvalId.value, {
       reason: reason.value, args: {po_id: selected.value!.id, new_qty: qty.value, new_due_date: date.value},
     })) await router.push("/approvals");
+    return;
+  }
+  if (changeKind.value === "delay" && mode === "api") {
+    if (delaySaving.value || !reason.value.trim()) return;
+    delaySaving.value = true; w.error = "";
+    try {
+      const result = await request<{analysis_task_id: string}>(`/purchase-orders/${encodeURIComponent(selected.value!.id)}/due-date`, w.session?.token, "PUT", {due_date: date.value, reason: reason.value.trim()});
+      selected.value = undefined; await w.load(); w.openTask(result.analysis_task_id);
+    } catch (e) { w.error = (e as Error).message; }
+    finally { delaySaving.value = false; }
     return;
   }
   if (
@@ -201,13 +214,16 @@ async function savePurchase() {
     </div>
     <p v-if="!editable" class="caption">입고 완료·취소된 발주는 수정할 수 없습니다.</p>
     <form @submit.prevent="savePurchase">
+      <label v-if="!taskEditing && mode === 'api' && w.session?.role === 'BUYER'">변경 구분<select v-model="changeKind" :disabled="delaySaving" @change="qty = selected!.qty">
+        <option value="manual">입고 정보 수동 수정</option><option value="delay">협력사의 확정 지연 통보</option></select></label>
+      <p v-if="changeKind === 'delay'" class="caption">지연 사실을 저장하고 영향 분석을 시작합니다. 분석 후 생산팀에 일정 조정을 요청할 수 있습니다.</p>
       <label
         >변경 입고 예정일<input
           v-model="date"
           type="date"
           required
           min="2026-11-02"
-          :disabled="!w.buyer || !editable || w.busy" /></label
+          :disabled="!w.buyer || !editable || w.busy || delaySaving" /></label
       ><label
         >입고 예정 수량<input
           v-model.number="qty"
@@ -216,14 +232,14 @@ async function savePurchase() {
           max="2147483647"
           step="1"
           required
-          :disabled="!w.buyer || !editable || w.busy" /></label
+          :disabled="!w.buyer || !editable || w.busy || delaySaving || changeKind === 'delay'" /></label
       ><label
         >변경 사유<textarea v-model="reason" required rows="3" :disabled="!w.buyer || !editable || w.busy" /></label
       ><button
         class="primary"
-        :disabled="!w.buyer || !editable || w.busy || taskLocked || !changed || !reason.trim() || !Number.isInteger(qty) || qty < 1 || !date"
+        :disabled="!w.buyer || !editable || w.busy || delaySaving || taskLocked || !changed || !reason.trim() || !Number.isInteger(qty) || qty < 1 || !date"
       >
-        {{ taskEditing ? '수정안 확정' : '입고 정보 저장' }}
+        {{ taskEditing ? '수정안 확정' : changeKind === 'delay' ? '지연 사실 저장 및 영향 분석' : '입고 정보 저장' }}
       </button>
     </form>
     <button

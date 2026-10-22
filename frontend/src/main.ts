@@ -8,6 +8,7 @@ import Materials from "./views/Materials.vue";
 import Purchasing from "./views/Purchasing.vue";
 import Approvals from "./views/Approvals.vue";
 import History from "./views/History.vue";
+import CoordinationRequests from "./views/CoordinationRequests.vue";
 import "./style.css";
 const router = createRouter({
   history: createWebHistory(),
@@ -26,6 +27,7 @@ const router = createRouter({
       meta: { title: "승인 대기함" },
     },
     { path: "/history", component: History, meta: { title: "작업 이력" } },
+    { path: "/requests", component: CoordinationRequests, meta: { title: "부서 요청함" } },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 });

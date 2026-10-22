@@ -1,0 +1,10 @@
+# Optional browser verification against the isolated tests/compose.yml stack.
+services:
+  frontend:
+    build:
+      context: ../frontend
+      args: {VITE_DATA_MODE: api}
+    image: capstone-coordination-test-frontend
+    ports: ["127.0.0.1:${TEST_UI_PORT:-13004}:80"]
+    depends_on:
+      backend: {condition: service_healthy}

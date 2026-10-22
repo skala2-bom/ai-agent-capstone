@@ -10,6 +10,9 @@ export interface BatchEntry {
   outcome?: {code: string; message: string; next_action: string};
 }
 export interface BatchState {
+  coordinationId?: string;
+  requestReason?: string;
+  planChanges?: import("./coordination").PlanChange[];
   mode: "LEGACY" | "BATCH"; status: string; revision?: number; stateVersion?: number;
   entries?: BatchEntry[]; canExecute?: boolean; error?: string;
   lastRequestId?: string; lastCommand?: BatchCommand;
@@ -20,5 +23,5 @@ export function reviewLabel(entry?: BatchEntry) {
     UNAVAILABLE: "확인 필요", EXECUTED: "실행 완료", UNREVIEWED: "검토 대기"} as Record<string, string>)[entry.reviewStatus] ?? entry.reviewStatus;
 }
 export function batchLocked(state?: BatchState) {
-  return !state || ["PREPARING", "EXECUTING", "UNKNOWN", "COMPLETED", "CANCELLED"].includes(state.status);
+  return !state || ["PREPARING", "EXECUTING", "UNKNOWN", "COMPLETED", "CANCELLED", "REJECTED"].includes(state.status);
 }

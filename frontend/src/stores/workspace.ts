@@ -32,6 +32,7 @@ export const useWorkspace = defineStore("workspace", () => {
         if (e !== epoch.value) return;
         if ((state.stateVersion ?? state.revision ?? -1) < (batchStates.value[id]?.stateVersion ?? batchStates.value[id]?.revision ?? -1)) return;
         batchStates.value[id] = state;
+        if (["COMPLETED", "CANCELLED", "REJECTED"].includes(state.status)) { batchPending.value[id] = undefined; batchErrors.value[id] = ""; }
         if (state.lastRequestId === batchPending.value[id]?.requestId) batchPending.value[id] = undefined;
         else if (batchPending.value[id] && (state.revision ?? 0) > batchPending.value[id]!.expectedRevision) {
           batchPending.value[id] = undefined;

@@ -60,6 +60,8 @@ class Approvals {
      */
     Map<String, Object> create(String taskId, String userId, String role, Map<String, Object> event) {
         return tx.execute(s -> {
+            var coordination = new CoordinationStore(db, json);
+            coordination.requireSolution(taskId, coordination.lockLinked(taskId));
             lockTask(taskId);
             return createLocked(taskId, userId, role, event);
         });
@@ -239,6 +241,8 @@ class Approvals {
             throw ApiError.invalid("문제 설명과 메모는 각각 4,000자까지 입력할 수 있습니다.", "입력 내용을 줄여 주세요.");
         String decision = send ? "PENDING" : "WITHDRAWN";
         return tx.execute(s -> {
+            var coordination = new CoordinationStore(db, json);
+            coordination.requireSolution(taskId, coordination.lockLinked(taskId));
             Map<String, Object> task = lockTask(taskId);
             if (!requester.equals(task.get("user_id")))
                 throw new ApiError("ROLE_NOT_ALLOWED", "작업 요청자만 검토할 수 있습니다.", "본인의 작업에서 요청하세요.");
@@ -271,6 +275,7 @@ class Approvals {
                         "reviewId", body.reviewId(), "decision", decision));
                 db.update("update approval set status = ?, memo = ? where approval_id = ? and status = 'DRAFT'", decision, envelope, id);
             }
+            if (send) coordination.submitted(taskId);
             return drafts.stream().map(c -> card((String) c.get("approval_id"))).toList();
         });
     }

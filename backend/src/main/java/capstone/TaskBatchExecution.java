@@ -1,7 +1,5 @@
 package capstone;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -20,19 +18,32 @@ class TaskBatchExecution {
     private final Approvals approvals;
     private final InternalApi internal;
     private final ImpactAnalysis impact;
+    private final CoordinationStore coordination;
+    private final ProductionPlanChanges planChanges;
     static final Set<String> ACTIONS = Set.of("CONFIRM", "UNCONFIRM", "NEEDS_EDIT", "REPLAN", "MANUAL", "EXCLUDE", "EXECUTE", "CANCEL");
 
     TaskBatchExecution(JdbcTemplate db, ObjectMapper json, Tasks tasks, Approvals approvals,
                        InternalApi internal, ImpactAnalysis impact) {
         this.db = db; this.events = new TaskEventLog(db, json); this.tasks = tasks;
         this.approvals = approvals; this.internal = internal; this.impact = impact;
+        this.coordination = new CoordinationStore(db, json); this.planChanges = new ProductionPlanChanges(db, approvals);
     }
     @GetMapping("/api/ai/tasks/{id}/batch")
     Map<String, Object> state(@PathVariable String id, @AuthenticationPrincipal Jwt user) {
         visible(id, user);
         Map<String, Object> state = events.latest(id, "TASK_BATCH_STATE");
-        if (!state.isEmpty()) return state;
-        return m("mode", events.latest(id, "TASK_BATCH_CONTEXT").isEmpty() ? "LEGACY" : "BATCH", "status", "PREPARING");
+        if (state.isEmpty()) state.putAll(m("mode", events.latest(id, "TASK_BATCH_CONTEXT").isEmpty() ? "LEGACY" : "BATCH", "status", "PREPARING"));
+        var linked = coordination.linked(id);
+        if (!linked.isEmpty()) {
+            state.put("coordinationId", linked.get("id"));
+            state.put("planChanges", linked.get("planChanges"));
+            if (CoordinationStore.TERMINAL.contains(linked.get("status"))) {
+                state.putAll(m("mode", "BATCH", "status", linked.get("status"), "canExecute", false,
+                        "error", null, "requestReason", linked.get("decisionReason")));
+                return state;
+            }
+        }
+        return state;
     }
     @PostMapping("/api/ai/tasks/{id}/batch")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -49,6 +60,7 @@ class TaskBatchExecution {
                 "expectedRevision", body.get("expectedRevision"), "approvalId", body.get("approvalId"),
                 "reason", Objects.toString(body.get("reason"), "").trim(), "args", body.get("args"), "actorId", user.getSubject());
         Map<String, Object> accepted = events.tx.execute(tx -> {
+            var linked = coordination.lockLinked(id);
             events.lock(id);
             var old = events.request(id, "TASK_BATCH_COMMAND", requestId);
             if (!old.isEmpty()) {
@@ -56,6 +68,7 @@ class TaskBatchExecution {
                     throw conflict("같은 요청 ID의 내용이 다릅니다.");
                 return payload;
             }
+            coordination.requireSolution(id, linked);
             var state = events.latest(id, "TASK_BATCH_STATE");
             if (state.isEmpty() || !Objects.equals(number(state.get("revision")), number(body.get("expectedRevision"))))
                 throw conflict("검토 상태가 바뀌었습니다. 최신 상태를 확인하세요.");
@@ -86,12 +99,17 @@ class TaskBatchExecution {
     }
     @GetMapping("/internal/tasks/{id}/batch/snapshot")
     Map<String, Object> snapshot(@PathVariable String id) {
-        return events.tx.execute(tx -> { lockBusiness(); return m("fingerprint", fingerprint()); });
+        return events.tx.execute(tx -> {
+            var linked = coordination.lockLinked(id); coordination.requireSolution(id, linked);
+            lockBusiness(); validateConsent(linked);
+            return m("fingerprint", fingerprint());
+        });
     }
     /** Rejection is authorized by a persisted manager command, never by model-supplied identity. */
     @PostMapping("/internal/tasks/{id}/batch/reject")
     Map<String, Object> reject(@PathVariable String id, @RequestBody Map<String, String> body) {
         return events.tx.execute(tx -> {
+            var linked = coordination.lockLinked(id); coordination.requireSolution(id, linked);
             events.lock(id);
             var cmd = authorized(id, body.get("requestId"));
             if (!Set.of("REPLAN", "MANUAL").contains(cmd.get("action"))) throw conflict("수정 요청이 아닙니다.");
@@ -105,11 +123,13 @@ class TaskBatchExecution {
     @PostMapping("/internal/tasks/{id}/batch/complete")
     Map<String, Object> complete(@PathVariable String id, @RequestBody Map<String, String> body) {
         return events.tx.execute(tx -> {
+            var linked = coordination.lockLinked(id);
             events.lock(id);
             String requestId = body.get("requestId");
             var cmd = authorized(id, requestId);
             var old = events.request(id, "TASK_BATCH_RESULT", requestId);
             if (!old.isEmpty()) return old;
+            coordination.requireSolution(id, linked);
             if (!events.latest(id, "TASK_BATCH_RESULT").isEmpty()) throw conflict("이미 종료된 작업입니다.");
             String action = (String) cmd.get("action");
             if (!Set.of("EXECUTE", "CANCEL").contains(action)) throw conflict("task 실행·취소 요청이 아닙니다.");
@@ -120,6 +140,7 @@ class TaskBatchExecution {
             if ("CANCEL".equals(action)) {
                 db.update("update approval set status='WITHDRAWN', reason='팀장 task 전체 취소', decided_by=?, decided_at=now() where task_id=? and status in ('DRAFT','PENDING')",
                         cmd.get("actorId"), id);
+                if (!linked.isEmpty()) coordination.finish(linked, "CANCELLED", "팀장이 작업을 전체 취소했습니다.", (String) cmd.get("actorId"), m("changed", false));
                 return events.append(id, m("type", "TASK_BATCH_RESULT", "requestId", requestId, "status", "CANCELLED", "executions", List.of()));
             }
             // A short table write lock also covers concurrent manual edits, new plans/receipts, BOM and metric changes.
@@ -142,9 +163,21 @@ class TaskBatchExecution {
                 cards.add(card); ops.addAll(operations(card));
             }
             var whatif = maps(context.get("whatif"));
+            if (!linked.isEmpty()) {
+                validateConsent(linked);
+                if (!coordination.same(planChanges.normalize(whatif), linked.get("planOps")))
+                    throw conflict("생산관리가 동의한 생산계획 변경과 다릅니다. 새 요청이 필요합니다.");
+            }
+            var scope = new ArrayList<>(strings(context.get("scope")));
+            if (!linked.isEmpty()) scope.addAll(coordination.scope(map(linked.get("analysis"))));
+            if (linked.get("parentRequestId") instanceof String parentId && !parentId.isBlank()) {
+                var parent = coordination.get(parentId);
+                if ("WAITING_LINKED".equals(parent.get("status")) && linked.get("id").equals(parent.get("linkedRequestId")))
+                    scope.addAll(coordination.scope(map(parent.get("analysis"))));
+            }
             var before = impact.analyze(whatif);
             var combined = new ArrayList<>(whatif); combined.addAll(ops);
-            requireSolved(before, impact.analyze(combined), strings(context.get("scope")));
+            requireSolved(before, impact.analyze(combined), scope);
             List<Map<String, Object>> executions = new ArrayList<>();
             for (var card : cards) {
                 String approvalId = (String) card.get("approval_id"), tool = (String) card.get("tool");
@@ -163,13 +196,17 @@ class TaskBatchExecution {
                 executions.add(m("approval_id", approvalId, "tool", tool, "args", card.get("args"), "result", result));
             }
             // Reflect operations only once: saved PO changes must not be applied again as hypothetical changes.
-            var remaining = whatif.stream().filter(op -> cards.stream().noneMatch(c -> overwrites(c, op))).toList();
+            var savedPlans = linked.isEmpty() ? List.of() : planChanges.apply(maps(linked.get("planOps")),
+                    "부서 요청 " + linked.get("id") + " / 생산관리 " + linked.get("requesterId") + "의 변경 동의", (String) cmd.get("actorId"));
+            var remaining = linked.isEmpty() ? whatif.stream().filter(op -> cards.stream().noneMatch(c -> overwrites(c, op))).toList() : List.<Map<String, Object>>of();
             var after = impact.analyze(remaining);
-            requireSolved(before, after, strings(context.get("scope")));
+            requireSolved(before, after, scope);
             db.update("update approval set status='WITHDRAWN', reason='task 실행에서 제외', decided_by=?, decided_at=now() where task_id=? and status='PENDING'",
                     cmd.get("actorId"), id);
+            if (!linked.isEmpty()) coordination.finish(linked, "COMPLETED", "발주와 생산계획 변경을 함께 완료했습니다.", (String) cmd.get("actorId"),
+                    m("planChanges", savedPlans, "purchaseChanges", executions.stream().map(e -> m("tool", e.get("tool"), "args", e.get("args"))).toList()));
             return events.append(id, m("type", "TASK_BATCH_RESULT", "requestId", requestId, "status", "COMPLETED",
-                    "executions", executions, "impact", after, "remainingWhatif", remaining));
+                    "executions", executions, "planChanges", savedPlans, "impact", after, "remainingWhatif", remaining));
         });
     }
     private Map<String, Object> authorized(String id, String requestId) {
@@ -178,17 +215,16 @@ class TaskBatchExecution {
         return map(command.get("command"));
     }
     private void lockBusiness() {
-        db.execute("set local lock_timeout = '5s'");
-        db.execute("lock table item, inventory, production_plan, purchase_order, bom, supplier_metric in share row exclusive mode");
+        BusinessSnapshot.lock(db);
     }
     private String fingerprint() {
-        List<Object> state = new ArrayList<>();
-        for (String table : List.of("item", "inventory", "production_plan", "purchase_order", "bom", "supplier_metric")) {
-            var rows = db.queryForList("select row_to_json(t)::text from " + table + " t", String.class);
-            Collections.sort(rows); state.add(List.of(table, rows));
-        }
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(events.write(state).getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception e) { throw new IllegalStateException(e); }
+        return BusinessSnapshot.fingerprint(db, events);
+    }
+    private void validateConsent(Map<String, Object> linked) {
+        if (linked.isEmpty()) return;
+        var current = planChanges.preview(maps(linked.get("planOps")));
+        if (!coordination.same(current, linked.get("planChanges")) || !coordination.same(map(linked.get("planConsent")).get("ops"), linked.get("planOps")))
+            throw conflict("생산계획이 요청 당시와 다릅니다. 생산관리의 재분석과 새 요청이 필요합니다.");
     }
     static List<Map<String, Object>> operations(Map<String, Object> card) {
         var args = map(card.get("args"));

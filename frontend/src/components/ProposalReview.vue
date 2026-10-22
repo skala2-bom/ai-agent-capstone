@@ -40,7 +40,7 @@ function manual() {
     <p><strong>{{ reviewLabel(entry) }}</strong><template v-if="entry?.source === 'MANUAL'"> · 직접 작성한 수정안</template></p>
     <p v-if="!entry" class="caption">새 제안으로 교체된 이전 요청입니다.</p>
     <p v-if="entry?.outcome" class="warning-box">{{ entry.outcome.message }}</p>
-    <template v-if="entry && w.approver && !['COMPLETED', 'CANCELLED'].includes(state?.status ?? '')">
+    <template v-if="entry && w.approver && !['COMPLETED', 'CANCELLED', 'REJECTED'].includes(state?.status ?? '')">
       <div class="action-row">
         <button class="primary" :disabled="locked || approval.status !== 'PENDING'"
           @click="entry.reviewStatus === 'CONFIRMED' ? w.sendBatch(approval.taskId, 'UNCONFIRM', approval.id) : confirm = 'APPROVED'">
