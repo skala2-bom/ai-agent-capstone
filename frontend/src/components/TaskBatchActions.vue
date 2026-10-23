@@ -23,6 +23,7 @@ async function submit() {
 <template>
   <div v-if="state?.mode === 'BATCH'" class="batch-actions">
     <div v-if="linked" class="card"><b>생산관리 요청 · {{ linked.requesterName }}</b><p>{{ linked.message }}</p>
+      <p v-if="linked.requestKind === 'REMAINING'">생산계획은 이미 저장됐습니다. 남은 구매 문제에 대한 발주 변경만 실행합니다.</p>
       <p v-for="p in linked.planChanges" :key="p.planId">{{ p.planId }}: {{ p.before.plan_date }} · {{ p.before.qty }}개 → {{ p.after.plan_date }} · {{ p.after.qty }}개</p>
       <RouterLink :to="{path:'/requests',query:{id:linked.id}}">부서 요청 상세 보기 →</RouterLink></div>
     <p><strong>{{ labels[state.status] ?? state.status }}</strong>

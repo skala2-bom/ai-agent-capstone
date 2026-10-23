@@ -7,7 +7,7 @@ import ProposalReview from "./ProposalReview.vue";
 import TaskBatchActions from "./TaskBatchActions.vue";
 import CoordinationRequestForm from "./CoordinationRequestForm.vue";
 import { useCoordination } from "../stores/coordination";
-import { canSendReceiptDelay, type CoordinationRequest } from "../services/coordination";
+import { canSendReceiptDelay, requestClosed, type CoordinationRequest } from "../services/coordination";
 import ServerResult from "./ServerResult.vue";
 import AnswerBlocks from "./AnswerBlocks.vue";
 import { sourceCards } from "../services/answer";
@@ -425,9 +425,9 @@ async function ask() {
       </div>
       <AnswerBlocks :text="answer" />
       <button v-if="mode === 'api' && currentTask && !running && result?.intent === 'IMPACT' &&
-        ((w.session?.role === 'PLANNER' && Array.isArray(result.whatif) && result.whatif.length && result.whatif.every((o: any) => ['reschedule_plan','change_plan_qty'].includes(o.op))) || (w.session?.role === 'BUYER' && (supplierDelay || canSendReceiptDelay(result))))"
+        ((w.session?.role === 'PLANNER' && linkedRequest?.direction !== 'BUY_TO_PLAN' && Array.isArray(result.whatif) && result.whatif.length && result.whatif.every((o: any) => ['reschedule_plan','change_plan_qty'].includes(o.op))) || (w.session?.role === 'BUYER' && (supplierDelay || canSendReceiptDelay(result))))"
         @click="requestForm = true">{{ w.session?.role === 'PLANNER' ? '구매팀에 해결 요청' : '생산팀에 일정 조정 요청' }}</button>
-      <RouterLink v-if="linkedRequest?.direction === 'BUY_TO_PLAN' && currentTask && !running && Array.isArray(result?.whatif) && result.whatif.length"
+      <RouterLink v-if="linkedRequest?.direction === 'BUY_TO_PLAN' && !requestClosed(linkedRequest) && linkedRequest.status !== 'WAITING_LINKED' && currentTask && !running && Array.isArray(result?.whatif) && result.whatif.length"
         :to="{path:'/requests',query:{id:linkedRequest.id,analysisTaskId:currentTask}}" @click="w.panel = false">이 생산계획 변경안 검토 →</RouterLink>
       <div v-if="err" class="error">
         {{ err }}<button v-if="w.activeTask" @click="openExisting(w.activeTask)">현재 작업 다시 연결</button>

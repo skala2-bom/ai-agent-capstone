@@ -13,6 +13,9 @@ export interface CoordinationRequest {
   decisionReason?: string; decidedName?: string; parentRequestId?: string;
   linkedRequestId?: string; linkedOutcome?: {status: string; reason: string};
   outcome?: {planChanges?: PlanChange[]};
+  requestKind?: "REMAINING";
+  appliedPlanChanges?: PlanChange[];
+  remainingAnalysis?: Record<string, unknown>;
 }
 export interface RequestPreview {
   sourceTaskId: string; direction: CoordinationRequest["direction"]; fingerprint: string;
@@ -36,10 +39,12 @@ export function receiptDelayMessage(preview: RequestPreview) {
 }
 export interface PlanPreview {
   previewId: string; changes: PlanChange[]; impact: Record<string, unknown>; canExecute: boolean; error?: string;
+  partial?: boolean; remainingImpact?: Record<string, unknown>;
 }
 export const requestLabels: Record<string, string> = {
   OPEN: "접수 대기", IN_PROGRESS: "담당 검토 중", WAITING_REVIEW: "구매팀장 검토 중", WAITING_LINKED: "연결된 구매 요청 검토 중",
   COMPLETED: "처리 완료", REJECTED: "최종 거절", CANCELLED: "요청 취소",
+  PARTIALLY_COMPLETED: "생산계획 저장 완료 · 구매 문제 남음",
 };
 export const requestClosed = (r?: {status: string}) => !!r && ["COMPLETED", "REJECTED", "CANCELLED"].includes(r.status);
 export function canReject(r: CoordinationRequest, role?: string, userId?: string) {

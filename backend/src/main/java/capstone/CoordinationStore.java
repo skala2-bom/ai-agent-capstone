@@ -74,6 +74,28 @@ final class CoordinationStore {
         for (var x : maps(impact.get("excesses"))) scope.add("INV-003|" + x.get("item_id"));
         return new ArrayList<>(scope);
     }
+    Map<String, Object> remaining(Map<String, Object> impact, List<String> scope) {
+        return m("policy_version", impact.get("policy_version"),
+                "shortages", maps(impact.get("shortages")).stream().filter(x -> !Boolean.TRUE.equals(x.get("orderable")) && scope.contains("INV-001|" + x.get("item_id"))).toList(),
+                "excesses", maps(impact.get("excesses")).stream().filter(x -> scope.contains("INV-003|" + x.get("item_id"))).toList(), "warnings", List.of());
+    }
+    boolean improves(Map<String, Object> before, Map<String, Object> after, List<String> scope) {
+        for (String key : scope) {
+            String field = key.startsWith("INV-001|") ? "shortages" : "excesses";
+            java.util.function.ToLongFunction<Map<String, Object>> quantity = x -> field.equals("shortages") ? Math.abs(number(x.get("projected_stock"))) : number(x.get("qty"));
+            long a = maps(remaining(before, List.of(key)).get(field)).stream().mapToLong(quantity).sum();
+            long b = maps(remaining(after, List.of(key)).get(field)).stream().mapToLong(quantity).sum();
+            if (b < a) return true;
+        }
+        return false;
+    }
+    void requireSavedPlans(Map<String, Object> r) {
+        for (var p : maps(r.get("appliedPlanChanges"))) {
+            var rows = db.queryForList("select plan_id,product_id,plan_date::text as plan_date,qty,status from production_plan where plan_id=?", p.get("planId"));
+            if (rows.isEmpty() || !same(rows.getFirst(), p.get("after")))
+                throw conflict("먼저 저장한 생산계획이 변경됐습니다. 현재 계획을 다시 검토하세요.");
+        }
+    }
     void requireSolution(String taskId, Map<String, Object> r) {
         active(r);
         if (!r.isEmpty() && (!"PLAN_TO_BUY".equals(r.get("direction")) || !taskId.equals(r.get("solutionTaskId"))))
@@ -94,10 +116,12 @@ final class CoordinationStore {
         if (!parentId.isBlank()) {
             var parent = get(parentId);
             if ("WAITING_LINKED".equals(parent.get("status")) && r.get("id").equals(parent.get("linkedRequestId"))) {
+                var combined = new LinkedHashMap<>(map(result));
+                if (!maps(parent.get("appliedPlanChanges")).isEmpty()) combined.put("planChanges", parent.get("appliedPlanChanges"));
                 if ("COMPLETED".equals(status)) save(parent, m("status", "COMPLETED", "decidedBy", actor,
-                        "decidedName", name(actor), "decidedAt", Instant.now().toString(), "outcome", result,
-                        "decisionReason", "연결된 구매 요청에서 발주와 생산계획 변경을 함께 완료했습니다."));
-                else save(parent, m("status", "IN_PROGRESS", "linkedOutcome", m("status", status, "reason", reason)));
+                        "decidedName", name(actor), "decidedAt", Instant.now().toString(), "outcome", combined,
+                        "decisionReason", maps(parent.get("appliedPlanChanges")).isEmpty() ? "연결된 구매 요청에서 발주와 생산계획 변경을 함께 완료했습니다." : "생산계획을 먼저 저장한 뒤, 연결된 구매 요청에서 남은 문제를 해결했습니다."));
+                else save(parent, m("status", maps(parent.get("appliedPlanChanges")).isEmpty() ? "IN_PROGRESS" : "PARTIALLY_COMPLETED", "linkedOutcome", m("status", status, "reason", reason)));
             }
         }
         return saved;
@@ -125,6 +149,7 @@ final class CoordinationStore {
     }
     Map<String, Object> agentContext(Map<String, Object> r, String mode) {
         return m("id", r.get("id"), "direction", r.get("direction"), "status", r.get("status"), "mode", mode,
-                "message", r.get("message"), "planOps", r.get("planOps"), "facts", r.get("facts"));
+                "message", r.get("message"), "planOps", r.get("planOps"), "facts", r.get("facts"),
+                "requestKind", r.get("requestKind"), "issueScope", scope(map(r.get("analysis"))));
     }
 }

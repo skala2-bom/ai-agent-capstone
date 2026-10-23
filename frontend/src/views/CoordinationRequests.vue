@@ -6,6 +6,7 @@ import { useCoordination } from "../stores/coordination";
 import { mode, request } from "../services/api";
 import { requestClosed, requestLabels, type CoordinationRequest } from "../services/coordination";
 import PlanRequestReview from "../components/PlanRequestReview.vue";
+import RemainingPurchaseRequest from "../components/RemainingPurchaseRequest.vue";
 import RequestDecision from "../components/RequestDecision.vue";
 import ServerResult from "../components/ServerResult.vue";
 const w = useWorkspace(), c = useCoordination(), route = useRoute(), router = useRouter();
@@ -65,13 +66,19 @@ onMounted(async () => { await c.refresh(); await loadSelected(); });
         <div v-if="requestClosed(selected)" class="outcome" :class="{rejected:selected.status === 'REJECTED'}" role="status">
           <b>{{ requestLabels[selected.status] }}</b><p>{{ selected.decisionReason }}</p><small v-if="selected.decidedName">결정: {{ selected.decidedName }}</small>
           <div v-for="p in selected.outcome?.planChanges" :key="p.planId">{{ p.planId }}: {{ p.before.plan_date }} · {{ p.before.qty }}개 → {{ p.after.plan_date }} · {{ p.after.qty }}개</div>
-          <p v-if="selected.status !== 'COMPLETED'">이 요청으로 인한 생산계획·발주 변경은 실행되지 않았습니다.</p>
+          <p v-if="selected.status !== 'COMPLETED'">{{ selected.appliedPlanChanges?.length ? '추가 처리는 종료됐으며, 먼저 저장한 생산계획은 유지됩니다.' : '이 요청으로 인한 생산계획·발주 변경은 실행되지 않았습니다.' }}</p>
         </div>
         <p v-if="selected.needsAttention" class="warning-box">해결 작업을 확인해 주세요. 대안 없음이나 처리 오류는 최종 거절이 아닙니다. 직접 검토하거나 최종 결정 권한자에게 처리를 요청할 수 있습니다.</p>
+        <div v-if="selected.appliedPlanChanges?.length" class="change-card">
+          <b>이미 저장한 생산계획</b>
+          <p v-for="p in selected.appliedPlanChanges" :key="p.planId">{{ p.planId }}: {{ p.before.plan_date }} · {{ p.before.qty }}개 → {{ p.after.plan_date }} · {{ p.after.qty }}개</p>
+          <small>이 변경은 저장 완료입니다. 이후 구매 요청이 거절되거나 취소되어도 되돌리지 않습니다.</small>
+        </div>
         <details><summary>요청 시 분석된 문제</summary><ServerResult :result="selected.analysis" /></details>
         <template v-if="!requestClosed(selected)">
           <button v-if="!selected.assigneeId && selected.recipientRole === w.session?.role" class="primary" :disabled="busy" @click="action('claim')">내가 담당하기</button>
           <template v-if="mine">
+            <RemainingPurchaseRequest v-if="selected.status === 'PARTIALLY_COMPLETED'" :key="selected.id" :item="selected" />
             <button class="primary" @click="startQuestion(selected)">{{ selected.direction === 'PLAN_TO_BUY' ? 'AI에게 해결 방법 묻기' : 'AI에게 생산 변경안 묻기' }}</button>
             <button v-if="selected.solutionTaskId" @click="w.openTask(selected.solutionTaskId)">연결된 해결 작업 보기</button>
             <button v-if="selected.direction === 'PLAN_TO_BUY' && !selected.managerVisible" :disabled="busy" @click="action('escalate')">팀장에게 요청 검토 전달</button>

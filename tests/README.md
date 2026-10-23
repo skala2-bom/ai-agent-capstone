@@ -142,3 +142,8 @@ docker compose -p capstone-ai-test -f tests/compose.yml down -v
 ```
 
 현재 검증 결과와 남은 프론트/백엔드 이슈는 [변경 기록](../docs/ai-rag-integration-changes.md)에 있다.
+
+
+## 실모델 구매→생산 부분 저장→잔여 구매 E2E (2026-10-23)
+
+`tests/compose.demo-flow.yml`, `tests/browser_demo_flow.cjs`를 사용한다. 실제 LLM·RAG·API·DB·Chrome으로 분석·전송·생산 저장·팀장 실행·재분석까지 확인하며, 테스트 프로젝트의 업무 데이터를 변경한다. 개발 DB와 분리한 실행 명령, 정확한 클릭 순서, 검증 결과 및 Maven 빌드 제한은 [시연·검증 문서](../docs/demo-purchase-production-flow.md)를 참고한다.

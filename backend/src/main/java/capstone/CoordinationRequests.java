@@ -84,6 +84,8 @@ class CoordinationRequests {
                 CoordinationStore.visible(parentRequest, user);
                 if (!CoordinationStore.TERMINAL.contains(parentRequest.get("status"))) {
                     CoordinationStore.assigned(parentRequest, user);
+                    if (!maps(parentRequest.get("appliedPlanChanges")).isEmpty())
+                        throw conflict("생산계획은 이미 저장했습니다. 부서 요청함의 '남은 문제를 구매팀에 요청'으로 현재 문제만 전송하세요.");
                     if (!"BUY_TO_PLAN".equals(parentRequest.get("direction")) || !"PLAN_TO_BUY".equals(draft.get("direction"))
                             || "WAITING_LINKED".equals(parentRequest.get("status"))) throw conflict("연결된 요청의 검토가 끝난 뒤 새 요청을 보내세요.");
                 } else if (!user.getSubject().equals(parentRequest.get("requesterId"))) throw denied("종료된 요청은 원래 요청자가 새 조건으로 다시 보낼 수 있습니다.");

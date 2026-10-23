@@ -1,0 +1,28 @@
+# Isolated real-model demo. Apply after compose.yml and compose.real.yml.
+# Separate images, volumes and localhost port; never reuse the development stack.
+services:
+  backend:
+    image: capstone-demo-flow-backend
+  business-mcp:
+    image: capstone-demo-flow-business
+  rag-mcp:
+    image: capstone-demo-flow-rag
+  rag-index:
+    image: capstone-demo-flow-rag
+  agent:
+    image: capstone-demo-flow-agent
+    volumes: ["../agent:/work/agent:ro"]
+    working_dir: /work/agent
+    environment:
+      AGENT_MODEL_MODE: real
+      LANGSMITH_TRACING: "false"
+  tests:
+    image: capstone-demo-flow-agent
+  frontend:
+    build:
+      context: ../frontend
+      args: {VITE_DATA_MODE: api}
+    image: capstone-demo-flow-frontend
+    ports: ["127.0.0.1:13006:80"]
+    depends_on:
+      backend: {condition: service_healthy}

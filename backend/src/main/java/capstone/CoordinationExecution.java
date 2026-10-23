@@ -27,13 +27,16 @@ class CoordinationExecution {
             var ops = plans.normalize(body.get("whatif")); var changes = plans.preview(ops);
             var before = impact.analyze(List.of()); var after = impact.analyze(ops);
             String error = null;
-            try { requireSolved(before, after, store.scope(map(r.get("analysis")))); }
+            var remaining = store.remaining(after, store.scope(map(r.get("analysis"))));
+            boolean partial = !store.scope(remaining).isEmpty();
+            try { validateChange(before, after, r, partial); }
             catch (ApiError e) { error = e.getMessage(); }
             String previewId = UUID.randomUUID().toString();
             store.events.append(id, m("type", "COORDINATION_PLAN_PREVIEW", "requestId", previewId, "actor", user.getSubject(),
                     "revision", r.get("revision"), "ops", ops, "changes", changes, "before", before,
                     "fingerprint", BusinessSnapshot.fingerprint(db, store.events), "canExecute", error == null));
-            return m("previewId", previewId, "changes", changes, "impact", after, "canExecute", error == null, "error", error);
+            return m("previewId", previewId, "changes", changes, "impact", after, "remainingImpact", remaining,
+                    "partial", partial, "canExecute", error == null, "error", error);
         });
     }
     @PostMapping("/api/coordination/requests/{id}/plan-execute")
@@ -57,12 +60,29 @@ class CoordinationExecution {
                 throw conflict("검토 후 업무 데이터가 바뀌었습니다. 변경안을 다시 검증하세요.");
             var ops = plans.normalize(preview.get("ops")); var before = impact.analyze(List.of());
             var scope = store.scope(map(r.get("analysis")));
-            requireSolved(before, impact.analyze(ops), scope);
+            var predicted = impact.analyze(ops);
+            boolean partial = !store.scope(store.remaining(predicted, scope)).isEmpty();
+            validateChange(before, predicted, r, partial);
             var changes = plans.apply(ops, "부서 요청 " + id + " / " + reason, user.getSubject());
-            var after = impact.analyze(List.of()); requireSolved(before, after, scope);
+            var after = impact.analyze(List.of()); validateChange(before, after, r, partial);
+            var applied = new LinkedHashMap<String, Map<String, Object>>();
+            for (var c : maps(r.get("appliedPlanChanges"))) applied.put((String) c.get("planId"), c);
+            for (var c : changes) {
+                var old = applied.get((String) c.get("planId"));
+                applied.put((String) c.get("planId"), old == null ? c : m("planId", c.get("planId"), "before", old.get("before"), "after", c.get("after")));
+            }
             store.events.append(id, m("type", "COORDINATION_DECISION", "action", "PLAN_EXECUTE", "requestId", command, "body", body, "actor", user.getSubject()));
-            return store.view(store.finish(r, "COMPLETED", reason, user.getSubject(), m("planChanges", changes, "impact", after)), user);
+            r = store.save(r, m("appliedPlanChanges", new ArrayList<>(applied.values()), "remainingAnalysis", store.remaining(after, scope)));
+            if (partial) return store.view(store.save(r, m("status", "PARTIALLY_COMPLETED", "decisionReason", reason,
+                    "outcome", m("planChanges", new ArrayList<>(applied.values()), "impact", after), "linkedOutcome", null)), user);
+            return store.view(store.finish(r, "COMPLETED", reason, user.getSubject(), m("planChanges", new ArrayList<>(applied.values()), "impact", after)), user);
         });
+    }
+    void validateChange(Map<String, Object> before, Map<String, Object> after, Map<String, Object> r, boolean partial) {
+        requireNoWorse(before, after);
+        var scope = store.scope(map(r.get("analysis")));
+        if (partial && !store.improves(before, after, scope))
+            throw conflict("요청의 결품·과잉을 줄이지 못한 변경입니다. 다른 생산 변경안을 검토하세요.");
     }
     static void permitted(Map<String, Object> r, Jwt user) {
         CoordinationStore.assigned(r, user);

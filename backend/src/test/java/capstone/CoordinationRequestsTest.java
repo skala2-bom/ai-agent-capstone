@@ -21,7 +21,7 @@ import static org.mockito.Mockito.*;
 class CoordinationRequestsTest {
     static PostgreSQLContainer<?> pg;
     JdbcTemplate db; TaskEventLog events; Tasks tasks; Approvals approvals; ImpactAnalysis impact;
-    CoordinationRequests requests; CoordinationExecution execution; TaskBatchExecution batch; ScreenApi screen;
+    CoordinationRequests requests; CoordinationExecution execution; CoordinationRemainders remainders; TaskBatchExecution batch; ScreenApi screen;
     final Jwt planner = jwt("planner", "PLANNER"), buyer = jwt("buyer", "BUYER"), manager = jwt("approver", "APPROVER");
     static Jwt jwt(String id, String role) { return Jwt.withTokenValue("test").header("alg", "none").subject(id).claim("role", role).build(); }
     static List<Map<String, Object>> hubOps() { return List.of(m("op", "reschedule_plan", "plan_id", "PP-05", "new_date", "2026-11-25")); }
@@ -43,6 +43,7 @@ class CoordinationRequestsTest {
         screen = new ScreenApi(internal, db, approvals, tx, tasks);
         requests = new CoordinationRequests(db, json, approvals, impact);
         execution = new CoordinationExecution(db, json, approvals, impact);
+        remainders = new CoordinationRemainders(db, json, impact);
         batch = new TaskBatchExecution(db, json, tasks, approvals, internal, impact);
     }
     Map<String, Object> forward() {
@@ -64,9 +65,10 @@ class CoordinationRequestsTest {
     String solve(Map<String, Object> r) { return tasks.createTask(Map.of("coordinationId", (String) r.get("id"), "question", "이 요청 해결해줘"), buyer).get("taskId"); }
     String prepared(Map<String, Object> r) {
         r = claim(r, buyer); String task = solve(r);
-        events.append(task, m("type", "TASK_BATCH_CONTEXT", "workflowVersion", 3, "fingerprint", batch.snapshot(task).get("fingerprint"), "scope", List.of("INV-001|MCU"), "whatif", hubOps()));
+        var ops = maps(r.get("planOps"));
+        events.append(task, m("type", "TASK_BATCH_CONTEXT", "workflowVersion", 3, "fingerprint", batch.snapshot(task).get("fingerprint"), "scope", new CoordinationStore(db, new ObjectMapper()).scope(map(r.get("analysis"))), "whatif", ops));
         List<String> cards = new ArrayList<>();
-        var options = maps(new OptionAnalysis(db, impact).compare(hubOps(), Set.of()).get("options"));
+        var options = maps(new OptionAnalysis(db, impact).compare(ops, Set.of()).get("options"));
         for (var option : options) if (Boolean.TRUE.equals(option.get("recommended"))) {
             cards.add((String) tasks.receiveEvent(task, m("type", "APPROVAL_REQUIRED", "tool", option.get("tool"),
                     "args", option.get("args"), "summary", option.get("summary"))).get("approvalId"));
@@ -301,5 +303,66 @@ class CoordinationRequestsTest {
         boolean completed = "COMPLETED".equals(requests.get(id, planner).get("status"));
         assertThat(poQty()).isEqualTo(completed ? 400 : 500);
         assertThat(planDate()).isEqualTo(completed ? "2026-11-25" : "2026-12-14");
+    }
+
+    Map<String, Object> partialProduction() {
+        String task = chatDelay(true, "PO-2609-008", "PO-2610-106");
+        var r = claim(requests.create(confirmChat(task), buyer), planner);
+        var preview = execution.preview(task, m("expectedRevision", r.get("revision"), "whatif",
+                List.of(m("op", "reschedule_plan", "plan_id", "PP-03", "new_date", "2026-11-28"))), planner);
+        assertThat(preview).containsEntry("canExecute", true).containsEntry("partial", true);
+        assertThat(maps(map(preview.get("remainingImpact")).get("shortages"))).hasSize(1);
+        var command = m("commandId", "partial", "expectedRevision", r.get("revision"), "previewId", preview.get("previewId"), "reason", "릴레이 도착 후 생산, MCU는 구매 후속 대응");
+        assertThatThrownBy(() -> execution.execute(task, command, buyer)).isInstanceOf(ApiError.class);
+        var saved = execution.execute(task, command, planner);
+        execution.execute(task, command, planner);
+        assertThat(saved).containsEntry("status", "PARTIALLY_COMPLETED");
+        assertThat(db.queryForObject("select plan_date::text from production_plan where plan_id='PP-03'", String.class)).isEqualTo("2026-11-28");
+        assertThat(db.queryForObject("select count(*) from change_history where target_type='PRODUCTION_PLAN'", Integer.class)).isEqualTo(1);
+        assertThat(db.queryForObject("select due_date::text from purchase_order where po_id='PO-2609-001'", String.class)).isEqualTo("2026-12-12");
+        return saved;
+    }
+    Map<String, Object> remainingBody(Map<String, Object> r) {
+        var preview = remainders.preview((String) r.get("id"), planner);
+        return m("commandId", "remaining-" + UUID.randomUUID(), "expectedRevision", preview.get("revision"), "expectedFingerprint", preview.get("fingerprint"), "message", "남은 MCU 부족을 해결해 주세요.");
+    }
+    @Test void partialProductionThenRemainingPurchaseCompletesWithoutReapplyingPlans() {
+        var parent = partialProduction(); String id = (String) parent.get("id");
+        var body = remainingBody(parent);
+        assertThatThrownBy(() -> remainders.send(id, body, buyer)).isInstanceOf(ApiError.class);
+        var child = remainders.send(id, body, planner);
+        assertThat(child).containsEntry("requestKind", "REMAINING").containsEntry("planOps", List.of());
+        assertThat(remainders.send(id, body, planner).get("id")).isEqualTo(child.get("id"));
+        assertThat(new CoordinationStore(db, new ObjectMapper()).scope(map(child.get("analysis")))).containsExactly("INV-001|MCU");
+        var changed = new LinkedHashMap<>(body); changed.put("commandId", "another");
+        assertThatThrownBy(() -> remainders.send(id, changed, planner)).isInstanceOf(ApiError.class);
+        String task = prepared(child);
+        assertThat(batch.complete(task, Map.of("requestId", "exec"))).containsEntry("status", "COMPLETED");
+        assertThat(requests.get(id, planner)).containsEntry("status", "COMPLETED");
+        assertThat(maps(map(requests.get(id, planner).get("outcome")).get("planChanges"))).hasSize(1);
+        assertThat(db.queryForObject("select count(*) from change_history where target_type='PRODUCTION_PLAN'", Integer.class)).isEqualTo(1);
+        assertThat(maps(impact.analyze(List.of()).get("shortages"))).isEmpty();
+    }
+    @Test void remainingRequestRejectsStalePreviewAndSavedPlanChanges() {
+        var parent = partialProduction(); String id = (String) parent.get("id"); var body = remainingBody(parent);
+        db.update("update purchase_order set qty=qty+1 where po_id='PO-2609-001'");
+        assertThatThrownBy(() -> remainders.send(id, body, planner)).isInstanceOf(ApiError.class).hasMessageContaining("변경");
+        db.update("update production_plan set qty=qty+1 where plan_id='PP-03'");
+        assertThatThrownBy(() -> remainders.preview(id, planner)).isInstanceOf(ApiError.class).hasMessageContaining("생산계획");
+        assertThat(requests.get(id, planner)).containsEntry("status", "PARTIALLY_COMPLETED");
+    }
+    @Test void partialRequestCannotResubmitAlreadySavedPlanAsAnUncommittedChange() {
+        var parent = partialProduction();
+        assertThatThrownBy(() -> childRequest(parent)).isInstanceOf(ApiError.class).hasMessageContaining("남은 문제를 구매팀에 요청");
+    }
+    @Test void rejectingRemainingPurchaseKeepsAlreadySavedPlanAndReopensPartialRequest() {
+        var parent = partialProduction(); String id = (String) parent.get("id");
+        var child = claim(remainders.send(id, remainingBody(parent), planner), buyer); String childId = (String) child.get("id");
+        requests.escalate(childId, m("expectedRevision", child.get("revision")), buyer);
+        child = requests.get(childId, manager);
+        requests.reject(childId, m("commandId", "reject-remaining", "expectedRevision", child.get("revision"), "reason", "협력사 발주 조정 불가"), manager);
+        assertThat(requests.get(id, planner)).containsEntry("status", "PARTIALLY_COMPLETED").containsEntry("needsAttention", true);
+        assertThat(db.queryForObject("select plan_date::text from production_plan where plan_id='PP-03'", String.class)).isEqualTo("2026-11-28");
+        assertThat(maps(map(requests.get(id, planner).get("outcome")).get("planChanges"))).hasSize(1);
     }
 }

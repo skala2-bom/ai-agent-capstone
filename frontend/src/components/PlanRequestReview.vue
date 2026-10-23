@@ -48,7 +48,7 @@ async function execute() {
   attempt.value ??= {commandId: crypto.randomUUID(), expectedRevision: props.item.revision, previewId: preview.value.previewId, reason: reason.value.trim()};
   try {
     await request(`/coordination/requests/${props.item.id}/plan-execute`, w.session?.token, "POST", attempt.value);
-    await Promise.all([c.refresh(), w.load()]); emit("changed");
+    await Promise.all([c.refresh(), w.load()]); emit("changed"); await reload();
   } catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
@@ -70,12 +70,17 @@ onMounted(reload);
       <ServerResult :result="preview.impact" title="변경 후 영향" />
       <p v-if="preview.error" class="warning-box">{{ preview.error }} 해결이 어려우면 AI와 다른 조건을 검토하거나 요청을 최종 거절하세요.</p>
       <template v-if="preview.canExecute">
+        <div v-if="preview.partial" class="partial-notice">
+          <b>생산계획은 먼저 저장할 수 있지만 구매 문제가 남아 있습니다.</b>
+          <p>저장 후 아래의 ‘남은 문제를 구매팀에 요청’으로 전달하세요. 이 단계에서는 발주를 변경하지 않습니다.</p>
+          <ServerResult v-if="preview.remainingImpact" :result="preview.remainingImpact" title="저장 후 구매팀에 요청할 문제" />
+        </div>
         <p class="change-summary">{{ summary }}</p>
         <label>변경 사유<textarea v-model="reason" maxlength="4000" :disabled="busy || !!attempt" /></label>
-        <button class="primary" :disabled="busy || !reason.trim()" @click="attempt ? execute() : confirming = true">{{ attempt ? '동일 실행 결과 다시 확인' : '생산계획 변경 확정' }}</button>
+        <button class="primary" :disabled="busy || !reason.trim()" @click="attempt ? execute() : confirming = true">{{ attempt ? '동일 실행 결과 다시 확인' : preview.partial ? '생산계획 먼저 저장' : '생산계획 변경 확정' }}</button>
       </template>
     </template>
-    <ApprovalConfirm v-if="confirming" purpose="plan-execute" decision="APPROVED" :summary="summary" :reason="reason" @confirm="execute" @cancel="confirming = false" />
+    <ApprovalConfirm v-if="confirming" :purpose="preview?.partial ? 'plan-partial' : 'plan-execute'" decision="APPROVED" :summary="summary" :reason="reason" @confirm="execute" @cancel="confirming = false" />
   </section>
 </template>
 <style scoped>

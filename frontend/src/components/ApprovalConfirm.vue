@@ -5,7 +5,7 @@ const props = defineProps<{
   decision: "APPROVED" | "REJECTED";
   summary: string;
   reason?: string;
-  purpose?: "review" | "execute" | "cancel" | "request-reject" | "plan-execute";
+  purpose?: "review" | "execute" | "cancel" | "request-reject" | "plan-execute" | "plan-partial";
 }>();
 const emit = defineEmits<{ confirm: []; cancel: [] }>();
 const dialog = ref<HTMLDialogElement>();
@@ -15,6 +15,7 @@ const title = computed(() => props.purpose === "review" ? "이 제안의 검토�
   : props.purpose === "cancel" ? "이 작업을 전체 취소할까요?"
   : props.purpose === "request-reject" ? "부서 요청을 최종 거절할까요?"
   : props.purpose === "plan-execute" ? "생산계획 변경을 확정할까요?"
+  : props.purpose === "plan-partial" ? "생산계획을 먼저 저장할까요?"
   : approve.value ? "이 해결안을 승인할까요?" : "이 해결안을 거절할까요?");
 function keepFocus(event: KeyboardEvent) {
   if (event.key !== "Tab") return;
@@ -47,6 +48,7 @@ onBeforeUnmount(() => dialog.value?.close());
       <p v-else-if="purpose === 'cancel'">이 task의 제안과 수동 수정안을 취소합니다. 발주 변경은 실행하지 않습니다.</p>
       <p v-else-if="purpose === 'request-reject'">요청을 종료하고 작성한 사유를 요청 부서에 전달합니다. 확정된 입고 지연 사실은 유지됩니다.</p>
       <p v-else-if="purpose === 'plan-execute'">현재 데이터로 재검증한 뒤 생산계획을 함께 변경합니다. 발주·입고 정보는 변경하지 않습니다.</p>
+      <p v-else-if="purpose === 'plan-partial'">다른 생산의 결품·과잉이 늘지 않는지 다시 검증하고 생산계획만 저장합니다. 남은 구매 문제는 해결되지 않았으며, 저장 후 구매팀에 별도로 전달해야 합니다. 이후 구매 요청이 거절되어도 저장한 생산계획은 유지됩니다.</p>
       <p v-else-if="approve">승인하면 검증 후 발주 변경이 실행됩니다. 내용을 확인해 주세요.</p>
       <template v-else>
         <p>아래 사유로 거절하며, AI가 대안을 다시 검토합니다.</p>
@@ -58,7 +60,7 @@ onBeforeUnmount(() => dialog.value?.close());
           type="button"
           :class="approve ? 'primary' : 'reject-confirm'"
           @click="emit('confirm')"
-        >{{ purpose === "request-reject" ? "최종 거절 및 사유 전달" : purpose === "plan-execute" ? "생산계획 변경 확정" : purpose === "review" ? "검토 완료" : purpose === "execute" ? "전체 승인 및 실행" : purpose === "cancel" ? "전체 취소" : approve ? "승인하기" : "거절하기" }}</button>
+        >{{ purpose === "request-reject" ? "최종 거절 및 사유 전달" : purpose === "plan-partial" ? "생산계획만 저장" : purpose === "plan-execute" ? "생산계획 변경 확정" : purpose === "review" ? "검토 완료" : purpose === "execute" ? "전체 승인 및 실행" : purpose === "cancel" ? "전체 취소" : approve ? "승인하기" : "거절하기" }}</button>
       </div>
     </dialog>
   </Teleport>

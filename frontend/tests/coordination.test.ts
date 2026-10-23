@@ -38,6 +38,7 @@ describe("department request authority and staging", () => {
   });
   it("keeps attention states open and final rejection locked", () => {
     expect(requestClosed({status:"IN_PROGRESS"})).toBe(false);
+    expect(requestClosed({status:"PARTIALLY_COMPLETED"})).toBe(false);
     expect(requestClosed({status:"REJECTED"})).toBe(true);
     expect(batchLocked({mode:"BATCH",status:"REJECTED"})).toBe(true);
   });

@@ -402,20 +402,28 @@ def basis_text(b: dict, plans: list[dict]) -> str:
     return f"재고 {b['on_hand']:,} + 입고 {received:,} − 소요 {sum(u['qty'] for u in b['uses']):,} [{uses}]"
 
 
-def lead_text(text: str) -> str:
-    """모델 답변의 첫 문단만, 목록·표·제목 줄이 나오기 전까지. 지시를 어기고 목록이나 마크다운 표를 써도
-    (실제 gpt-4o-mini가 그랬다) 시스템 목록과 겹치지 않고, 틀린 숫자가 화면에 나가지 않게"""
-    out = []
-    for line in text.strip().splitlines():
-        t = line.strip()
-        if not t or t.startswith(("- ", "* ", "• ", "|", "#")) or (t.endswith(":") and len(t) <= 30):
-            break
-        out.append(t)
-    return " ".join(out).replace("**", "")
+def impact_lead(impact: dict) -> str:
+    """결품 유무와 발주 가능 여부는 요약도 계산 결과를 따른다."""
+    counts = [("결품", len(impact.get("shortages") or [])),
+              ("안전재고 미달", len(impact.get("warnings") or [])),
+              ("과잉", len(impact.get("excesses") or []))]
+    issues = [f"{name} {count}건" for name, count in counts if count]
+    if not issues:
+        return "결품·안전재고 미달·과잉이 없습니다."
+    text = "분석 결과 " + ", ".join(issues) + "이 있습니다."
+    shortages = impact.get("shortages") or []
+    orderable = sum(bool(s.get("orderable")) for s in shortages)
+    if shortages and not orderable:
+        text += " 결품은 모두 새 발주로는 늦어 기존 발주 조정이나 생산계획 변경을 검토해야 합니다."
+    elif shortages and orderable == len(shortages):
+        text += " 결품은 모두 현재 기준으로 새 발주 시 제때 입고 가능한 부족분입니다. 새 발주는 아직 생성하지 않았습니다."
+    elif shortages:
+        text += " 일부 결품은 새 발주로 대응할 수 있지만, 나머지는 기존 발주 조정이나 생산계획 변경이 필요합니다."
+    return text
 
 
 def chain_note(impact: dict, ops: list[dict], plans: list[dict]) -> str:
-    """연쇄 결품 = 질문에서 바꾸지 않은 계획에 생긴 결품. 계산으로 정확히 알 수 있어 모델에게 맡기지 않는다"""
+    """변경 대상 외의 결품도 알린다. 변경 전 비교 없이 새 결품이라고 단정하지 않는다."""
     changed = {o.get("plan_id") for o in ops or [] if o.get("plan_id")}
     if not changed:
         return ""   # 발주 지연 같은 가정은 바꾼 계획이 없다 — 모든 결품이 그 지연 때문이다
@@ -424,7 +432,7 @@ def chain_note(impact: dict, ops: list[dict], plans: list[dict]) -> str:
         label = plan_label(plans, sh.get("plan_id"), sh.get("plan_date"))
         if sh.get("plan_id") not in changed and label not in hit:
             hit.append(label)
-    return f"연쇄 결품: 바꾸지 않은 {', '.join(hit)}도 공용 부품이 모자라게 됩니다." if hit else ""
+    return f"다른 생산의 결품: 생산일·수량을 바꾸지 않은 {', '.join(hit)}에도 부족분이 있습니다." if hit else ""
 
 
 def describe_impact(impact: dict, plans: list[dict]) -> str:
@@ -621,7 +629,9 @@ async def classify_intent(state: AgentState) -> dict:
         if errors:
             return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
         return {**out, "intent": "ADJUST", "whatif_ops": ops,
-                "notice": "생산관리가 동의한 날짜·수량을 유지하여 해결안을 찾습니다. 최종 실행 시 발주와 생산계획을 함께 반영합니다."}
+                "notice": ("생산관리가 먼저 저장한 생산계획을 기준으로 남은 구매 문제의 해결안을 찾습니다. 생산계획은 다시 변경하지 않습니다."
+                           if coordination.get("requestKind") == "REMAINING" else
+                           "생산관리가 동의한 날짜·수량을 유지하여 해결안을 찾습니다. 최종 실행 시 발주와 생산계획을 함께 반영합니다.")}
     # 자동 작업(SC4 입고 지연 입력 후)은 backend가 whatif를 채워 보낸다. 모델이 추측할 이유가 없다 (contracts 2.6)
     if state.get("whatif_source") == "backend":
         ops = [W.normalize(o) for o in state.get("whatif_ops") or []]
@@ -913,6 +923,9 @@ async def adjust_prepare(state: AgentState) -> dict:
     if not ok:
         return {"failure": impact}
     targets = W.actionable(impact)
+    coordination = state.get("coordination") or {}
+    if coordination.get("requestKind") == "REMAINING":
+        targets = [t for t in targets if W.target_key(t) in (coordination.get("issueScope") or [])]
     return {"impact": impact, "current_impact": impact, "current_ops": state.get("whatif_ops") or [],
             "targets": targets, "scope": list(dict.fromkeys(W.target_key(t) for t in targets))}
 
@@ -1458,9 +1471,8 @@ def respond(state: AgentState) -> dict:
         answer = last.content if last else ""
         impact = state.get("impact") or {}
         if intent == "IMPACT" and impact:
-            # 목록은 모델이 옮겨 적지 않고 계산 결과에서 그대로 붙인다. 모델은 결론·설명 문장만 (prompts/impact.md).
-            # 실제 모델이 6건 중 5건만 옮기고 "새 발주로는 늦음"을 "주문할 수 없다"로 바꿔 쓴 적이 있다 (decisions 6.27)
-            answer = "\n\n".join(x for x in (lead_text(answer), chain_note(impact, state.get("whatif_ops"), plans)) if x)
+            # 실제 모델이 결품 뒤 "문제가 없습니다"를 붙인 사례가 있어 결론도 계산 결과에서 구성한다.
+            answer = "\n\n".join(x for x in (impact_lead(impact), chain_note(impact, state.get("whatif_ops"), plans)) if x)
             if any(impact.get(k) for k in ("shortages", "warnings", "excesses")):
                 answer = (answer + "\n\n" if answer else "") + describe_impact(impact, plans)
             if state.get("scenarios"):

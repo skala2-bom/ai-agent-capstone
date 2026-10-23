@@ -165,7 +165,8 @@ class TaskBatchExecution {
             var whatif = maps(context.get("whatif"));
             if (!linked.isEmpty()) {
                 validateConsent(linked);
-                if (!coordination.same(planChanges.normalize(whatif), linked.get("planOps")))
+                var consentOps = "REMAINING".equals(linked.get("requestKind")) && whatif.isEmpty() ? whatif : planChanges.normalize(whatif);
+                if (!coordination.same(consentOps, linked.get("planOps")))
                     throw conflict("생산관리가 동의한 생산계획 변경과 다릅니다. 새 요청이 필요합니다.");
             }
             var scope = new ArrayList<>(strings(context.get("scope")));
@@ -203,7 +204,8 @@ class TaskBatchExecution {
             requireSolved(before, after, scope);
             db.update("update approval set status='WITHDRAWN', reason='task 실행에서 제외', decided_by=?, decided_at=now() where task_id=? and status='PENDING'",
                     cmd.get("actorId"), id);
-            if (!linked.isEmpty()) coordination.finish(linked, "COMPLETED", "발주와 생산계획 변경을 함께 완료했습니다.", (String) cmd.get("actorId"),
+            if (!linked.isEmpty()) coordination.finish(linked, "COMPLETED",
+                    "REMAINING".equals(linked.get("requestKind")) ? "저장된 생산계획을 유지하고 남은 구매 문제를 해결했습니다." : "발주와 생산계획 변경을 함께 완료했습니다.", (String) cmd.get("actorId"),
                     m("planChanges", savedPlans, "purchaseChanges", executions.stream().map(e -> m("tool", e.get("tool"), "args", e.get("args"))).toList()));
             return events.append(id, m("type", "TASK_BATCH_RESULT", "requestId", requestId, "status", "COMPLETED",
                     "executions", executions, "planChanges", savedPlans, "impact", after, "remainingWhatif", remaining));
@@ -222,6 +224,10 @@ class TaskBatchExecution {
     }
     private void validateConsent(Map<String, Object> linked) {
         if (linked.isEmpty()) return;
+        if ("REMAINING".equals(linked.get("requestKind"))) {
+            if (!maps(linked.get("planOps")).isEmpty()) throw conflict("잔여 문제 요청에는 미저장 생산계획 변경을 넣을 수 없습니다.");
+            coordination.requireSavedPlans(linked);
+        }
         var current = planChanges.preview(maps(linked.get("planOps")));
         if (!coordination.same(current, linked.get("planChanges")) || !coordination.same(map(linked.get("planConsent")).get("ops"), linked.get("planOps")))
             throw conflict("생산계획이 요청 당시와 다릅니다. 생산관리의 재분석과 새 요청이 필요합니다.");
@@ -247,6 +253,9 @@ class TaskBatchExecution {
         for (var issue : maps(after.get("excesses")))
             if (scope.contains("INV-003|" + issue.get("item_id"))) unresolved.add(issue);
         if (!unresolved.isEmpty()) throw conflict("task의 문제가 남아 있어 전체 실행을 보류했습니다: " + unresolved.stream().map(x -> String.valueOf(x.get("item_id"))).distinct().toList());
+        requireNoWorse(before, after);
+    }
+    static void requireNoWorse(Map<String, Object> before, Map<String, Object> after) {
         for (var issue : maps(after.get("shortages"))) {
             var previous = maps(before.get("shortages")).stream().filter(x -> Objects.equals(x.get("item_id"), issue.get("item_id"))
                     && Objects.equals(x.get("plan_id"), issue.get("plan_id")) && Objects.equals(x.get("plan_date"), issue.get("plan_date"))).findFirst();

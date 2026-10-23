@@ -26,6 +26,22 @@ class CoordinationTests(unittest.IsolatedAsyncioTestCase):
             out = await G.classify_intent({"role": "PLANNER", "question": "해결", "coordination": {"direction": "PLAN_TO_BUY", "mode": "SOLVE", "planOps": [HUB]}})
         self.assertEqual(out["intent"], "CLARIFY")
 
+    async def test_remaining_solver_keeps_saved_plans_and_limits_target_scope(self):
+        context = {"direction": "PLAN_TO_BUY", "mode": "SOLVE", "planOps": [],
+                   "requestKind": "REMAINING", "issueScope": ["INV-001|MCU"]}
+        with patch.object(G, "load_plans", AsyncMock(return_value=PLANS)), patch.object(G, "classify_question", AsyncMock()) as model:
+            out = await G.classify_intent({"role": "BUYER", "question": "남은 문제 해결해줘", "coordination": context})
+        self.assertEqual(out["intent"], "ADJUST")
+        self.assertEqual(out["whatif_ops"], [])
+        self.assertIn("다시 변경하지 않습니다", out["notice"])
+        model.assert_not_called()
+        impact = {"shortages": [{"item_id": "MCU", "orderable": False}, {"item_id": "RELAY", "orderable": False}]}
+        with patch.object(G, "call_tool", AsyncMock(return_value=(True, impact))) as tool:
+            prepared = await G.adjust_prepare({**out, "coordination": context})
+        self.assertEqual(tool.call_args.args[2], {"whatif": []})
+        self.assertEqual(prepared["scope"], ["INV-001|MCU"])
+        self.assertEqual(prepared["impact"], impact)  # Other issues remain available to safety verification.
+
     def test_changed_consent_and_purchase_ops_are_rejected(self):
         self.assertTrue(W.coordination_errors({"direction": "PLAN_TO_BUY", "planOps": [HUB]}, [{**HUB, "new_date": "2026-11-26"}]))
         self.assertTrue(W.coordination_errors({"direction": "BUY_TO_PLAN"}, [{"op": "cancel_po", "po_id": "PO-2610-106"}]))

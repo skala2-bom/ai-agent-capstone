@@ -96,6 +96,9 @@ class Evidence(unittest.IsolatedAsyncioTestCase):
     async def test_valid_ops_with_intent_explanation_in_unclear_are_retried(self):
         op = W.WhatifOp(op="reschedule_plan", plan_id="PP-02", new_date="2027-01-04")
         model = Mock()
+        # This test covers classification retries, not the conservative byte-count fallback.
+        # Model-backed token counting is tested separately by the Harness tests.
+        model.get_num_tokens_from_messages.return_value = 1000
         model.with_structured_output.return_value.ainvoke = AsyncMock(side_effect=[
             {"raw": None, "parsed": W.Classification(intent="IMPACT", whatif=[op], unclear="문제 있어와 해결 요청이 함께 있어요")},
             {"raw": None, "parsed": W.Classification(intent="ADJUST", whatif=[op])},
