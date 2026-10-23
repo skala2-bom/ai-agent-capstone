@@ -13,7 +13,7 @@ op 이름은 변경 도구 이름과 같다 (decisions 6.12). 그래서 verify�
 
 import json
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -60,6 +60,11 @@ class WhatifOp(BaseModel):
     po_id: str | None = Field(None, description="발주 ID. 예: PO-2610-106")
     new_due_date: str | None = Field(None, description="새 입고 예정일 YYYY-MM-DD")
     split_qty: int | None = Field(None, description="떼어 먼저 받을 수량(개)")
+    delay_days: int | None = Field(
+        None, description="request_due_date_change에서 새 날짜 없이 '약 1주 늦어진다'처럼 기간만 말할 때의 일수 "
+                          "(1주=7, 2주=14, 3일=3). 이때 new_due_date는 비운다. 날짜는 시스템이 원래 입고 예정일에 더한다")
+    may_extend: bool | None = Field(
+        None, description="이 발주의 지연이 더 길어질 경우를 함께 보자고 하면 true (예: '더 길어지면', '장기화되면')")
 
 
 class Classification(BaseModel):
@@ -72,6 +77,53 @@ class Classification(BaseModel):
     follow_up: bool = Field(
         False, description="앞 질문에 이어서 묻는 말이면 true (예: '그럼 해결 방법은?', '거기에 스위치도 900대로 늘리면?'). "
                            "이전 대화가 없거나 새 주제면 false.")
+
+
+SCENARIO_DAYS = (7, 28, 84)   # 장기화 대비 기간: 1주·4주·12주 고정 (decisions 6.50)
+
+
+def resolve_delays(ops: list[dict], due_dates: dict[str, str]) -> tuple[list[dict], list[dict], list[str]]:
+    """기간으로 말한 입고 지연을 날짜로 바꾸고, 장기화를 볼 발주를 고른다 (decisions 6.50).
+
+    날짜 = 원래 입고 예정일 + delay_days (달력일). 모델은 일수만 뽑고 날짜 계산은 코드가 한다 (6.27·6.49).
+    due_dates는 지금 열린 발주의 입고 예정일. 돌려주는 값: (계약 모양 ops, 장기화 대상 [{po_id, base_due}], 오류)
+    """
+    out, extend, errors = [], [], []
+    for raw in ops:
+        op = dict(raw)
+        if op.get("op") == "request_due_date_change" and (op.get("delay_days") or op.get("may_extend")):
+            base = due_dates.get(op.get("po_id"))
+            if base is None:
+                errors.append(f"{op.get('po_id')}: 아직 입고되지 않은 발주에서 찾지 못했습니다")
+                continue
+            if op.get("delay_days") and not op.get("new_due_date"):
+                op["new_due_date"] = (date.fromisoformat(base) + timedelta(days=op["delay_days"])).isoformat()
+            if op.get("may_extend"):
+                extend.append({"po_id": op["po_id"], "base_due": base})
+        out.append(normalize(op))
+    return out, extend, errors
+
+
+EXTEND_REQUEST = re.compile(r"더\s*길어|장기화|길어질\s*경우|길어지면|더\s*늦어지면|더\s*늘어나면")
+
+
+def mark_extension(question: str, ops: list[dict]) -> list[dict]:
+    """"더 길어질 경우"를 물었는데 모델이 may_extend를 빠뜨려도 장기화 비교가 돌게 한다 (실제 모델이 3번 중 2번 빠뜨렸다).
+
+    대상은 기간으로 말한 지연(delay_days, "약 1주"처럼 아직 불확실한 통보)이다. 그런 지연이 없고 입고 지연이 하나뿐이면 그 발주.
+    모델이 이미 고른 발주가 있으면 그대로 둔다."""
+    delays = [o for o in ops if o.get("op") == "request_due_date_change"]
+    if not EXTEND_REQUEST.search(question) or any(o.get("may_extend") for o in delays):
+        return ops
+    pick = [o for o in delays if o.get("delay_days")] or (delays if len(delays) == 1 else [])
+    return [{**o, "may_extend": True} if any(o is x for x in pick) else o for o in ops]
+
+
+def scenario_ops(ops: list[dict], extend: list[dict], days: int) -> list[dict]:
+    """장기화 대상 발주만 '원래 입고 예정일 + days'로 바꾼 가정. 나머지 가정(확정 지연 등)은 그대로 둔다."""
+    dates = {e["po_id"]: (date.fromisoformat(e["base_due"]) + timedelta(days=days)).isoformat() for e in extend}
+    return [{**o, "new_due_date": dates[o["po_id"]]} if o.get("op") == "request_due_date_change" and o.get("po_id") in dates
+            else o for o in ops]
 
 
 def normalize(op: dict | BaseModel) -> dict:
@@ -97,6 +149,10 @@ def validate_ops(ops: list[dict], plans: list[dict]) -> list[str]:
             continue
         for arg in OP_ARGS[name]:
             v = op.get(arg)
+            if arg == "new_due_date" and name == "request_due_date_change" and v in (None, "") and op.get("delay_days"):
+                if not isinstance(op["delay_days"], int) or op["delay_days"] <= 0:
+                    errors.append(f"{i}번째 {name}: delay_days는 1 이상의 정수여야 함")
+                continue   # 날짜는 resolve_delays가 원래 입고 예정일에 더해 채운다
             if v in (None, ""):
                 errors.append(f"{i}번째 {name}: {arg}가 비어 있음")
             elif arg == "plan_id" and v not in plan_ids:

@@ -158,19 +158,24 @@ class ImpactAnalysis {
         int window = Math.max(part.leadTime(), EXCESS_MIN_WINDOW);
         int p = start;
         Map<String, Object> worstExcess = null;
+        // 결품 근거 (decisions 6.50): 재고 + 그날까지 입고 − 그날까지 소요 = projected_stock
+        List<Map<String, Object>> received = new ArrayList<>(), consumed = new ArrayList<>();
         for (LocalDate d : days) {
             p += in.getOrDefault(d, 0);
+            if (in.containsKey(d)) received.add(m("date", d.toString(), "qty", in.get(d)));
             List<Map<String, Object>> dayWarnings = new ArrayList<>();
             boolean shortToday = false;
             for (Use u : uses) {
                 if (!u.date().equals(d)) continue;
                 p -= u.qty();
+                consumed.add(m("plan_id", u.planId(), "plan_date", d.toString(), "qty", u.qty()));
                 if (p < 0) {
                     shortToday = true;
                     shortages.add(m("rule_id", "INV-001", "item_id", part.id(), "plan_id", u.planId(),
                             "plan_date", d.toString(), "projected_stock", p, "threshold", 0, "qty", -p,
                             // LT-001: 오늘 새로 발주하면 그날까지 오나. true면 위험이 아니라 "추가 발주" 안내다
-                            "orderable", !TODAY.plusDays(part.leadTime()).isAfter(d)));
+                            "orderable", !TODAY.plusDays(part.leadTime()).isAfter(d),
+                            "basis", m("on_hand", start, "receipts", List.copyOf(received), "uses", List.copyOf(consumed))));
                 } else if (p < part.safety()) {   // 경계는 "미만". 안전재고와 같으면 경고 안 함
                     dayWarnings.add(m("rule_id", "INV-002", "item_id", part.id(), "plan_id", u.planId(),
                             "plan_date", d.toString(), "projected_stock", p, "threshold", part.safety()));

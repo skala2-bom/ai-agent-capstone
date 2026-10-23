@@ -98,7 +98,9 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let generation = 0;
 const sc = computed(() => scenarios.find((s) => s.id === w.scenario)!);
 const displayedImpact = computed(() => result.value?.intent === "ADJUST"
-  && "post_execution_impact" in result.value ? result.value.post_execution_impact : result.value?.impact);
+  && "post_execution_impact" in result.value ? result.value.post_execution_impact
+  // 장기화 대비 비교(contracts 49)는 impact 옆 칸이라 함께 넘긴다
+  : result.value?.scenarios ? { ...(result.value.impact as object), scenarios: result.value.scenarios } : result.value?.impact);
 const labels: Record<string, string> = { PREPARED: "검증 완료", PENDING: "승인 대기", EXECUTING: "실행 중",
   EXECUTED: "실행 완료", REJECTED: "거절", WITHDRAWN: "보내지 않음", BLOCKED: "실행 보류", REGISTRATION_UNKNOWN: "승인 등록 확인 필요", EXECUTION_UNKNOWN: "실행 결과 확인 필요" };
 function progress(e: AgentEvent) {
