@@ -471,9 +471,40 @@ def follow_up():
     print("PASS 이어 묻기: 앞 가정 이어받아 해결안 → 새 주제는 이어받지 않음 → 남의 작업엔 이어 묻기 403", flush=True)
 
 
+def follow_up_gaps():
+    """해결 요청이 분석만으로 끝나던 경우 (decisions 6.48): 중간 질문, 이미 해결됨, 대화가 끊김."""
+    def ask(question, parent=None):
+        task_id = request("POST", "/api/ai/tasks", json={"question": question, **({"parentTaskId": parent} if parent else {})})["taskId"]
+        TASK_OWNERS[task_id] = "buyer"
+        return task_id
+
+    reset_seed()
+    hub = {"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-25"}
+    first, _ = finish_task(ask("허브를 11/25로 당기면 문제 있어?"))
+    qa, _ = finish_task(ask("ECN-2026-014 규정이 뭐야?", first["taskId"]))
+    assert qa["result"]["intent"] == "QA"
+    # 1. 가정이 없는 질문을 건너뛰고 허브 가정을 이어받아 해결안을 만든다
+    solve = ask("그럼 해결방안 줘", qa["taskId"])
+    cards = wait_cards(solve, 1, "PENDING")
+    for card in cards:
+        batch_command(solve, "CONFIRM", card)
+    state, _ = batch_command(solve, "EXECUTE")
+    assert state["status"] == "COMPLETED", state
+    task, _ = finish_task(solve)
+    assert W.same_ops(task["result"]["whatif"], [hub]), task["result"]["whatif"]
+    # 2. 이미 실행해 풀린 뒤 또 해결을 요청하면 이유를 먼저 말한다
+    again, _ = finish_task(ask("그럼 해결 방법 만들어 줘", solve))
+    assert "결품·과잉이 없어 해결안을 만들지 않았습니다" in again["answer"], again["answer"]
+    assert "이미 풀렸을 수 있습니다" in again["answer"], again["answer"]
+    # 3. 대화가 끊긴 상태의 해결 요청은 무엇을 풀지 되묻는다
+    lost, _ = finish_task(ask("그럼 해결 방법 만들어 줘"))
+    assert "어떤 변경에 대한 해결 방법인지 함께 알려 주세요" in lost["answer"], lost["answer"]
+    print("PASS 해결 요청: 중간 질문 건너뛰어 이어받기 → 이미 해결됨 안내 → 끊긴 대화는 되묻기", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "manual-private", "follow-up", "recovery-prepare", "recovery-finish"])
+    parser.add_argument("--only", nargs="+", choices=["golden", "SC1", "SC2", "SC3", "SC4", "reject", "mixed", "draft", "system", "qa", "manual-private", "follow-up", "follow-up-gaps", "recovery-prepare", "recovery-finish"])
     args = parser.parse_args()
     for _ in range(60):
         try:
@@ -483,7 +514,7 @@ def main():
             pass
         time.sleep(1)
     checks = {"golden": golden_read_only, **{s: lambda s=s: scenario(s) for s in ("SC1", "SC2", "SC3", "SC4")},
-              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa, "manual-private": manual_and_private, "follow-up": follow_up,
+              "reject": rejection, "mixed": mixed_approvals, "draft": draft_review, "system": system_delay, "qa": qa, "manual-private": manual_and_private, "follow-up": follow_up, "follow-up-gaps": follow_up_gaps,
               "recovery-prepare": recovery_prepare, "recovery-finish": recovery_finish}
     for name in args.only or [k for k in checks if not k.startswith("recovery-")]:
         checks[name]()

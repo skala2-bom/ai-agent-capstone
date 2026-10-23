@@ -187,12 +187,19 @@ PRODUCT_WORDS = {"허브": "FG-HUB", "스위치": "FG-SWITCH", "플러그": "FG-
 MD = re.compile(r"(\d{1,2})/(\d{1,2})")
 
 
+# 해결 요청 표현 (decisions 6.48): "해결방안·해결책·해결안 줘", "어떻게 해결해?", "대안 있어?"도 놓치지 않는다.
+# "해결안 검수 규정"처럼 해결안을 묻는 문서 질문은 요청 동사가 없어 잡히지 않는다
+ADJUST_REQUEST = re.compile(
+    r"해결\s*(?:방법|방안|책)|해결안\s*(?:을|좀)?\s*(?:만들|줘|주|알려|찾|제안|내)|해결해\s*줘|어떻게\s*해결"
+    r"|대안(?:을|이|은)?\s*(?:좀\s*)?(?:찾|만들|제안|있|줘|주|알려)|발주\s*조정")
+
+
 def explicit_adjust_request(question: str) -> bool:
     """긴 가정 뒤의 명시적 해결 요청을 모델이 IMPACT로 놓치지 않게 보완한다.
 
     '해결안 검수 규정' 같은 문서 질문에는 적용하지 않는다. 실행은 여전히 별도 승인을 요구한다.
     """
-    return bool(re.search(r"해결\s*방법|해결해\s*줘|대안(?:을)?\s*(?:찾|만들|제안)|발주\s*조정", question))
+    return bool(ADJUST_REQUEST.search(question))
 
 
 def infer_date(month: int, day: int) -> str:

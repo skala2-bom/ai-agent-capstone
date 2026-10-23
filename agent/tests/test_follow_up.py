@@ -66,6 +66,22 @@ class FollowUpTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((out["intent"], out["whatif_ops"]), ("IMPACT", [HUB]))
         self.assertIn("구매 담당자·팀장만", out["notice"])
 
+    async def test_skips_back_over_a_question_without_assumptions(self):
+        # 6.48: 허브 질문 → 규정 질문(가정 없음) → "그럼 해결 방법" 에서도 허브 가정을 잃지 않는다
+        G.app_graph = SavedStates({
+            "hub": {"question": "허브를 11/25로 당기면 문제 있어?", "intent": "IMPACT", "whatif_ops": [HUB]},
+            "qa": {"question": "ECN-2026-014 규정이 뭐야?", "intent": "QA", "whatif_ops": [], "parent_thread_id": "hub"}})
+        out = await self.ask("그럼 해결 방법 만들어 줘", parent="qa")
+        self.assertEqual((out["intent"], out["whatif_ops"]), ("ADJUST", [HUB]))
+
+    async def test_does_not_skip_back_over_a_current_state_question(self):
+        # "지금 계획대로 가면?"은 가정이 없는 것이 곧 '지금 상태'라는 뜻이다. 그 앞 가정을 되살리지 않는다
+        G.app_graph = SavedStates({
+            "hub": {"question": "허브를 11/25로 당기면 문제 있어?", "intent": "IMPACT", "whatif_ops": [HUB]},
+            "base": {"question": "지금 계획대로 가면?", "intent": "IMPACT", "whatif_ops": [], "parent_thread_id": "hub"}})
+        out = await self.ask("그럼 해결 방법 만들어 줘", parent="base")
+        self.assertEqual(out["whatif_ops"], [])
+
     def test_merge_replaces_same_target_and_keeps_others(self):
         switch = {"op": "change_plan_qty", "plan_id": "PP-03", "new_qty": 900}
         later = {"op": "reschedule_plan", "plan_id": "PP-05", "new_date": "2026-11-20"}
