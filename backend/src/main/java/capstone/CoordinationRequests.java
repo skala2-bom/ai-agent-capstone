@@ -17,9 +17,11 @@ class CoordinationRequests {
     final CoordinationStore store;
     final ProductionPlanChanges plans;
     final ImpactAnalysis impact;
+    final SupplierDelays delays;
     CoordinationRequests(JdbcTemplate db, ObjectMapper json, Approvals approvals, ImpactAnalysis impact) {
         this.db = db; store = new CoordinationStore(db, json);
         plans = new ProductionPlanChanges(db, approvals); this.impact = impact;
+        delays = new SupplierDelays(db, approvals);
     }
 
     @GetMapping("/api/coordination/preview")
@@ -36,21 +38,27 @@ class CoordinationRequests {
         var result = store.events.read(Objects.toString(rows.getFirst().get("result"), "{}"));
         if (!"IMPACT".equals(result.get("intent"))) throw conflict("생산계획 변경 또는 입고 지연의 영향 분석 결과가 필요합니다.");
         List<Map<String, Object>> ops = List.of(), facts = List.of(), changes = List.of();
+        boolean confirmDelay = false;
         if (role.equals("PLANNER")) {
             ops = plans.normalize(result.get("whatif"));
             changes = plans.preview(ops);
         } else {
             var fact = store.events.latest(taskId, "SUPPLIER_DELAY_FACT");
-            if (fact.isEmpty()) throw conflict("확정된 협력사 지연을 먼저 입력하고 자동 분석을 확인하세요.");
-            var po = db.queryForList("select po_id,item_id,qty,due_date::text as due_date,status from purchase_order where po_id=?", fact.get("poId"));
-            if (po.isEmpty() || !"OPEN".equals(po.getFirst().get("status"))
-                    || !store.same(po.getFirst(), fact.get("after"))) throw conflict("입고 정보가 지연 통보 이후 바뀌었습니다. 최신 정보로 다시 분석하세요.");
-            facts = List.of(m("poId", fact.get("poId"), "before", fact.get("before"), "after", fact.get("after"), "reason", fact.get("reason")));
+            if (fact.isEmpty()) {
+                facts = delays.pending(result, store);
+                ops = maps(result.get("whatif"));
+                confirmDelay = true;
+            } else {
+                facts = fact.containsKey("facts") ? maps(fact.get("facts")) : List.of(m("poId", fact.get("poId"), "before", fact.get("before"), "after", fact.get("after"), "reason", fact.get("reason")));
+                for (var f : facts) if (!store.same(delays.current((String) f.get("poId")), f.get("after")))
+                    throw conflict("입고 정보가 지연 통보 이후 바뀌었습니다. 최신 정보로 다시 분석하세요.");
+            }
         }
         var analysis = impact.analyze(ops);
         if (store.scope(analysis).isEmpty()) throw conflict("현재 계산에서 조정이 필요한 긴급 결품·과잉이 없습니다. 최신 분석 결과를 확인하세요.");
         return m("sourceTaskId", taskId, "direction", role.equals("PLANNER") ? "PLAN_TO_BUY" : "BUY_TO_PLAN",
-                "planOps", ops, "planChanges", changes, "facts", facts, "analysis", analysis,
+                "planOps", role.equals("PLANNER") ? ops : List.of(), "planChanges", changes, "facts", facts, "analysis", analysis,
+                "requiresDelayConfirmation", confirmDelay,
                 "fingerprint", BusinessSnapshot.fingerprint(db, store.events));
     }
 
@@ -79,6 +87,17 @@ class CoordinationRequests {
                     if (!"BUY_TO_PLAN".equals(parentRequest.get("direction")) || !"PLAN_TO_BUY".equals(draft.get("direction"))
                             || "WAITING_LINKED".equals(parentRequest.get("status"))) throw conflict("연결된 요청의 검토가 끝난 뒤 새 요청을 보내세요.");
                 } else if (!user.getSubject().equals(parentRequest.get("requesterId"))) throw denied("종료된 요청은 원래 요청자가 새 조건으로 다시 보낼 수 있습니다.");
+            }
+            if (Boolean.TRUE.equals(draft.get("requiresDelayConfirmation"))) {
+                if (!Boolean.TRUE.equals(body.get("confirmDelay"))) throw conflict("입고 지연 사실의 저장·전송에 동의해 주세요.");
+                String reason = text(body, "delayReason");
+                List<Map<String, Object>> recorded = new ArrayList<>();
+                for (var f : maps(draft.get("facts"))) {
+                    var saved = delays.record((String) f.get("poId"), java.time.LocalDate.parse((String) map(f.get("after")).get("due_date")), reason, user.getSubject());
+                    saved.put("itemName", f.get("itemName")); recorded.add(saved);
+                }
+                store.events.append(id, m("type", "SUPPLIER_DELAY_FACT", "facts", recorded, "recordedBy", user.getSubject()));
+                draft.put("facts", recorded); draft.put("requiresDelayConfirmation", false);
             }
             var r = new LinkedHashMap<>(draft);
             r.putAll(m("id", id, "requesterId", user.getSubject(), "requesterName", store.name(user.getSubject()),

@@ -9,6 +9,7 @@
 | 생산 → 구매 | 생산 담당자의 영향 분석 → 변경 전후·문제·요청 내용 확인 및 동의 → 구매 담당 접수 → AI 해결안 → 구매 검토·메모 전송 → 팀장 개별 검토 → 전체 실행 | 팀장 전체 실행 시 발주와 동의한 생산계획을 같은 트랜잭션으로 변경 |
 | 구매팀장 최종 거절 | 부품별 AI 재요청과 별도로 요청 전체 최종 거절 → 사유 필수·확인 팝업 → 생산 요청자에게 결과 알림 | 발주·생산계획 변경 없음. 미실행 승인 카드는 철회 |
 | 구매 → 생산 | 구매 담당자가 확정된 협력사 지연 입력 → 자동 영향 분석 → 생산 조정 요청 → 생산 담당 접수 → AI 분석 또는 수량·날짜 직접 입력 → 변경안 검증 → 확인 후 저장 | 지연은 사실 입력 단계에서 저장. 생산계획은 담당 생산관리자가 확인한 시점에 함께 저장 |
+| 구매 채팅 → 생산 (10/23 추가) | 채팅으로 입고 지연 분석 → 생산팀 요청 버튼 → 대상 발주·입고일·문제·사유 확인 및 저장 동의 → 생산 담당 접수·검토 | 채팅 분석은 미저장. 확인된 전송 시 입고일·이력·사실·부서 요청을 함께 저장. 생산계획은 담당자 확정 시 저장 |
 | 생산 조정 불가 | 담당 생산관리자가 사유를 적어 최종 거절 → 구매 요청자에게 결과 알림 | 이미 저장한 입고 지연 유지. 생산계획은 변경하지 않음 |
 | 구매 → 생산 → 추가 구매 필요 | 받은 요청에서 생산 변경안을 분석하고 구매 요청으로 연결 → 구매 검토·팀장 전체 실행 | 원래 생산 요청과 연결 구매 요청을 함께 완료. 구매 요청 거절·취소 시 원래 요청은 사유와 함께 생산 재검토로 복귀 |
 
@@ -123,3 +124,63 @@ docker compose up -d --build backend agent frontend
 - 실행이 완료된 요청은 자동 역실행하지 않는다. 전체 취소는 아직 실행하지 않은 변경안을 철회하는 동작이다. 확정 지연을 되돌리려면 별도의 실제 업무 변경이 필요하다.
 
 개발 DB·기존 컨테이너와 분리하여 검사했다. 변경 사항은 사용자 요청에 따라 Git 저장소에 반영한다.
+
+
+## 7. 구매 채팅에서 입고 지연 전송 (10/23)
+
+초기 seed 기준 테스트 질문:
+
+> 11/13 와이파이칩 입고일이 일주일 늦어졌어. 문제있나?
+
+1. 구매 계정(`buyer`)의 새 대화에서 질문한다. `PO-2609-002`의 기존 입고일 2026-11-13에 7일을 더해 2026-11-20으로 분석한다. 이때 실제 입고일은 그대로이다.
+2. 결과의 **생산팀에 일정 조정 요청**을 누른다. 전송 창에 발주·변경 전후 날짜·현재 재계산한 문제와 요청 내용이 채워진다. 닫기만 하면 저장하지 않는다.
+3. **지연 사유**를 입력하고 실제 입고일 저장·전송에 동의한 뒤 **지연 사실 반영 및 생산팀에 전송**을 누른다.
+4. 생산 계정(`planner`)의 부서 요청함에서 접수한다. **AI에게 생산 변경안 묻기**로 `플러그 11/16 생산을 11/21로 미루면 문제 있어?`를 질문한다.
+5. **이 생산계획 변경안 검토 →**에서 검증하고 사유를 작성한 뒤 확정한다. 구매 요청함에 처리 결과가 표시된다. 생산팀의 최종 거절은 이미 확인해 저장한 입고 지연을 취소하지 않는다.
+
+### 추가 계약
+
+- `list_receipts` 결과에 `item_name` 추가. 지연 질문에만 OPEN 발주 목록을 분류 컨텍스트로 전달하며 가격은 포함하지 않는다.
+- 분류 `receipt_delays[]`: `po_id` 또는 `item_name`, 선택 `original_due_date`, `delay_days` 또는 `new_due_date`. 원래 입고일에 대한 날짜 계산은 코드가 수행한다. 같은 부품·원래 날짜에 발주가 여러 개면 후보 번호를 제시한다.
+- `DONE.result.receipt_delay = {reported, changes:[{poId,itemName,before,after}]}`. 미저장 분석 결과이며, `intent/whatif/impact` 계약은 유지한다. `before/after`에는 PO ID·품목·수량·입고일·상태만 둔다.
+- 전송 미리보기 `requiresDelayConfirmation=true`이면 생성 요청에 `confirmDelay:true`, 공백이 아닌 `delayReason`을 추가해야 한다. 기존 `message`, `expectedFingerprint`, `commandId`도 유지한다.
+- 서버는 본인 완료 IMPACT 작업, BUYER 권한, 확정 통보 메타데이터, 순수 입고일 지연 whatif, 유일한 OPEN 발주, 분석 당시 before/after 일치를 검사한다. 긴급 결품·과잉이 있어야 전송한다.
+- 전송 확인 시 PO 날짜·이력·신뢰 가능한 `SUPPLIER_DELAY_FACT`·`COORDINATION_REQUEST`가 한 트랜잭션으로 저장된다. 기존 단일 fact와 새 `facts[]` 형식을 함께 읽는다. 역방향 요청의 `planOps`는 빈 목록이다.
+- 가정·추정·가능성 표현은 분석만 수행한다. `늦어지면?`, `늦어질 수 있다`, `약 1주` 등을 확정 사실로 저장하지 않는다. 한 작업에서 가정과 확정 지연을 섞으면 자동 전송 대상으로 취급하지 않는다. 1·4·12주 비교 생성은 별도 개발 범위이다.
+
+### 변경 파일
+
+| 영역 | 파일 | 내용 |
+|---|---|---|
+| AI | `agent/receipt_delay.py`, `whatif.py`, `graph.py`, `prompts/classify_receipt_delay.md`, `eval_golden.py` | 실제 발주 해석, 상대 기간 계산, 모호성·가정 구분, 분석 스냅샷, 기존 평가 경로 연동 |
+| Backend | `SupplierDelays.java`, `CoordinationRequests.java`, `ScreenApi.java`, `InternalApi.java` | 공통 사실·이력 저장, 확인된 채팅 전송의 원자 처리, 동시 변경·중복 검사, 품목명 조회. DB DDL 변경 없음 |
+| Frontend | `AiPanel.vue`, `CoordinationRequestForm.vue`, `services/coordination.ts` | 전송 버튼, 변경 전후·자동 채운 요청 내용, 지연 사유·저장 동의 |
+| 검증 | `test_receipt_delay.py`, `integration_chat_delay.py`, `browser_chat_delay.cjs`, `check_chat_delay_model.py`, 기존 Java·프론트 테스트 | 날짜·권한·저장 시점·중복·롤백·실제 HTTP·브라우저·실제 모델 추출 |
+
+### 재현 명령
+
+아래 프로젝트는 개발 DB와 별도 볼륨을 사용한다. 통합 테스트는 `capstone_ai_test` DB의 데이터를 초기화한다.
+
+```bash
+docker compose -p capstone-chat-delay-test -f tests/compose.yml -f tests/compose.coordination-ui.yml up -d --build --wait
+docker compose -p capstone-chat-delay-test -f tests/compose.yml run --rm tests python -u integration_chat_delay.py
+# 위 통합 검사가 끝나면 seed 상태가 유지되어 브라우저 검사를 이어 실행할 수 있다.
+PLAYWRIGHT_MODULE=/설치경로/playwright-core node tests/browser_chat_delay.cjs
+# 실제 모델 추출만 검사할 때: demo 질문·발주 목록이 OpenAI API로 전송되며 비용 발생.
+# 입고 변경을 실행하기 전의 seed 상태에서 실행한다.
+env -u OPENAI_API_KEY -u OPENAI_MODEL docker compose --env-file .env -p capstone-chat-delay-test -f tests/compose.yml -f tests/compose.real.yml run --rm --no-deps tests python -u check_chat_delay_model.py
+# 이번 테스트 프로젝트와 그 테스트 데이터만 제거
+docker compose -p capstone-chat-delay-test -f tests/compose.yml -f tests/compose.coordination-ui.yml --profile tools down -v
+```
+
+실제 모델 검사는 확정 통보·가정·모호한 발주 3개 질문의 분류·날짜 추출만 수행한다. 전체 연결 검사는 실제 API·DB·MCP·큐와 규칙 모델로 수행하며, 둘을 구분해 결과를 기록한다.
+
+
+10/23 검증 기록:
+
+- 백엔드 전체 75건 통과. 변경 후 입고·부서 요청 관련 21건 재확인.
+- 프론트 58건 및 TypeScript/프로덕션 빌드 통과.
+- AI 날짜/분류·Harness·승인·부서 요청 및 기존 이어 묻기 테스트 통과.
+- 신규 채팅 통합 2개, 기존 양방향·거절·연결 통합 6개, 실제 Chrome 전송·취소·생산 접수 통과.
+- 실제 모델 추출 3문항 통과(총 4회 호출): 확정·가정 각 1회, 발주가 모호한 경우 2회 후 되묻기. 전체 실모델 E2E를 수행한 결과는 아님.
+- Docker 최초 빌드 성공 후 재빌드에서 Maven 일부 의존성 조회 실패, 로컬 JAR 패키징에서도 플러그인 클래스 누락 발생. 최종 백엔드 통합 검증은 최초 테스트 이미지의 JAR에 Maven 테스트를 통과한 최종 `SupplierDelays.class`를 교체한 별도 테스트 이미지로 수행. 저장소의 의존성 버전·Dockerfile은 변경하지 않음. 배포 환경의 정규 재빌드 성공 여부는 별도 확인 필요.

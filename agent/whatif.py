@@ -17,6 +17,7 @@ from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from receipt_delay import DelayMention
 
 BASE_DATE = date(2026, 11, 2)  # 시연 기준일 (contracts 1.4)
 
@@ -66,6 +67,7 @@ class Classification(BaseModel):
     """질문 분류 결과."""
     intent: Literal["IMPACT", "ADJUST", "QA"]
     whatif: list[WhatifOp] = Field(default_factory=list)
+    receipt_delays: list[DelayMention] = Field(default_factory=list, description="입고 지연 언급. 원래 날짜/상대 기간은 여기에 추출하고 같은 변경을 whatif에 중복 기재하지 않는다")
     unclear: str | None = Field(
         None, description="계획 ID·날짜·수량을 하나로 정할 수 없을 때만 부족한 정보. "
                           "의도 선택 이유를 쓰지 않는다. 질문에 원래 생산일과 새 날짜가 있어 계획을 특정할 수 있으면 null.")

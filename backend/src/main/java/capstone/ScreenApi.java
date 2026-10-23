@@ -186,19 +186,9 @@ class ScreenApi {
         if (!(body.get("reason") instanceof String reason) || reason.isBlank())
             throw ApiError.invalid("사유가 없습니다.", "협력사 통보 내용을 reason에 적어 주세요. 변경 이력에 남습니다.");
         Map<String, Object> po = tx.execute(t -> {
-            List<Map<String, Object>> rows = db.queryForList(
-                    "select po_id, item_id, qty, due_date::text as due_date, status from purchase_order where po_id = ? for update", id);
-            if (rows.isEmpty())
-                throw new ApiError("NOT_FOUND", "발주 " + id + "을(를) 찾을 수 없습니다.", "GET /api/purchase-orders에서 ID를 확인하세요.");
-            Map<String, Object> before = rows.getFirst();
-            if (!"OPEN".equals(before.get("status")))
-                throw new ApiError("PO_NOT_OPEN", "열려 있는 발주가 아닙니다.", "현재 상태는 " + before.get("status") + "입니다.");
             LocalDate due = notBeforeToday(body.get("due_date"), "due_date");
-            db.update("update purchase_order set due_date = ? where po_id = ?", due, id);
-            Map<String, Object> after = new LinkedHashMap<>(before);
-            after.put("due_date", due.toString());
-            approvals.history("PURCHASE_ORDER", id, "supplier_delay", before, after, (String) body.get("reason"), user.getSubject(), null);
-            body.put("_before", before.get("due_date"));
+            var fact = new SupplierDelays(db, approvals).record(id, due, (String) body.get("reason"), user.getSubject());
+            body.put("_before", TaskBatchExecution.map(fact.get("before")).get("due_date"));
             // 응답은 바뀐 발주 한 건, 목록 조회(/api/purchase-orders)와 같은 모양
             return db.queryForList("""
                     select po_id, item_id, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,

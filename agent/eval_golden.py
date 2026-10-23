@@ -17,6 +17,7 @@ from pathlib import Path
 
 import graph as G
 import whatif as W
+import receipt_delay as D
 
 
 async def main(path: str) -> int:
@@ -29,7 +30,13 @@ async def main(path: str) -> int:
     print("\n[1] classify_intent — whatif 추출")
     for c in [c for c in cases if c["kind"] == "question"]:
         try:
-            got, errors, _ = await G.classify_question(c["question"], plans)
+            context = {}
+            if D.relevant(c["question"]):
+                ok, receipts = await G.call_tool(state, "list_receipts", {"status": "OPEN"}, quiet=True)
+                if not ok:
+                    raise G.ToolUnavailable(receipts)
+                context["receipts"] = receipts["purchase_orders"]
+            got, errors, _ = await G.classify_question(c["question"], plans, **context)
         except Exception as e:  # 모델 시간 초과 등. 한 문항 때문에 평가 전체가 멈추지 않게 한다
             failed += 1
             print(f"  ERROR {c['id']:5} {type(e).__name__}: {e}")
