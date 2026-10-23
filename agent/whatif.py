@@ -104,6 +104,37 @@ def resolve_delays(ops: list[dict], due_dates: dict[str, str]) -> tuple[list[dic
     return out, extend, errors
 
 
+def po_errors(question: str, ops: list[dict], pos: list[dict], allowed: set[str] = frozenset()) -> list[str]:
+    """발주 번호 없이 품목·협력사로 말한 질문에서 고른 발주가 맞는지 본다 (decisions 6.51).
+
+    실제 모델이 "세미온반도체 MCU 입고가 1주 늦어지면"에 릴레이 발주를 골랐다 (변형 V5). 그래서:
+    질문에 발주 번호가 없으면 그 발주의 품목이 질문에 있어야 하고, 같은 품목의 열린 발주가 여러 건이면
+    원래 입고일이 질문에 있어야 한다. 아니면 모델에게 알려 되묻게 한다. pos가 비면 검사하지 않는다.
+    allowed는 이어 묻기에서 앞 질문이 이미 정한 발주다 ("그럼 12주까지 가면?").
+    """
+    by_id = {p["po_id"]: p for p in pos}
+    errors = []
+    for op in ops:
+        po = op.get("po_id")
+        if not pos or not po or po in question or po in allowed:
+            continue
+        p = by_id.get(po)
+        if p is None:
+            errors.append(f"{po}: 열린 발주 표에 없는 발주임")
+            continue
+        if p["item_id"] not in question and (p.get("item_name") or p["item_id"]) not in question:
+            errors.append(f"{po}: 질문에 이 발주의 품목({p.get('item_name') or p['item_id']})이 없음. "
+                          "발주를 하나로 정할 수 없으면 whatif를 비우고 unclear에 적어라")
+            continue
+        same = [q for q in pos if q["item_id"] == p["item_id"]]
+        m, d = int(p["due_date"][5:7]), int(p["due_date"][8:10])
+        if len(same) > 1 and f"{m}/{d}" not in question and not re.search(rf"{m}\s*월\s*{d}\s*일", question):
+            errors.append(f"{p.get('item_name') or p['item_id']} 열린 발주가 {len(same)}건("
+                          + ", ".join(f"{q['po_id']} 입고 {q['due_date']}" for q in same)
+                          + ")이라 하나로 정할 수 없음. whatif를 비우고 unclear에 발주 번호나 원래 입고일을 물어라")
+    return errors
+
+
 EXTEND_REQUEST = re.compile(r"더\s*길어|장기화|길어질\s*경우|길어지면|더\s*늦어지면|더\s*늘어나면")
 
 
