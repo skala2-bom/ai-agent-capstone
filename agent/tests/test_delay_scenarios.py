@@ -45,7 +45,10 @@ class DelayScenarioTest(unittest.IsolatedAsyncioTestCase):
     def test_extension_phrase_marks_the_uncertain_delay_when_model_forgets(self):
         forgot = [RELAY, {**MCU, "may_extend": None}]
         marked = W.mark_extension(QUESTION, forgot)
-        self.assertEqual([o.get("may_extend") for o in marked], [None, True])   # 기간으로 말한 MCU만
+        self.assertEqual([bool(o.get("may_extend")) for o in marked], [False, True])   # 기간으로 말한 MCU만
+        pos = [{"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이"}, {"po_id": "PO-2609-008", "item_id": "MCU", "item_name": "MCU"}]
+        both = [{**RELAY, "may_extend": True}, {**MCU, "may_extend": True}]   # 모델이 확정 지연(릴레이)에도 붙인 경우
+        self.assertEqual([bool(o["may_extend"]) for o in W.mark_extension(QUESTION, both, pos)], [False, True])   # "MCU 지연이 더 길어질 경우"
         self.assertEqual(W.mark_extension("PO-2610-106 입고가 11/27로 늦어지면 장기화되면 어때?", [RELAY])[0]["may_extend"], True)
         self.assertEqual(W.mark_extension("두 지연을 함께 분석해 줘", forgot), forgot)
 

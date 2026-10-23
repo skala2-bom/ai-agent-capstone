@@ -8,7 +8,7 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-23 — 아래 "최근 변경" 표의 44~51번 (Phase 2, 48~51번은 10/23). 2026-10-21 — 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
+> **갱신**: 2026-10-23 — 아래 "최근 변경" 표의 44~52번 (Phase 2, 48~52번은 10/23). 2026-10-21 — 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
 
 ## 최근 변경 — 각 파트가 확인할 것 (10/20~10/22, 모든 파트)
 
@@ -16,6 +16,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 52 | **생산계획 변경 효과** — 영향 분석 질문이 생산계획을 바꾸고 다른 가정(입고 지연 등)도 있으면 `DONE.result.plan_effect{resolved[], new[], remaining[]}`를 **덧붙인다** (결품 항목 모양, remaining은 `before_qty` 추가). 그 계획 변경만 뺀 가정과 (부품, 생산계획) 단위로 비교한 것. 생산계획을 바꾼 영향 분석 답변 끝에 "생산계획은 아직 변경되지 않았습니다 …" 문장. 기존 칸은 그대로 | 3.2, decisions 6.55 | 답변 문장으로 표시됨(화면 변경 없음). 필요하면 `plan_effect`로 표 | ✅ 반영함: `plan_effect`·`effect_lines`, `restates_previous`, `classify_follow_up.md`·`impact.md` |
 | 51 | **질문 해석 실패 안내 (10/23, 로컬)** — 명시된 새 입고일과 AI가 덧붙인 지연 일수가 일치하면 날짜로 검증. 충돌·임의 날짜·발주 모호성은 차단. `CLARIFY`의 `DONE.result.clarification`에 실패 단계·대상·필드·추출값·다음 행동 추가 | 3.2 | 채팅·작업 이력에서 `NEEDS_INPUT`은 추가 정보 필요, `INTERPRETATION_ERROR`는 질문 해석 실패로 표시 | 내부 재시도 지시문과 사용자 안내 분리. 검증 시도는 agent 체크포인트에 저장. 기존 intent/whatif/impact, backend·DB 구조 유지 |
 | 50 | **구매 채팅에서 입고 지연→생산 요청 연결** — 부품·원래 입고일로 OPEN 발주를 찾고 상대 기간은 기존 due_date에 계산. `DONE.result.receipt_delay`는 미저장 분석 스냅샷이며 사실 이벤트가 아님. 전송 미리보기의 `requiresDelayConfirmation=true`이면 `confirmDelay=true`, `delayReason` 필수. 입고일·변경 이력·사실 이벤트·생산 요청을 한 트랜잭션으로 저장. 가정·모호한 발주·변경된 데이터는 차단 | [상세·검증](coordination-requests.md#7-구매-채팅에서-입고-지연-전송-1023) | 채팅 요청 버튼, 변경 전후·사유·명시 동의. DB 구조 변경 없음 | receipt_delays 추출·실제 발주 조회·코드 날짜 계산·snapshot. 기존 intent/whatif/impact 유지 |
 | 49 | **공급 지연 장기화 비교 + 결품 근거** — `analyze_impact` 결품 항목에 `basis{on_hand, receipts[{date, qty}], uses[{plan_id, plan_date, qty}]}` 추가 (재고 + 그날까지 입고 − 그날까지 소요 = `projected_stock`). 질문이 "약 1주 늦어진다"처럼 기간만 말하면 agent가 **원래 입고 예정일 + 일수**로 날짜를 채운다(분류 칸 `delay_days`). "더 길어지면"을 물은 발주(`may_extend`)는 agent가 1·4·12주(7·28·84일)로 각각 계산해 `DONE.result.scenarios[{weeks, delay_days, due_dates, impact}]`를 **덧붙인다**. `impact`는 통보 기준 그대로이고, 장기화 비교에서는 해결안·승인 카드를 만들지 않는다. whatif 계약(op·인자)은 그대로 | 2.2, 3.2, decisions 6.50 | ✅ 반영함: `ServerResult.vue` 결품마다 근거 한 줄, 아래 "장기화 대비 비교" 표(새로 생긴 결품 표시) | ✅ 반영함: `WhatifOp.delay_days·may_extend`, `resolve_delays`·`scenario_ops`, `delay_scenarios`, `classify.md`·`impact.md` |
