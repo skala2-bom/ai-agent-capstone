@@ -17,6 +17,7 @@ from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from receipt_delay import DelayMention, name_key
 
 BASE_DATE = date(2026, 11, 2)  # 시연 기준일 (contracts 1.4)
 
@@ -71,6 +72,7 @@ class Classification(BaseModel):
     """질문 분류 결과."""
     intent: Literal["IMPACT", "ADJUST", "QA"]
     whatif: list[WhatifOp] = Field(default_factory=list)
+    receipt_delays: list[DelayMention] = Field(default_factory=list, description="입고 지연 언급. 원래 날짜/상대 기간은 여기에 추출하고 같은 변경을 whatif에 중복 기재하지 않는다")
     unclear: str | None = Field(
         None, description="계획 ID·날짜·수량을 하나로 정할 수 없을 때만 부족한 정보. "
                           "의도 선택 이유를 쓰지 않는다. 질문에 원래 생산일과 새 날짜가 있어 계획을 특정할 수 있으면 null.")
@@ -122,16 +124,16 @@ def po_errors(question: str, ops: list[dict], pos: list[dict], allowed: set[str]
         if p is None:
             errors.append(f"{po}: 열린 발주 표에 없는 발주임")
             continue
-        if p["item_id"] not in question and (p.get("item_name") or p["item_id"]) not in question:
+        if not any(name_key(value) in name_key(question) for value in (p["item_id"], p.get("item_name") or p["item_id"])):
             errors.append(f"{po}: 질문에 이 발주의 품목({p.get('item_name') or p['item_id']})이 없음. "
-                          "발주를 하나로 정할 수 없으면 whatif를 비우고 unclear에 적어라")
+                          "지연된 품목과 발주 번호 또는 원래 입고일을 확인해 주세요.")
             continue
         same = [q for q in pos if q["item_id"] == p["item_id"]]
         m, d = int(p["due_date"][5:7]), int(p["due_date"][8:10])
-        if len(same) > 1 and f"{m}/{d}" not in question and not re.search(rf"{m}\s*월\s*{d}\s*일", question):
+        if len(same) > 1 and p["due_date"] not in question and f"{m}/{d}" not in question and not re.search(rf"{m}\s*월\s*{d}\s*일", question):
             errors.append(f"{p.get('item_name') or p['item_id']} 열린 발주가 {len(same)}건("
                           + ", ".join(f"{q['po_id']} 입고 {q['due_date']}" for q in same)
-                          + ")이라 하나로 정할 수 없음. whatif를 비우고 unclear에 발주 번호나 원래 입고일을 물어라")
+                          + ")이라 하나로 정할 수 없습니다. 발주 번호나 원래 입고일을 알려 주세요.")
     return errors
 
 
@@ -139,7 +141,7 @@ ARRIVAL = re.compile(r"들어오|들어온|입고|도착|늦어|지연|밀리")
 
 
 def supply_premise_errors(question: str, ops: list[dict], pos: list[dict], inherited: set[str] = frozenset()) -> list[str]:
-    """질문의 입고 이야기가 가정에서 빠지거나, 바뀌는 게 없는 입고 가정이면 되묻게 한다 (decisions 6.52).
+    """질문의 입고 이야기가 가정에서 빠지거나, 바뀌는 게 없는 입고 가정이면 되묻게 한다 (decisions 6.55).
 
     실측: 앞 질문 없이 "릴레이가 11/27에 들어온다면 PP-03을 11/26으로 옮기면?" → 모델이 릴레이 입고를 빼고
     계산해 "문제가 없습니다"라고 답했다. 열린 릴레이 발주가 둘(11/20·11/27 예정)이라 어느 것인지 정할 수 없다.
@@ -173,30 +175,38 @@ def supply_premise_errors(question: str, ops: list[dict], pos: list[dict], inher
 EXTEND_REQUEST = re.compile(r"더\s*길어|장기화|길어질\s*경우|길어지면|더\s*늦어지면|더\s*늘어나면")
 
 
-def mark_extension(question: str, ops: list[dict]) -> list[dict]:
-    """"더 길어질 경우"를 물었는데 모델이 may_extend를 빠뜨려도 장기화 비교가 돌게 한다 (실제 모델이 3번 중 2번 빠뜨렸다).
+def mark_extension(question: str, ops: list[dict], pos: list[dict] | None = None) -> list[dict]:
+    """"더 길어질 경우"를 물으면 장기화 비교 대상(may_extend)을 코드로 정한다 (6.50·6.55).
 
-    대상은 기간으로 말한 지연(delay_days, "약 1주"처럼 아직 불확실한 통보)이다. 그런 지연이 없고 입고 지연이 하나뿐이면 그 발주.
-    모델이 이미 고른 발주가 있으면 그대로 둔다."""
+    ① 장기화 표현 바로 앞에 품목 이름이 있으면("MCU 지연이 더 길어질 경우") 그 품목 발주만 — 모델이 확정 지연(릴레이)에도
+    표시를 붙인 적이 있다. ② 아니면 모델 표시를 따르고, ③ 모델이 빠뜨렸으면 기간으로 말한 지연(delay_days), 그것도 없으면
+    입고 지연이 하나뿐일 때 그 발주. 실제 모델이 may_extend를 3번 중 2번 빠뜨렸다."""
     delays = [o for o in ops if o.get("op") == "request_due_date_change"]
-    if not EXTEND_REQUEST.search(question) or any(o.get("may_extend") for o in delays):
+    if not delays or not EXTEND_REQUEST.search(question):
         return ops
-    pick = [o for o in delays if o.get("delay_days")] or (delays if len(delays) == 1 else [])
-    return [{**o, "may_extend": True} if any(o is x for x in pick) else o for o in ops]
-
+    names = {p["po_id"]: p.get("item_name") or p["item_id"] for p in pos or []}
+    near = {o.get("po_id") for m in EXTEND_REQUEST.finditer(question) for o in delays
+            if names.get(o.get("po_id")) and names[o["po_id"]] in question[max(0, m.start() - 25):m.start()]}
+    if near:
+        pick = near
+    elif any(o.get("may_extend") for o in delays):
+        return ops
+    else:
+        pick = {o.get("po_id") for o in delays if o.get("delay_days")} or ({delays[0].get("po_id")} if len(delays) == 1 else set())
+    return [{**o, "may_extend": o.get("po_id") in pick} if o.get("op") == "request_due_date_change" else o for o in ops]
 
 PERIOD = re.compile(r"\d+\s*주")
 
 
 def restates_previous(ops: list[dict], previous_ops: list[dict]) -> bool:
     """이번 질문이 앞 질문의 가정을 그대로 다시 말하는가 ("릴레이가 11/27에 들어온다면 PP-03을 …").
-    그러면 앞 질문에 이어서 묻는 말이다 — 모델이 follow_up을 빠뜨려도 앞 가정(예: MCU 1주 지연)을 잃지 않게 (6.52)."""
+    그러면 앞 질문에 이어서 묻는 말이다 — 모델이 follow_up을 빠뜨려도 앞 가정(예: MCU 1주 지연)을 잃지 않게 (6.55)."""
     prev = [normalize(o) for o in previous_ops]
     return any(normalize(o) in prev for o in ops)
 
 
 def plan_effect(before: dict, after: dict) -> dict:
-    """생산계획을 바꾸기 전·후 결품 비교 (decisions 6.52). (부품, 생산계획) 단위로 맞춘다 — 일정을 옮기면 날짜가 바뀐다.
+    """생산계획을 바꾸기 전·후 결품 비교 (decisions 6.55). (부품, 생산계획) 단위로 맞춘다 — 일정을 옮기면 날짜가 바뀐다.
 
     resolved: 전에 있었는데 사라진 결품 / new: 새로 생긴 결품 / remaining: 그대로 남은 결품(전 수량 before_qty 포함)"""
     key = lambda s: (s.get("item_id"), s.get("plan_id"))

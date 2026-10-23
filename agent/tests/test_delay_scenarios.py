@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import graph as G
 import whatif as W
+import receipt_delay as D
+from unittest.mock import AsyncMock, patch
 
 QUESTION = ("세미온반도체 공장 화재로 MCU 발주 PO-2609-008의 입고가 약 1주 늦어질 수 있다고 합니다. "
             "릴레이 발주 PO-2610-106도 11월 27일로 늦어집니다. 두 지연을 함께 분석하고, "
@@ -18,6 +20,9 @@ PLANS = [{"plan_id": "PP-03", "product_id": "FG-SWITCH", "product_name": "스마
 DUE = {"PO-2609-008": "2026-11-27", "PO-2610-106": "2026-11-20"}
 RELAY = {"op": "request_due_date_change", "po_id": "PO-2610-106", "new_due_date": "2026-11-27"}
 MCU = {"op": "request_due_date_change", "po_id": "PO-2609-008", "delay_days": 7, "may_extend": True}
+RECEIPTS = [{"po_id": po, "due_date": due, "status": "OPEN", "qty": 800,
+             "item_id": "MCU" if po == "PO-2609-008" else "RELAY",
+             "item_name": "MCU" if po == "PO-2609-008" else "릴레이"} for po, due in DUE.items()]
 
 
 def short(item, plan, date, qty, orderable=False):
@@ -40,7 +45,10 @@ class DelayScenarioTest(unittest.IsolatedAsyncioTestCase):
     def test_extension_phrase_marks_the_uncertain_delay_when_model_forgets(self):
         forgot = [RELAY, {**MCU, "may_extend": None}]
         marked = W.mark_extension(QUESTION, forgot)
-        self.assertEqual([o.get("may_extend") for o in marked], [None, True])   # 기간으로 말한 MCU만
+        self.assertEqual([bool(o.get("may_extend")) for o in marked], [False, True])   # 기간으로 말한 MCU만
+        pos = [{"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이"}, {"po_id": "PO-2609-008", "item_id": "MCU", "item_name": "MCU"}]
+        both = [{**RELAY, "may_extend": True}, {**MCU, "may_extend": True}]   # 모델이 확정 지연(릴레이)에도 붙인 경우
+        self.assertEqual([bool(o["may_extend"]) for o in W.mark_extension(QUESTION, both, pos)], [False, True])   # "MCU 지연이 더 길어질 경우"
         self.assertEqual(W.mark_extension("PO-2610-106 입고가 11/27로 늦어지면 장기화되면 어때?", [RELAY])[0]["may_extend"], True)
         self.assertEqual(W.mark_extension("두 지연을 함께 분석해 줘", forgot), forgot)
 
@@ -60,8 +68,7 @@ class DelayScenarioTest(unittest.IsolatedAsyncioTestCase):
                 return True, {"plans": [dict(p) for p in PLANS]}
             if name == "get_item":
                 return True, {"name": args["item_id"]}
-            return True, {"purchase_orders": [{"po_id": k, "item_id": "MCU" if k.startswith("PO-2609") else "RELAY",
-                                               "supplier_name": "세미온반도체", "qty": 800, "due_date": v} for k, v in DUE.items()]}
+            return True, {"purchase_orders": RECEIPTS}
         G.llm, G.M.invoke, G.call_tool = object(), invoke, tool
         try:
             out = await G.classify_intent({"question": QUESTION, "role": "PLANNER"})
@@ -70,6 +77,39 @@ class DelayScenarioTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out["intent"], "IMPACT")
         self.assertEqual(out["whatif_ops"][1]["new_due_date"], "2026-12-04")
         self.assertEqual(out["extend"], [{"po_id": "PO-2609-008", "base_due": "2026-11-27"}])
+
+    async def test_receipt_mentions_preserve_scenario_metadata_and_base_snapshot(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed):
+                parsed = W.Classification(intent="IMPACT", receipt_delays=[
+                    D.DelayMention(po_id="PO-2609-008", delay_days=7, may_extend=True)],
+                    whatif=[W.WhatifOp(**RELAY)] if mixed else [])
+                if not mixed:
+                    parsed.receipt_delays.append(D.DelayMention(po_id="PO-2610-106", new_due_date="2026-11-27"))
+                with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=parsed)), \
+                     patch.object(G, "load_plans", AsyncMock(return_value=PLANS)), \
+                     patch.object(G, "call_tool", AsyncMock(return_value=(True, {"purchase_orders": RECEIPTS}))):
+                    out = await G.classify_intent({"question": QUESTION, "role": "BUYER"})
+                self.assertEqual(out["intent"], "IMPACT")
+                self.assertEqual(out["extend"], [{"po_id": "PO-2609-008", "base_due": "2026-11-27"}])
+                self.assertEqual({o["po_id"]: o["new_due_date"] for o in out["whatif_ops"]},
+                                 {"PO-2609-008": "2026-12-04", "PO-2610-106": "2026-11-27"})
+                self.assertFalse(out["receipt_delay"]["reported"])
+                self.assertEqual(len(out["receipt_delay"]["changes"]), 2)
+                self.assertTrue(all("delay_days" not in o and "may_extend" not in o for o in out["whatif_ops"]))
+
+    async def test_legacy_period_cannot_bypass_receipt_date_guard(self):
+        parsed = W.Classification(intent="IMPACT", whatif=[W.WhatifOp(**MCU)])
+        with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=parsed)):
+            _, errors, _ = await G.classify_question("PO-2609-008 입고가 늦어졌어. 문제 있나?", PLANS, receipts=RECEIPTS)
+        self.assertTrue(errors and "질문에 없는 지연 기간" in errors[0])
+
+    async def test_invented_plan_date_is_not_authorized_by_a_relative_receipt(self):
+        parsed = W.Classification(intent="IMPACT", whatif=[W.WhatifOp(**MCU),
+            W.WhatifOp(op="reschedule_plan", plan_id="PP-05", new_date="2026-12-04")])
+        with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=parsed)):
+            _, errors, _ = await G.classify_question(QUESTION, PLANS, receipts=RECEIPTS)
+        self.assertTrue(any("질문에 없는 날짜" in e for e in errors), errors)
 
     def test_po_without_number_must_match_item_and_be_unique(self):
         pos = [{"po_id": "PO-2609-001", "item_id": "MCU", "item_name": "MCU", "due_date": "2026-12-12"},

@@ -13,7 +13,7 @@ const labels: Record<string, string> = {
   <span
     class="badge"
     :class="{
-      danger: ['결품', '사용 제한', '실패', 'REJECTED', '결품 미해소'].includes(
+      danger: ['결품', '사용 제한', '실패', '질문 해석 실패', 'REJECTED', '결품 미해소'].includes(
         text,
       ),
       warning: [
@@ -21,6 +21,7 @@ const labels: Record<string, string> = {
         '과잉',
         '미검수',
         '보완 요청',
+        '추가 정보 필요',
         'PENDING',
         '승인 대기',
         'DRAFT',

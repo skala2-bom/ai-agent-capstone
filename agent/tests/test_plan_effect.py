@@ -1,4 +1,4 @@
-"""생산계획 변경 효과 (decisions 6.52): 다른 가정(입고 지연) 위에서 계획을 바꿔 보면 바꾸기 전과 비교한다.
+"""생산계획 변경 효과 (decisions 6.55): 다른 가정(입고 지연) 위에서 계획을 바꿔 보면 바꾸기 전과 비교한다.
 팀 시나리오 ②: 릴레이 11/27 + MCU 1주 위에서 PP-03을 11/23 → 11/28. 네트워크·DB·모델 없이 돈다."""
 import sys
 import unittest
@@ -73,6 +73,35 @@ class PlanEffectTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("바뀌는 것이 없음", W.supply_premise_errors(q, [unchanged, move], pos)[0])
         self.assertEqual(W.supply_premise_errors(Q2, [MOVE], pos, {"PO-2610-106", "PO-2609-008"}), [])   # ①에 이어서
         self.assertEqual(W.supply_premise_errors("PP-03을 11/28로 옮기면?", [MOVE], pos), [])            # 입고 이야기 없음
+
+    async def classify(self, question, answers, previous=None, pos=None):
+        saved = (G.llm, G.M.invoke)
+        replies = iter(answers)
+
+        async def invoke(*a, **k):
+            return next(replies)
+        G.llm, G.M.invoke = object(), invoke
+        try:
+            return await G.classify_question(question, PLANS, previous=previous, pos=pos or [])
+        finally:
+            G.llm, G.M.invoke = saved
+
+    async def test_restated_arrival_with_wrong_original_date_uses_previous(self):
+        pos = [{"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이", "qty": 1200, "due_date": "2026-11-20", "status": "OPEN"}]
+        # 실측 P1: 모델이 "11/27"을 원래 입고일로 넣었다 → 발주를 못 찾고 중단됐다
+        wrong = W.Classification(intent="IMPACT", whatif=[W.WhatifOp(**MOVE)], follow_up=False,
+                                 receipt_delays=[{"item_name": "릴레이", "original_due_date": "2026-11-27"}])
+        c, errors, _ = await self.classify(Q2, [wrong, wrong], previous={"question": "①", "whatif_ops": [RELAY, MCU]}, pos=pos)
+        self.assertEqual(errors, [])
+        self.assertTrue(c.follow_up)
+        self.assertEqual(c.receipt_delays, [])
+
+    async def test_dropped_plan_change_is_retried_then_asked(self):
+        q = "11/23 스위치 생산을 900대로 늘리고 11/30 플러그 생산은 500대로 줄이면 어떻게 돼?"
+        empty = W.Classification(intent="IMPACT")   # 실측 Q03: 변경을 통째로 빠뜨려 '문제 없음'이 나갔다
+        c, errors, turns = await self.classify(q, [empty, empty])
+        self.assertEqual(turns, 2)
+        self.assertIn("whatif가 비어", errors[0])
 
     def test_plan_only_question_has_no_compare(self):
         self.assertFalse(W.restates_previous([MOVE], [RELAY, MCU]))
