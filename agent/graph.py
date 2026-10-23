@@ -510,15 +510,27 @@ async def classify_intent(state: AgentState) -> dict:
     return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited}
 
 
+MAX_PREVIOUS_TURNS = 3   # 가정을 찾아 거슬러 올라가는 앞 질문 수
+
+
 async def previous_turn(state: AgentState) -> dict | None:
-    """앞 작업의 질문과 (이어받은 것까지 합친) 가정. 앞 작업이 승인 대기 중이어도 저장된 State에서 읽는다."""
+    """앞 작업의 질문과 (이어받은 것까지 합친) 가정. 앞 작업이 승인 대기 중이어도 저장된 State에서 읽는다.
+
+    바로 앞이 규정 질문(QA)이나 되묻기(CLARIFY)처럼 가정을 다루지 않는 질문이면 그 앞으로 거슬러 올라간다
+    (decisions 6.48). "허브 당기면?" → "규정이 뭐야?" → "그럼 해결 방법"에서 허브 가정을 잃지 않게.
+    영향·해결 질문인데 가정이 비었으면("지금 계획대로 가면?") 그 질문이 곧 '지금 상태'라는 뜻이라 멈춘다.
+    """
     parent = state.get("parent_thread_id")
-    if not parent or app_graph is None:
-        return None
-    values = (await app_graph.aget_state({"configurable": {"thread_id": parent}})).values
-    if not values:
-        return None
-    return {"question": values.get("question", ""), "whatif_ops": values.get("whatif_ops") or []}
+    for _ in range(MAX_PREVIOUS_TURNS):
+        if not parent or app_graph is None:
+            return None
+        values = (await app_graph.aget_state({"configurable": {"thread_id": parent}})).values
+        if not values:
+            return None
+        if values.get("whatif_ops") or values.get("intent") not in ("QA", "CLARIFY"):
+            return {"question": values.get("question", ""), "whatif_ops": values.get("whatif_ops") or []}
+        parent = values.get("parent_thread_id")
+    return None
 
 
 def op_text(op: dict, plans: list[dict]) -> str:
@@ -1153,6 +1165,14 @@ def _adjust_answer(state: AgentState) -> str:
     executions = state.get("executions") or []
     # 구역마다 "제목:" + "- " 항목, 사이는 빈 줄 — 화면이 목록으로 그린다 (decisions 6.27)
     parts = [f"승인된 변경 {len(executions)}건을 실행했습니다." if executions else "현재 분석 결과입니다."]
+    if not executions and not state.get("proposals") and not state.get("scope"):
+        # 해결 요청인데 풀 문제가 없다: 분석만 하고 끝난 것처럼 보이지 않게 이유를 먼저 말한다 (decisions 6.48)
+        if state.get("whatif_ops"):
+            parts = ["이 가정으로 다시 계산하니 기존 발주를 조정해야 할 결품·과잉이 없어 해결안을 만들지 않았습니다."
+                     + (" 앞 작업에서 실행한 변경으로 이미 풀렸을 수 있습니다." if state.get("inherited") else "")]
+        else:
+            parts = ["지금 데이터에는 기존 발주를 조정해야 할 결품·과잉이 없어 해결안을 만들지 않았습니다. "
+                     "어떤 변경에 대한 해결 방법인지 함께 알려 주세요. 예: \"허브를 11/25로 당기면 생기는 결품 해결 방법 만들어 줘\""]
     if executions:
         parts.append("실행한 변경:\n" + "\n".join("- " + describe_execution(e["result"]).removeprefix("실행 결과: ")
                                                 for e in executions))
