@@ -33,6 +33,7 @@ class CoordinationRequestsTest {
     @BeforeEach void setup() {
         var ds = new DriverManagerDataSource(pg.getJdbcUrl(), "app", "app"); db = new JdbcTemplate(ds);
         db.execute("drop function if exists reject_test_plan() cascade");
+        db.execute("drop function if exists reject_test_request() cascade");
         db.execute("truncate app_user,supplier,item,bom,inventory,production_plan,purchase_order,supplier_metric,ai_task,task_event,approval,change_history cascade");
         new ResourceDatabasePopulator(new FileSystemResource("../db/seed.sql")).execute(ds);
         var json = new ObjectMapper(); events = new TaskEventLog(db, json); impact = new ImpactAnalysis(db);
@@ -80,6 +81,81 @@ class CoordinationRequestsTest {
         return task;
     }
     int poQty() { return db.queryForObject("select qty from purchase_order where po_id='PO-2609-001'", Integer.class); }
+    String chatDelay(boolean reported, String... ids) {
+        List<Map<String, Object>> ops = new ArrayList<>(), changes = new ArrayList<>();
+        for (String id : ids) {
+            var before = requests.delays.current(id);
+            var after = new LinkedHashMap<>(before);
+            String due = java.time.LocalDate.parse((String) before.get("due_date")).plusDays(7).toString();
+            after.put("due_date", due);
+            changes.add(m("poId", id, "before", before, "after", after));
+            ops.add(m("op", "request_due_date_change", "po_id", id, "new_due_date", due));
+        }
+        String task = tasks.start("buyer", "BUYER", "입고가 일주일 늦어졌어. 문제 있어?", "USER", null);
+        tasks.addEvent(task, m("type", "DONE", "result", m("intent", "IMPACT", "whatif", ops,
+                "receipt_delay", m("reported", reported, "changes", changes), "impact", impact.analyze(ops))));
+        return task;
+    }
+    Map<String, Object> confirmChat(String task) {
+        var p = requests.preview(task, buyer);
+        return m("sourceTaskId", task, "expectedFingerprint", p.get("fingerprint"), "commandId", UUID.randomUUID().toString(),
+                "message", "생산 일정 조정 요청", "confirmDelay", true, "delayReason", "협력사 확정 지연 통보");
+    }
+    String wifiDate() { return db.queryForObject("select due_date::text from purchase_order where po_id='PO-2609-002'", String.class); }
+
+    @Test void chatDelayPreviewIsReadOnlyAndConfirmationRecordsAndSharesOnce() {
+        String task = chatDelay(true, "PO-2609-002");
+        var p = requests.preview(task, buyer); assertThat(p).containsEntry("requiresDelayConfirmation", true);
+        assertThat(p.get("planOps")).isEqualTo(List.of()); assertThat(wifiDate()).isEqualTo("2026-11-13");
+        var body = confirmChat(task); body.put("confirmDelay", false);
+        assertThatThrownBy(() -> requests.create(body, buyer)).isInstanceOf(ApiError.class).hasMessageContaining("동의");
+        body.put("confirmDelay", true); body.put("delayReason", " ");
+        assertThatThrownBy(() -> requests.create(body, buyer)).isInstanceOf(ApiError.class);
+        assertThat(wifiDate()).isEqualTo("2026-11-13"); body.put("delayReason", "확정 통보");
+        var r = requests.create(body, buyer);
+        assertThat(r).containsEntry("direction", "BUY_TO_PLAN").containsEntry("status", "OPEN");
+        assertThat(wifiDate()).isEqualTo("2026-11-20");
+        assertThat(requests.create(body, buyer).get("id")).isEqualTo(task);
+        assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isEqualTo(1);
+        assertThat(events.latest(task, "SUPPLIER_DELAY_FACT")).containsKey("facts");
+        assertThat(requests.list(planner)).hasSize(1);
+        assertThat(requests.preview(task, buyer)).containsEntry("requiresDelayConfirmation", false);
+        assertThatThrownBy(() -> requests.create(body, planner)).isInstanceOf(ApiError.class);
+    }
+
+    @Test void chatDelayRejectsHypothesesStaleAnalysisAndStalePreview() {
+        String hypothetical = chatDelay(false, "PO-2609-002");
+        assertThatThrownBy(() -> requests.preview(hypothetical, buyer)).isInstanceOf(ApiError.class);
+        String task = chatDelay(true, "PO-2609-002"); var body = confirmChat(task);
+        db.update("update production_plan set qty=qty+1 where plan_id='PP-01'");
+        assertThatThrownBy(() -> requests.create(body, buyer)).isInstanceOf(ApiError.class).hasMessageContaining("바뀌었");
+        db.update("update purchase_order set qty=qty+1 where po_id='PO-2609-002'");
+        assertThatThrownBy(() -> requests.preview(task, buyer)).isInstanceOf(ApiError.class).hasMessageContaining("분석 이후");
+        assertThat(wifiDate()).isEqualTo("2026-11-13");
+        assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isZero();
+    }
+
+    @Test void multiReceiptDelayAndRequestWriteAreOneTransaction() {
+        String task = chatDelay(true, "PO-2609-002", "PO-2610-106"); var body = confirmChat(task);
+        db.execute("create function reject_test_request() returns trigger language plpgsql as $$ begin if NEW.type='COORDINATION_REQUEST' then raise exception 'request write failure'; end if; return NEW; end $$");
+        db.execute("create trigger fail_request before insert on task_event for each row execute function reject_test_request()");
+        assertThatThrownBy(() -> requests.create(body, buyer)).isInstanceOf(RuntimeException.class);
+        assertThat(wifiDate()).isEqualTo("2026-11-13");
+        assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isZero();
+        assertThat(events.latest(task, "SUPPLIER_DELAY_FACT")).isEmpty();
+        db.execute("drop function reject_test_request() cascade");
+        requests.create(body, buyer);
+        assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isEqualTo(2);
+    }
+
+    @Test void anotherChatCannotRecordTheSameDelayAgain() {
+        String a = chatDelay(true, "PO-2609-002"), b = chatDelay(true, "PO-2609-002");
+        var bodyA = confirmChat(a); var bodyB = confirmChat(b);
+        requests.create(bodyA, buyer);
+        assertThatThrownBy(() -> requests.create(bodyB, buyer)).isInstanceOf(ApiError.class);
+        assertThat(wifiDate()).isEqualTo("2026-11-20");
+        assertThat(db.queryForObject("select count(*) from change_history", Integer.class)).isEqualTo(1);
+    }
     String planDate() { return db.queryForObject("select plan_date::text from production_plan where plan_id='PP-05'", String.class); }
 
     @Test void explicitSharingPreservesPrivateHistoryAndConsent() {

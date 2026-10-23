@@ -3,6 +3,7 @@ import { sourceCards } from "./answer";
 import { environmentFixture } from "../mocks/environments";
 import { mutate } from "./workflow";
 import { toTrace } from "./traces";
+import { taskStatus } from "./task-status";
 export const mode = import.meta.env.VITE_DATA_MODE === "api" ? "api" : "mock";
 export async function request<T>(
   path: string,
@@ -186,14 +187,6 @@ export function toApprovals(cards: Row[], names: Map<string, string>) {
   }
   return { approvals, options };
 }
-/** 작업 상태 → 작업 이력 화면의 상태 글자 (History.vue의 필터와 같은 글자) */
-const TASK_STATUS: Record<string, string> = {
-  QUEUED: "진행 중",
-  RUNNING: "진행 중",
-  WAITING_APPROVAL: "승인 대기",
-  DONE: "완료",
-  FAILED: "실패",
-};
 /** AI 작업 목록(GET /api/ai/tasks) → 본인의 작업 이력. 모든 역할에 같은 조회 범위를 적용한다. */
 export function toHistory(tasks: Row[]): Workspace["history"] {
   return tasks.map((t) => ({
@@ -201,7 +194,7 @@ export function toHistory(tasks: Row[]): Workspace["history"] {
     at: String(t.createdAt),
     title: String(t.question ?? ""),
     target: t.trigger === "SYSTEM" ? "자동 분석" : `AI 질문 · ${userNames[String(t.userId)] ?? t.userId}`,
-    status: TASK_STATUS[String(t.status)] ?? String(t.status),
+    status: t.status === "QUEUED" ? "진행 중" : taskStatus(String(t.status), t.result),
     detail: String(t.answer ?? ""),
     userId: String(t.userId ?? ""),
     trigger: String(t.trigger ?? ""),

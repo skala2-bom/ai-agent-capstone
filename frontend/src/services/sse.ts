@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../types";
+import { taskStatus } from "./task-status";
 export class EventAccumulator {
   seen = new Set<number>();
   answer = "";
@@ -45,7 +46,7 @@ export class EventAccumulator {
     if (e.type === "WORKFLOW_NOTICE") this.status = "확인 필요";
     if (e.type === "DONE") {
       this.answer = e.answer ?? this.answer;
-      this.status = "완료";
+      this.status = taskStatus("DONE", e.result);
       this.terminal = true;
     }
     if (e.type === "FAILED") {

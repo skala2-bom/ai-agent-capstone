@@ -41,6 +41,8 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 import whatif as W
+import receipt_delay as D
+import classification_feedback as F
 import observability as O
 import model_runtime as M
 from context_budget import tool_content
@@ -106,6 +108,7 @@ def next_turn(state: dict) -> int:
 
 class AgentState(TypedDict, total=False):
     coordination: dict | None
+    receipt_delay: dict | None
     plan_changes: list[dict]
     messages: Annotated[list, add_messages]   # 대화 (이어 붙임)
     task_id: str
@@ -120,6 +123,8 @@ class AgentState(TypedDict, total=False):
     whatif_source: str                        # agent(질문에서 뽑음) | backend(자동 작업, contracts 2.6)
     parent_thread_id: str | None              # 이어서 묻는 질문이면 앞 작업의 thread (backend가 소유자 확인 후 넘김)
     clarify: str | None                       # 되물을 내용
+    clarification: dict | None                # 사용자 안내: 단계·대상·문제 필드·다음 행동
+    classification_attempts: list[dict]        # 검증에 실패한 추출값도 체크포인트에 보존
     notice: str | None                        # 답변 앞에 붙일 안내 (예: 권한 때문에 IMPACT로 답함)
     inherited: str | None                     # 이어 묻기로 앞 작업에서 이어받은 가정 (답변 맨 앞에 밝힌다, 6.44)
     failure: str | None                       # 도구 오류로 끝낼 때
@@ -424,7 +429,8 @@ def describe_impact(impact: dict, plans: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 async def classify_question(question: str, plans: list[dict], turns: int = 0,
-                            previous: dict | None = None) -> tuple[W.Classification, list[str], int]:
+                            previous: dict | None = None, receipts: list[dict] | None = None,
+                            diagnostics: dict | None = None) -> tuple[W.Classification, list[str], int]:
     """질문 → (분류, 검증 오류, 모델 호출 수). 평가 스크립트도 이 함수를 그대로 쓴다.
 
     모델이 뽑은 whatif가 검사를 통과하지 못하면 오류를 알려 주고 한 번 더 기회를 준다.
@@ -433,14 +439,107 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
     """
     # 이어 묻기에서 모델이 앞 가정을 다시 적어도 그 날짜는 질문에 있던 것이다
     inherited_dates = [o[a] for o in (previous or {}).get("whatif_ops") or [] for a in W.DATE_ARGS if o.get(a)]
+    issues = []
+
+    def fail(code, message, **details):
+        issues.append(F.issue(code, message, **details))
+        return [message]
+
+    def record(c, errors):
+        if not issues and (errors or c.unclear):
+            issues.extend(F.validation_issue(e) for e in errors)
+            if not errors:
+                issues.append(F.issue("MISSING_INFORMATION", c.unclear, kind="NEEDS_INPUT",
+                                      action="위에서 확인을 요청한 정보만 추가로 알려 주세요."))
+        if diagnostics is not None:
+            extracted = c.model_dump()
+            diagnostics.setdefault("attempts", []).append({"extracted": extracted, "issues": list(issues)})
+            diagnostics["clarification"] = F.feedback(list(issues), extracted) if issues else None
 
     def check(c: W.Classification) -> list[str]:
-        ops = [o.model_dump() for o in c.whatif]   # delay_days는 normalize 전에 봐야 한다 (6.50)
-        errors = (W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
-                  or W.unstated_date_errors(question, ops, inherited_dates))
+        issues.clear()
+        calculated_ops = []
+        def as_mention(op):
+            return D.DelayMention(po_id=op.po_id, new_due_date=op.new_due_date,
+                                  delay_days=op.delay_days, may_extend=op.may_extend)
+
+        # main's whatif delay fields and rag's item/date mentions share the same
+        # receipt lookup, duration guard and diagnostics. Keep scenario metadata.
+        if receipts is not None and not c.receipt_delays:
+            legacy = [o for o in c.whatif if o.op == "request_due_date_change"]
+            c.receipt_delays = [as_mention(o) for o in legacy]
+            c.whatif = [o for o in c.whatif if o.op != "request_due_date_change"]
+        if receipts is not None and c.intent != "QA" and not c.receipt_delays and not c.follow_up:
+            return fail("MISSING_EXTRACTION", "질문에서 입고 지연 조건을 추출하지 못했습니다.",
+                        field="receipt_delays")
+        if c.receipt_delays:
+            if receipts is None:
+                return fail("RECEIPTS_UNAVAILABLE", "입고 지연을 계산할 발주 정보를 조회하지 못했습니다.")
+            # Do not let a model pick one PO from an ambiguous item/date query.
+            mentions = [d if not d.po_id or d.po_id.upper() in question.upper()
+                        else d.model_copy(update={"po_id": None}) for d in c.receipt_delays]
+            resolved, errors = D.resolve(mentions, receipts, W.BASE_DATE, issues=issues)
+            if errors:
+                return errors
+            # A model can split different POs across the two supported formats.
+            ids = {o['po_id'] for o in resolved}
+            extra = [o for o in c.whatif if o.op == "request_due_date_change" and o.po_id not in ids]
+            if extra:
+                c.receipt_delays += [as_mention(o) for o in extra]
+                c.whatif = [o for o in c.whatif if o not in extra]
+                mentions += [as_mention(o).model_copy(update={"po_id": o.po_id if o.po_id and o.po_id.upper() in question.upper() else None}) for o in extra]
+                resolved, errors = D.resolve(mentions, receipts, W.BASE_DATE, issues=issues)
+                if errors:
+                    return errors
+            for mention, op in zip(mentions, resolved):
+                # A stated absolute date is sufficient. The model may also have
+                # calculated its day difference; resolve() already checked agreement.
+                # Only duration-only dates need an exemption from the date guard.
+                if mention.delay_days is not None and not mention.new_due_date:
+                    if mention.delay_days not in D.stated_delay_days(question):
+                        row = next(r for r in receipts if r["po_id"] == op["po_id"])
+                        return fail("UNSTATED_DELAY", f"질문에 없는 지연 기간을 AI가 {mention.delay_days}일로 해석했습니다. 현재 입고일은 {row['due_date']}입니다.",
+                                    target=f"{row.get('item_name', row['item_id'])} · {op['po_id']}",
+                                    field="delay_days", value=mention.delay_days,
+                                    action="새 입고일을 이미 적었다면 같은 질문을 다시 시도해 주세요. 날짜·기간이 없다면 정확한 새 입고일 또는 지연 기간을 알려 주세요.")
+                    calculated_ops.append(op)
+            # Same PO must have one exact condition; never silently overwrite conflicting extraction.
+            known = {o['po_id']: o for o in resolved}
+            extension = {o['po_id']: d.may_extend for d, o in zip(mentions, resolved)}
+            kept = []
+            for op in c.whatif:
+                if op.po_id in known:
+                    duplicate = W.normalize(op)
+                    if op.op == "request_due_date_change":
+                        duplicates, errors = D.resolve([as_mention(op)], receipts, W.BASE_DATE, issues=issues)
+                        if errors:
+                            return errors
+                        duplicate = duplicates[0]
+                    if duplicate != known[op.po_id]:
+                        return fail("CONFLICTING_EXTRACTION", f"동일 발주의 새 입고일을 {op.new_due_date}와 {known[op.po_id]['new_due_date']}로 다르게 해석했습니다.",
+                                    target=op.po_id, field="new_due_date", value=op.new_due_date)
+                    extension[op.po_id] = extension[op.po_id] or op.may_extend
+                else:
+                    kept.append(op)
+            c.whatif = kept + [W.WhatifOp(**o, delay_days=d.delay_days if not d.new_due_date else None,
+                                         may_extend=extension[o['po_id']]) for d, o in zip(mentions, resolved)]
+        ops = [W.normalize(o) for o in c.whatif]
+        # Exempt only the exact PO/date computed from a stated duration and an actual receipt.
+        # An unrelated plan or PO with the same date must still pass main's date guard.
+        stated_ops = [o for o in ops if o not in calculated_ops]
+        errors = W.consistency_errors(question, [], plans) if not ops else []
+        issues.extend(F.validation_issue(e) for e in errors)
+        for op in ops:
+            found = (W.validate_ops([op], plans) or W.consistency_errors(question, [op], plans)
+                     or (W.unstated_date_errors(question, [op], inherited_dates) if op in stated_ops else []))
+            errors.extend(found)
+            issues.extend(F.validation_issue(e, op) for e in found)
         if not errors and ops and c.unclear:
-            errors.append("유효한 whatif와 unclear가 함께 있습니다. 원래 생산일·제품으로 계획이 특정되는지 다시 확인하세요. "
-                          "unclear에는 의도 선택 이유를 적지 않습니다. 정말 정보가 모자라면 해당 부분만 적으세요.")
+            return fail("CONFLICTING_CLARIFICATION",
+                        "변경 조건은 추출했지만 AI가 추가 확인이 필요하다고도 판단했습니다. 확인 요청 내용: " + c.unclear,
+                        target=", ".join(dict.fromkeys(o.get("po_id") or o.get("plan_id") or "미지정" for o in ops)),
+                        field="unclear", value=c.unclear,
+                        action="표시된 확인 요청이 질문에 이미 포함되어 있다면 같은 질문을 다시 시도해 주세요. 빠진 내용이 있다면 그 부분만 추가해 주세요.")
         return errors
 
     if llm is None:
@@ -448,8 +547,23 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
             c = W.rule_classify(question, plans)
         except ValueError:
             c = W.Classification(intent="IMPACT", unclear="날짜를 읽지 못했습니다. 실제 월/일을 확인해 주세요.")
-        return c, check(c), turns
+        if receipts is not None and D.relevant(question):
+            try:
+                c.receipt_delays = D.fake_mentions(question, receipts, W.BASE_DATE)
+            except ValueError:
+                errors = ["입고 날짜를 읽지 못했습니다. 실제 월/일을 확인해 주세요."]
+                record(c, errors)
+                return c, errors, turns
+            c.whatif = [o for o in c.whatif if o.op != "request_due_date_change"]
+            if c.receipt_delays and not c.whatif:
+                c.unclear = None
+        errors = check(c)
+        record(c, errors)
+        return c, errors, turns
     msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans)))]
+    if receipts is not None:
+        table = [{k: r.get(k) for k in ('po_id', 'item_id', 'item_name', 'due_date', 'qty', 'status')} for r in receipts]
+        msgs.append(SystemMessage(prompt("classify_receipt_delay", RECEIPTS=json.dumps(table, ensure_ascii=False))))
     if previous:
         msgs.append(SystemMessage(prompt("classify_follow_up", PREV_QUESTION=previous["question"],
                                          PREV_WHATIF=json.dumps(previous["whatif_ops"], ensure_ascii=False))))
@@ -464,10 +578,11 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
             # 모델의 whatif는 그대로 검사하며, 역할 제한과 개별 승인은 이후 단계에서 적용한다.
             c = c.model_copy(update={"intent": "ADJUST"})
         errors = check(c)
+        record(c, errors)
         if not errors:
             return c, [], turns
         msgs += [AIMessage(c.model_dump_json()),
-                 HumanMessage("whatif 검사 실패: " + "; ".join(errors) + ". 생산 계획 표를 다시 보고 고쳐라.")]
+                 HumanMessage("whatif 검사 실패: " + "; ".join(errors) + "\n" + prompt("classify_retry"))]
     return c, errors, turns
 
 
@@ -493,17 +608,29 @@ async def classify_intent(state: AgentState) -> dict:
         return {**out, "intent": "IMPACT", "whatif_ops": ops}
 
     previous = await previous_turn(state)
-    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0), previous)
+    receipts = None
+    if D.relevant(state["question"]) and not coordination:
+        ok, res = await call_tool(state, "list_receipts", {"status": "OPEN"}, label="입고 지연 대상 발주 확인 중")
+        if not ok:
+            raise ToolUnavailable(res)
+        receipts = res["purchase_orders"]
+    diagnostics = {}
+    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0), previous, diagnostics=diagnostics,
+                                               **({"receipts": receipts} if receipts is not None else {}))
     if turns > MAX_TURNS:
         raise LimitExceeded(f"모델 호출이 {MAX_TURNS}회를 넘었습니다.")
     out["turn_count"] = turns
+    out["classification_attempts"] = diagnostics.get("attempts", [])
     if errors or c.unclear:
-        return {**out, "intent": "CLARIFY", "clarify": c.unclear or "; ".join(errors)}
+        return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors) or c.unclear,
+                "clarification": diagnostics.get("clarification")}
     ops = W.mark_extension(state["question"], [o.model_dump(exclude_none=True) for o in c.whatif])
     extend = []
     if any(o.get("delay_days") or o.get("may_extend") for o in ops):
         # "약 1주 늦어진다" → 원래 입고 예정일 + 7일, "더 길어지면" → 1·4·12주 비교 대상 (decisions 6.50)
-        ops, extend, errors = W.resolve_delays(ops, await po_due_dates(state))
+        due_dates = ({r['po_id']: r['due_date'] for r in receipts if r.get('status') == 'OPEN'}
+                     if receipts is not None else await po_due_dates(state))
+        ops, extend, errors = W.resolve_delays(ops, due_dates)
         if errors:
             return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
     ops = [W.normalize(o) for o in ops]
@@ -537,8 +664,12 @@ async def classify_intent(state: AgentState) -> dict:
             intent = "IMPACT"
             notices = ["확정된 입고 지연을 기준으로 분석했습니다. 생산계획은 부서 요청함에서 변경안을 검증한 뒤 확정하세요."]
     # notice는 해결안 실행 뒤 다시 쓰이므로(refresh_impact) 이어받은 가정은 따로 둔다
+    delay = D.snapshot(state["question"], ops, receipts) if receipts is not None and intent == "IMPACT" else None
+    if delay:
+        dates = ", ".join(f"{f['poId']} {f['before']['due_date']} → {f['after']['due_date']}" for f in delay['changes'])
+        notices.append(f"입고일 {dates} 기준 분석입니다. 아직 실제 입고일은 변경하지 않았습니다.")
     return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited,
-            "extend": extend if intent == "IMPACT" else []}   # 장기화 비교는 분석만. 해결안은 확정 지연 기준 (6.50)
+            "receipt_delay": delay, "extend": extend if intent == "IMPACT" else []}
 
 
 MAX_PREVIOUS_TURNS = 3   # 가정을 찾아 거슬러 올라가는 앞 질문 수
@@ -1286,13 +1417,17 @@ def _adjust_answer(state: AgentState) -> str:
 
 def respond(state: AgentState) -> dict:
     intent, plans = state.get("intent"), state.get("plans") or []
+    detail = None
+    if intent == "CLARIFY":
+        detail = state.get("clarification") or F.feedback([F.issue("MISSING_INFORMATION",
+            state.get("clarify") or "분석할 대상과 변경 조건을 확인해 주세요.", kind="NEEDS_INPUT",
+            action="위에서 확인을 요청한 내용만 추가로 알려 주세요.")])
     if state.get("failure"):
         answer = f"처리를 마치지 못했습니다: {state['failure']}"
         if state.get("executions"):
             answer = _adjust_answer(state) + "\n" + answer
     elif intent == "CLARIFY":
-        answer = ("질문에서 바꿀 계획이나 날짜를 하나로 정하지 못했습니다: " + (state.get("clarify") or "")
-                  + "\n예: \"허브를 11/25로 당기면 문제 있어?\"")
+        answer = F.answer(detail)
     elif intent == "ADJUST":
         answer = _adjust_answer(state)
     else:
@@ -1332,6 +1467,10 @@ def respond(state: AgentState) -> dict:
     result = {"intent": intent, "whatif": state.get("whatif_ops") or [], "impact": impact or None}
     if state.get("scenarios"):
         result["scenarios"] = state["scenarios"]   # 통보 기준 impact는 그대로, 비교만 덧붙인다 (contracts 49)
+    if intent == "CLARIFY":
+        result["clarification"] = detail
+    if intent == "IMPACT" and state.get("receipt_delay"):
+        result["receipt_delay"] = state["receipt_delay"]
     if state.get("coordination"):
         result["coordinationId"] = state["coordination"]["id"]
         result["plan_changes"] = state.get("plan_changes") or []
