@@ -55,6 +55,28 @@ class ImpactAnalysis {
         this.db = db;
     }
 
+    /**
+     * 저장된 입고 지연 (decisions 6.56): 화면 입고 수정(update_purchase)·협력사 지연 입력(supplier_delay)으로
+     * 입고 예정일이 늦춰진 열린 발주. 발주마다 가장 최근 기록이 지금 입고일과 같을 때만이다. 승인으로 바꾼 변경은 뺀다.
+     * 질문의 "1주 MCU 지연"이 이미 반영된 사실인지 agent가 가리고, 해결안이 그 발주를 다시 당기는 안을 뒤로 미룰 때 쓴다.
+     */
+    Map<String, Map<String, Object>> recordedDelays() {
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        db.query("""
+                select distinct on (h.target_id) h.target_id, h.before->>'due_date', h.after->>'due_date', po.due_date::text
+                from change_history h join purchase_order po on po.po_id = h.target_id and po.status = 'OPEN'
+                where h.target_type = 'PURCHASE_ORDER' and h.approval_id is null
+                  and h.action in ('supplier_delay', 'update_purchase')
+                  and h.before->>'due_date' is not null and h.after->>'due_date' is not null
+                order by h.target_id, h.changed_at desc, h.id desc""", rs -> {
+            LocalDate from = LocalDate.parse(rs.getString(2)), to = LocalDate.parse(rs.getString(3));
+            if (to.isAfter(from) && to.toString().equals(rs.getString(4)))
+                out.put(rs.getString(1), m("from", from.toString(), "to", to.toString(),
+                        "days", java.time.temporal.ChronoUnit.DAYS.between(from, to)));
+        });
+        return out;
+    }
+
     /** whatif가 null이거나 비어 있으면 지금 상태 그대로 판정한다 (seed 기준 0건). */
     Map<String, Object> analyze(List<Map<String, Object>> whatif) {
         return judge(load(whatif));

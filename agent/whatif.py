@@ -137,6 +137,61 @@ def po_errors(question: str, ops: list[dict], pos: list[dict], allowed: set[str]
     return errors
 
 
+CURRENT_STATE = re.compile(r"현재|지금|확정된")
+MORE_DELAY = re.compile(r"더\s*(?:늦|지연|밀)|추가로\s*(?:늦|지연|밀)")
+
+
+def recorded_match(d: dict, pos: list[dict], question: str = "") -> str | None:
+    """질문의 입고 지연 언급이 이미 저장된 입고 지연과 같으면 그 발주 번호 (decisions 6.56).
+
+    팀 시나리오 ③: PO-2609-008 입고 지연(11/27 → 12/4)이 저장된 뒤 "1주 MCU 지연으로 남는 부족"을 물으면, 그 지연을
+    다시 더하거나(12/11) MCU 발주가 둘이라 되묻지 않게 한다. "더 늦어지면"처럼 추가 지연을 말하면 쓰지 않는다."""
+    if MORE_DELAY.search(question):
+        return None
+    rec = [p for p in pos if p.get("recorded_delay")]
+    key = lambda v: re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower())
+    by_id = {p["po_id"].upper(): p for p in pos}
+    if d.get("po_id") and str(d["po_id"]).upper() in question.upper():
+        cands = [p for p in rec if p["po_id"].upper() == str(d["po_id"]).upper()]
+    elif d.get("po_id") and str(d["po_id"]).upper() in by_id:   # 질문에 없는 번호를 모델이 고른 경우: 그 품목으로 본다
+        item = by_id[str(d["po_id"]).upper()]["item_id"]
+        cands = [p for p in rec if p["item_id"] == item]
+    elif d.get("item_name"):
+        cands = [p for p in rec if key(d["item_name"]) in {key(p.get("item_name")), key(p["item_id"])}]
+    else:
+        return None
+    for p in cands:
+        r = p["recorded_delay"]
+        if d.get("delay_days") == r["days"] or d.get("new_due_date") == r["to"] or d.get("original_due_date") == r["from"]:
+            return p["po_id"]
+        # 모델이 일수·날짜를 비워 두거나 0으로 넣었어도 질문의 기간("1주")이 저장된 지연과 같으면 그 지연이다
+        if not d.get("delay_days") and not d.get("new_due_date") and r["days"] in stated_days(question):
+            return p["po_id"]
+    return None
+
+
+def stated_days(question: str) -> set[int]:
+    """질문에 적힌 기간(일). 날짜(11/27, 11월 27일)는 빼고 읽는다."""
+    text = re.sub(r"\d{4}-\d{2}-\d{2}|\d{1,2}\s*/\s*\d{1,2}|\d{1,2}\s*월\s*\d{1,2}\s*일", "", question)
+    days = {int(n) * (7 if u.startswith("주") else 1) for n, u in re.findall(r"(?<![\d.])(\d+)\s*(주|일)", text)}
+    return days | ({7} if re.search(r"일주일|한\s*주", text) else set())
+
+
+def unsupported_delay(d: dict, pos: list[dict], question: str) -> bool:
+    """질문에 근거가 없는 입고 지연 추출인가 (6.56). 해결 방법만 물었는데 모델이 다른 부품 발주에 날짜를 만들거나
+    빈 지연(일수 0·날짜 없음)을 넣은 적이 있다(실측 ③ 변형). 질문에 그 발주 번호도 품목 이름도 없거나, 품목만 있고
+    날짜·기간이 하나도 없으면 근거 없음으로 보고 뺀다."""
+    po = str(d.get("po_id") or "").upper()
+    if po and po in question.upper():
+        return False
+    row = next((p for p in pos if p["po_id"].upper() == po), None)
+    key = lambda v: re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower().replace("와이파이", "wifi"))   # receipt_delay.name_key와 같은 규칙
+    names = {row.get("item_name"), row["item_id"]} if row else {d.get("item_name")}
+    if not any(n and key(n) in key(question) for n in names):
+        return True
+    return not d.get("new_due_date") and not d.get("delay_days") and not d.get("original_due_date")
+
+
 ARRIVAL = re.compile(r"들어오|들어온|입고|도착|늦어|지연|밀리")
 
 
@@ -345,7 +400,8 @@ MD = re.compile(r"(\d{1,2})/(\d{1,2})")
 # "해결안 검수 규정"처럼 해결안을 묻는 문서 질문은 요청 동사가 없어 잡히지 않는다
 ADJUST_REQUEST = re.compile(
     r"해결\s*(?:방법|방안|책)|해결안\s*(?:을|좀)?\s*(?:만들|줘|주|알려|찾|제안|내)|해결해\s*줘|어떻게\s*해결"
-    r"|대안(?:을|이|은)?\s*(?:좀\s*)?(?:찾|만들|제안|있|줘|주|알려)|발주\s*조정")
+    r"|대안(?:을|이|은)?\s*(?:좀\s*)?(?:찾|만들|제안|있|줘|주|알려)|발주\s*조정"
+    r"|해결할\s*수\s*있|(?:메울|채울|풀|막을)\s*방법")   # "해결할 수 있나요?", "부족을 메울 방법 있어?" (팀 시나리오 ③, 6.56)
 
 
 def explicit_adjust_request(question: str) -> bool:

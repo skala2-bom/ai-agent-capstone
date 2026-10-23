@@ -67,6 +67,12 @@ class OptionAnalysis {
         List<String> notes = new ArrayList<>();
         ImpactAnalysis.State st = impact.load(whatif);
         Map<String, Object> judged = impact.judge(st);
+        // 늦어진 발주: 이번 가정으로 늦춘 발주 + 저장된 입고 지연. 그 발주를 다시 당기는 안은 다른 발주로 풀 수 있으면 뒤로 (6.56)
+        Set<String> delayed = new HashSet<>(impact.recordedDelays().keySet());
+        if (whatif != null && !whatif.isEmpty()) {
+            Map<String, ImpactAnalysis.Po> original = impact.load(List.of()).pos();
+            st.pos().forEach((id, po) -> { if (original.containsKey(id) && po.due().isAfter(original.get(id).due())) delayed.add(id); });
+        }
         List<Map<String, Object>> before = shortages(judged);
         // 대안을 적용하기 전(원래 가정만 적용한 상태)의 결품량. 전후를 (부품, 계획, 날짜) 단위로 비교한다 (side_effects 명세 1·3절)
         Map<String, Integer> beforeQty = new HashMap<>();
@@ -150,6 +156,8 @@ class OptionAnalysis {
                 .comparing((Map<String, Object> o) -> !"INV-001".equals(o.get("target_rule")))
                 .thenComparing(o -> !(boolean) o.get("resolves"))
                 .thenComparing(o -> !((List<?>) o.get("side_effects")).isEmpty())
+                // 협력사가 늦춘 발주를 다시 당기는 안보다 다른 발주로 푸는 안을 먼저 (decisions 6.56, 팀 시나리오 ③)
+                .thenComparing(o -> delayed.contains(String.valueOf(((Map<?, ?>) o.get("args")).get("po_id"))))
                 // 결품을 막고도 안전재고 미만이 남는 안보다 안전재고까지 채우는 안을 먼저 (decisions 6.47)
                 .thenComparing(o -> !Boolean.TRUE.equals(o.get("safety_ok")))
                 .thenComparing(o -> RISK.indexOf((String) o.get("risk")))
@@ -160,6 +168,7 @@ class OptionAnalysis {
         for (int i = 0; i < options.size(); i++) {
             Map<String, Object> o = options.get(i);
             o.put("option_id", "OPT-" + (i + 1));
+            o.put("delayed_po", delayed.contains(String.valueOf(((Map<?, ?>) o.get("args")).get("po_id"))));
             boolean usable = (boolean) o.get("resolves") && ((List<?>) o.get("side_effects")).isEmpty();
             // 부품·문제(결품/과잉)마다 하나. 같은 부품에 결품과 과잉이 같이 있으면 각각 추천한다
             o.put("recommended", usable && recommendedItems.add(o.get("item_id") + "|" + o.get("target_rule")));
