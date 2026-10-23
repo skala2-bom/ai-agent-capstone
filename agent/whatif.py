@@ -135,6 +135,41 @@ def po_errors(question: str, ops: list[dict], pos: list[dict], allowed: set[str]
     return errors
 
 
+ARRIVAL = re.compile(r"들어오|들어온|입고|도착|늦어|지연|밀리")
+
+
+def supply_premise_errors(question: str, ops: list[dict], pos: list[dict], inherited: set[str] = frozenset()) -> list[str]:
+    """질문의 입고 이야기가 가정에서 빠지거나, 바뀌는 게 없는 입고 가정이면 되묻게 한다 (decisions 6.52).
+
+    실측: 앞 질문 없이 "릴레이가 11/27에 들어온다면 PP-03을 11/26으로 옮기면?" → 모델이 릴레이 입고를 빼고
+    계산해 "문제가 없습니다"라고 답했다. 열린 릴레이 발주가 둘(11/20·11/27 예정)이라 어느 것인지 정할 수 없다.
+    ① 질문에 열린 발주의 품목 이름과 입고 표현이 함께 있는데 이번 가정·이어받은 가정에 그 품목 발주가 없으면,
+    ② 입고 지연의 새 날짜가 원래 입고 예정일과 같으면(바뀌는 게 없음) 오류로 알린다. pos가 비면 검사하지 않는다.
+    """
+    if not pos or not ARRIVAL.search(question):
+        return []
+    named = {o.get("po_id") for o in ops} | set(inherited)
+    covered = {p["item_id"] for p in pos if p["po_id"] in named}
+    groups: dict[str, list[dict]] = {}
+    for p in pos:
+        groups.setdefault(p["item_id"], []).append(p)
+    errors = []
+    for item, group in groups.items():
+        name = group[0].get("item_name") or item
+        if item in covered or (name not in question and item not in question):
+            continue
+        errors.append(f"질문에 {name} 입고 이야기가 있는데 whatif에 {name} 발주가 없음. 열린 {name} 발주: "
+                      + ", ".join(f"{p['po_id']} 입고 예정 {p['due_date']}" for p in group)
+                      + ". 어느 발주인지 정할 수 없으면 whatif를 비우고 unclear에 발주 번호를 물어라")
+    due = {p["po_id"]: p["due_date"] for p in pos}
+    for o in ops:
+        if o.get("op") == "request_due_date_change" and o.get("po_id") not in inherited \
+                and o.get("new_due_date") and due.get(o.get("po_id")) == o.get("new_due_date"):
+            errors.append(f"{o['po_id']}는 원래 {o['new_due_date']} 입고 예정이라 바뀌는 것이 없음. "
+                          "질문이 말한 입고 변경이 다른 발주라면 그 발주로, 정할 수 없으면 whatif를 비우고 unclear에 물어라")
+    return errors
+
+
 EXTEND_REQUEST = re.compile(r"더\s*길어|장기화|길어질\s*경우|길어지면|더\s*늦어지면|더\s*늘어나면")
 
 

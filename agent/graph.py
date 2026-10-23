@@ -454,7 +454,8 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
     def check(c: W.Classification) -> list[str]:
         ops = [o.model_dump() for o in c.whatif]   # delay_days는 normalize 전에 봐야 한다 (6.50)
         errors = (W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
-                  or W.unstated_date_errors(question, ops, inherited_dates) or W.po_errors(question, ops, pos or [], inherited_pos))
+                  or W.unstated_date_errors(question, ops, inherited_dates) or W.po_errors(question, ops, pos or [], inherited_pos)
+                  or (W.supply_premise_errors(question, ops, pos or [], inherited_pos) if c.intent != "QA" else []))
         if not errors and ops and c.unclear:
             errors.append("유효한 whatif와 unclear가 함께 있습니다. 원래 생산일·제품으로 계획이 특정되는지 다시 확인하세요. "
                           "unclear에는 의도 선택 이유를 적지 않습니다. 정말 정보가 모자라면 해당 부분만 적으세요.")

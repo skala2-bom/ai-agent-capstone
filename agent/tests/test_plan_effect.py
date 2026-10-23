@@ -62,6 +62,18 @@ class PlanEffectTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(map(str, out["compare_base"])), sorted(map(str, [RELAY, MCU])))
         self.assertEqual(out["extend"], [])   # 일정 변경 질문에는 장기화 비교를 다시 붙이지 않는다
 
+    def test_dropped_or_unchanged_supply_premise_asks_back(self):
+        pos = [{"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이", "due_date": "2026-11-20"},
+               {"po_id": "PO-2610-114", "item_id": "RELAY", "item_name": "릴레이", "due_date": "2026-11-27"},
+               {"po_id": "PO-2609-008", "item_id": "MCU", "item_name": "MCU", "due_date": "2026-11-27"}]
+        q = "릴레이가 11월 27일에 들어오는데 벽스위치 PP-03 생산을 11월 23일에서 11월 26일로 옮기면 릴레이 결품이 풀려?"
+        move = {"op": "reschedule_plan", "plan_id": "PP-03", "new_date": "2026-11-26"}
+        self.assertIn("릴레이 발주가 없음", W.supply_premise_errors(q, [move], pos)[0])   # 실측 P3: 릴레이 입고를 뺐다
+        unchanged = {"op": "request_due_date_change", "po_id": "PO-2610-114", "new_due_date": "2026-11-27"}
+        self.assertIn("바뀌는 것이 없음", W.supply_premise_errors(q, [unchanged, move], pos)[0])
+        self.assertEqual(W.supply_premise_errors(Q2, [MOVE], pos, {"PO-2610-106", "PO-2609-008"}), [])   # ①에 이어서
+        self.assertEqual(W.supply_premise_errors("PP-03을 11/28로 옮기면?", [MOVE], pos), [])            # 입고 이야기 없음
+
     def test_plan_only_question_has_no_compare(self):
         self.assertFalse(W.restates_previous([MOVE], [RELAY, MCU]))
 
