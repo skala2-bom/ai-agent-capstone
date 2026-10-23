@@ -32,6 +32,22 @@ class ImpactSummaryTests(unittest.TestCase):
         self.assertIn("다른 생산의 결품", note)
         self.assertNotIn("연쇄", note)
 
+    def test_merged_plan_effect_preserves_calculated_summary_and_request_save_path(self):
+        mcu = {"item_id": "MCU", "plan_id": "PP-04", "plan_date": "2026-11-30",
+               "projected_stock": -500, "qty": 500, "orderable": False}
+        relay = {"item_id": "RELAY", "plan_id": "PP-03", "plan_date": "2026-11-23", "qty": 1000}
+        effect = {"resolved": [relay], "new": [], "remaining": [mcu]}
+        result = G.respond({"intent": "IMPACT", "impact": {"shortages": [mcu]}, "plans": [],
+                            "plan_effect": effect, "coordination": {"id": "request", "direction": "BUY_TO_PLAN"},
+                            "whatif_ops": [{"op": "reschedule_plan", "plan_id": "PP-03", "new_date": "2026-11-28"}],
+                            "messages": [AIMessage(content="문제가 없습니다.")]})
+        self.assertNotIn("문제가 없습니다", result["answer"])
+        for expected in ("결품 1건", "해소된 결품:", "RELAY 1,000개", "새로 생긴 결품: 없음",
+                         "그대로 남은 결품:", "MCU 500개", "부서 요청함에서 변경안을 검토한 뒤"):
+            self.assertIn(expected, result["answer"])
+        self.assertNotIn("다른 생산의 결품", result["answer"])
+        self.assertEqual(result["result"]["plan_effect"], effect)
+
 
 if __name__ == "__main__":
     unittest.main()

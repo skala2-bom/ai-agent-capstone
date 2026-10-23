@@ -13,6 +13,26 @@ PLANS = [{"plan_id": "PP-05", "product_id": "FG-HUB", "product_name": "허브", 
 
 
 class CoordinationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saved_receipt_context_does_not_require_new_purchase_assumptions(self):
+        plans = [{"plan_id": "PP-03", "product_id": "FG-SWITCH", "product_name": "벽스위치",
+                  "plan_date": "2026-11-23", "qty": 600}]
+        pos = [{"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이", "qty": 1200,
+                "due_date": "2026-11-27", "status": "OPEN"}]
+        move = {"op": "reschedule_plan", "plan_id": "PP-03", "new_date": "2026-11-28"}
+        question = "현재 저장된 입고 기준으로 PP-03을 11월 28일로 옮기면 릴레이 결품과 MCU 부족은 어떻게 돼?"
+        wrong = W.Classification(intent="IMPACT", receipt_delays=[{"po_id": "PO-2610-106"}])
+        correct = W.Classification(intent="IMPACT", whatif=[W.WhatifOp(**move)])
+        with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(side_effect=[wrong, correct])):
+            c, errors, turns = await G.classify_question(question, plans, pos=pos,
+                coordination={"direction": "BUY_TO_PLAN", "mode": "PLAN_REVIEW"})
+        self.assertEqual(errors, [])
+        self.assertEqual(turns, 2)
+        self.assertEqual([W.normalize(o) for o in c.whatif], [move])
+        # Without a server-issued request context, the original supply-premise guard remains active.
+        with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=correct)):
+            _, errors, _ = await G.classify_question(question, plans, pos=pos)
+        self.assertTrue(errors)
+
     async def test_solver_uses_server_consent_instead_of_reextracting_chat(self):
         context = {"direction": "PLAN_TO_BUY", "mode": "SOLVE", "planOps": [HUB]}
         with patch.object(G, "load_plans", AsyncMock(return_value=PLANS)), patch.object(G, "classify_question", AsyncMock()) as model:

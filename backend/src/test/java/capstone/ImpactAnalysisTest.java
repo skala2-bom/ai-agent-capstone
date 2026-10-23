@@ -131,6 +131,33 @@ class ImpactAnalysisTest {
         assertThat((List<Map<String, Object>>) mcu.get("receipts")).noneMatch(x -> "2026-12-04".equals(x.get("date")));
     }
 
+    /**
+     * decisions 6.56, 팀 시나리오 ③: PO-2609-008(MCU) 입고 지연 11/27 → 12/4가 저장돼 있고 PP-03을 11/28로 옮긴 상태.
+     * 늦어진 발주를 다시 당기는 안보다 다른 MCU 발주(PO-2609-001 12/12분 500개 전량 11/30)를 먼저 추천한다.
+     */
+    @Test
+    void 저장된_입고_지연_발주보다_다른_발주로_푸는_안을_먼저_추천한다() {
+        JdbcTemplate db = new JdbcTemplate(new DriverManagerDataSource(pg.getJdbcUrl(), "app", "app"));
+        db.update("update purchase_order set due_date = '2026-12-04' where po_id = 'PO-2609-008'");
+        db.update("""
+                insert into change_history (target_type, target_id, action, before, after, reason, changed_by)
+                values ('PURCHASE_ORDER', 'PO-2609-008', 'supplier_delay', '{"due_date": "2026-11-27"}', '{"due_date": "2026-12-04"}', '화재', 'buyer')""");
+        try {
+            assertThat(analysis.recordedDelays()).containsOnlyKeys("PO-2609-008");
+            assertThat(analysis.recordedDelays().get("PO-2609-008")).containsEntry("days", 7L);
+            var r = options.compare(List.of(op("reschedule_plan", "plan_id", "PP-03", "new_date", "2026-11-28")), Set.of("MCU"));
+            var first = list(r, "options").getFirst();
+            assertThat(first).containsEntry("type", "DUE_DATE_CHANGE").containsEntry("recommended", true)
+                    .containsEntry("resolves", true).containsEntry("safety_ok", false).containsEntry("delayed_po", false)
+                    .containsEntry("args", Map.of("po_id", "PO-2609-001", "new_due_date", "2026-11-30"));
+            // 늦어진 발주를 당기는 안도 후보로는 남는다
+            assertThat(list(r, "options")).anyMatch(o -> Boolean.TRUE.equals(o.get("delayed_po")) && (boolean) o.get("resolves"));
+        } finally {
+            db.update("delete from change_history where target_id = 'PO-2609-008' and action = 'supplier_delay'");
+            db.update("update purchase_order set due_date = '2026-11-27' where po_id = 'PO-2609-008'");
+        }
+    }
+
     /** decisions 6.47: 팀장 조건(날짜·분할 수량·발주)으로만 결품 대안을 만들고, 못 지키면 이유와 가장 빠른 가능일을 준다 */
     @Test
     void 팀장_조건으로만_결품_대안을_만들고_불가능하면_이유를_준다() {
