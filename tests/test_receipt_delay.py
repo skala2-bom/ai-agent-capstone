@@ -43,6 +43,26 @@ class ReceiptDelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state["receipt_delay"]["reported"])
         self.assertEqual(state["turn_count"], 1)
 
+    async def test_main_po_guard_rejects_wrong_item_with_receipt_diagnostics(self):
+        parsed = W.Classification(intent="IMPACT", receipt_delays=[
+            D.DelayMention(item_name="릴레이", delay_days=7)])
+        state = await self.classify_state("MCU 입고가 1주 늦어질 수 있대. 문제 있어?", parsed)
+        response = G.respond(state)
+        self.assertEqual(response["result"]["intent"], "CLARIFY")
+        self.assertEqual(response["result"]["clarification"]["kind"], "INTERPRETATION_ERROR")
+        self.assertIn("품목(릴레이)이 없음", response["answer"])
+        self.assertIn("PO-2610-106", response["answer"])
+        self.assertNotIn("unclear", response["answer"])
+        self.assertEqual(len(state["classification_attempts"]), 2)
+
+    async def test_po_guard_accepts_wifi_alias_and_iso_original_date(self):
+        parsed = W.Classification(intent="IMPACT", receipt_delays=[
+            D.DelayMention(item_name="와이파이 칩", original_due_date="2026-11-13", delay_days=7)])
+        state = await self.classify_state("와이파이 칩 2026-11-13 입고가 일주일 늦어졌어. 문제 있어?", parsed)
+        self.assertEqual(state["intent"], "IMPACT")
+        self.assertEqual(state["whatif_ops"], [
+            {"op": "request_due_date_change", "po_id": "PO-2609-002", "new_due_date": "2026-11-20"}])
+
     async def test_conflicting_clarification_retries_with_receipt_context_and_retains_attempt(self):
         diagnostics = {}
         invoke = AsyncMock(side_effect=[multi_classification(unclear="생산일을 알려 주세요."), multi_classification()])

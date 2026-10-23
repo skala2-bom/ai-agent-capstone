@@ -108,6 +108,45 @@ class DelayScenarioTest(unittest.IsolatedAsyncioTestCase):
             _, errors, _ = await G.classify_question(QUESTION, PLANS, receipts=RECEIPTS)
         self.assertTrue(any("질문에 없는 날짜" in e for e in errors), errors)
 
+    def test_po_without_number_must_match_item_and_be_unique(self):
+        pos = [{"po_id": "PO-2609-001", "item_id": "MCU", "item_name": "MCU", "due_date": "2026-12-12"},
+               {"po_id": "PO-2609-008", "item_id": "MCU", "item_name": "MCU", "due_date": "2026-11-27"},
+               {"po_id": "PO-2610-106", "item_id": "RELAY", "item_name": "릴레이", "due_date": "2026-11-20"}]
+        q = "세미온반도체 MCU 입고가 1주 늦어질 수 있대. 더 길어지면 어디부터 차질이 생겨?"
+        relay = {"op": "request_due_date_change", "po_id": "PO-2610-106", "delay_days": 7}
+        mcu = {"op": "request_due_date_change", "po_id": "PO-2609-008", "delay_days": 7}
+        self.assertIn("품목(릴레이)이 없음", W.po_errors(q, [relay], pos)[0])      # 실제 V5: MCU를 물었는데 릴레이
+        self.assertIn("2건", W.po_errors(q, [mcu], pos)[0])                         # MCU 발주가 둘이라 되묻는다
+        self.assertEqual(W.po_errors("MCU 11/27 입고분이 1주 늦어지면?", [mcu], pos), [])  # 원래 입고일로 특정
+        self.assertEqual(W.po_errors(QUESTION, [mcu], pos), [])                      # 번호가 있으면 통과
+        self.assertEqual(W.po_errors("그럼 12주까지 가면?", [mcu], pos, {"PO-2609-008"}), [])   # 이어 묻기
+
+    async def test_follow_up_inherits_extension(self):
+        saved = (G.llm, G.M.invoke, G.call_tool, G.app_graph)
+        ops, extend, _ = W.resolve_delays([RELAY, MCU], DUE)
+
+        class Saved:
+            async def aget_state(self, cfg):
+                return type("S", (), {"values": {"question": QUESTION, "whatif_ops": ops, "extend": extend, "intent": "IMPACT"}})()
+
+        async def invoke(*a, **k):
+            return W.Classification(intent="IMPACT", whatif=[], follow_up=True)
+
+        async def tool(state, name, args, **k):
+            if name == "list_plans":
+                return True, {"plans": [dict(p) for p in PLANS]}
+            if name == "get_item":
+                return True, {"name": args["item_id"]}
+            return True, {"purchase_orders": []}
+        G.llm, G.M.invoke, G.call_tool, G.app_graph = object(), invoke, tool, Saved()
+        try:
+            out = await G.classify_intent({"question": "그럼 12주까지 가면 허브 말고 또 어디가 멈춰?", "role": "PLANNER",
+                                           "parent_thread_id": "parent"})
+        finally:
+            G.llm, G.M.invoke, G.call_tool, G.app_graph = saved
+        self.assertEqual(out["whatif_ops"], ops)
+        self.assertEqual(out["extend"], extend)
+
     async def test_three_scenarios_and_where_it_breaks_first(self):
         saved = G.call_tool
         results = {"2026-12-04": [short("RELAY", "PP-03", "2026-11-23", 1000), short("MCU", "PP-04", "2026-11-30", 500)],
