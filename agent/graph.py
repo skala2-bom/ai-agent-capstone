@@ -338,12 +338,26 @@ async def load_plans(state: dict) -> list[dict]:
     return plans
 
 
-async def po_due_dates(state: dict) -> dict[str, str]:
-    """아직 안 들어온 발주의 입고 예정일. 기간으로 말한 지연을 날짜로 바꿀 때 쓴다 (decisions 6.50)."""
+async def load_pos(state: dict) -> list[dict]:
+    """열린 발주 표: 발주 번호 없이 "세미온반도체 MCU"라고 물어도 고를 수 있게, 기간을 날짜로 바꿀 때도 쓴다 (6.50·6.51)."""
     ok, res = await call_tool(state, "list_receipts", {}, label="발주 입고 예정일 조회 중")
     if not ok:
         raise ToolUnavailable(res)
-    return {po["po_id"]: po["due_date"] for po in res["purchase_orders"]}
+    pos = []
+    for po in res["purchase_orders"]:
+        iid = po["item_id"]
+        if iid not in _product_names:   # 품목 이름도 제품 이름과 같은 캐시를 쓴다
+            ok2, item = await call_tool(state, "get_item", {"item_id": iid}, quiet=True)
+            _product_names[iid] = item["name"] if ok2 else iid
+        pos.append({"po_id": po["po_id"], "item_id": iid, "item_name": _product_names[iid],
+                    "supplier_name": po.get("supplier_name"), "qty": po["qty"], "due_date": po["due_date"]})
+    return pos
+
+
+def pos_table(pos: list[dict]) -> str:
+    rows = [f"| {p['po_id']} | {p['item_name']} ({p['item_id']}) | {p['supplier_name']} | {p['qty']}개 | {p['due_date']} |"
+            for p in pos]
+    return "\n".join(["| po_id | 품목 | 협력사 | 수량 | 입고 예정일 |", "|---|---|---|---|---|", *rows])
 
 
 def plans_table(plans: list[dict]) -> str:
@@ -424,7 +438,7 @@ def describe_impact(impact: dict, plans: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 async def classify_question(question: str, plans: list[dict], turns: int = 0,
-                            previous: dict | None = None) -> tuple[W.Classification, list[str], int]:
+                            previous: dict | None = None, pos: list[dict] | None = None) -> tuple[W.Classification, list[str], int]:
     """질문 → (분류, 검증 오류, 모델 호출 수). 평가 스크립트도 이 함수를 그대로 쓴다.
 
     모델이 뽑은 whatif가 검사를 통과하지 못하면 오류를 알려 주고 한 번 더 기회를 준다.
@@ -433,11 +447,12 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
     """
     # 이어 묻기에서 모델이 앞 가정을 다시 적어도 그 날짜는 질문에 있던 것이다
     inherited_dates = [o[a] for o in (previous or {}).get("whatif_ops") or [] for a in W.DATE_ARGS if o.get(a)]
+    inherited_pos = {o["po_id"] for o in (previous or {}).get("whatif_ops") or [] if o.get("po_id")}
 
     def check(c: W.Classification) -> list[str]:
         ops = [o.model_dump() for o in c.whatif]   # delay_days는 normalize 전에 봐야 한다 (6.50)
         errors = (W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
-                  or W.unstated_date_errors(question, ops, inherited_dates))
+                  or W.unstated_date_errors(question, ops, inherited_dates) or W.po_errors(question, ops, pos or [], inherited_pos))
         if not errors and ops and c.unclear:
             errors.append("유효한 whatif와 unclear가 함께 있습니다. 원래 생산일·제품으로 계획이 특정되는지 다시 확인하세요. "
                           "unclear에는 의도 선택 이유를 적지 않습니다. 정말 정보가 모자라면 해당 부분만 적으세요.")
@@ -449,7 +464,8 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
         except ValueError:
             c = W.Classification(intent="IMPACT", unclear="날짜를 읽지 못했습니다. 실제 월/일을 확인해 주세요.")
         return c, check(c), turns
-    msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans)))]
+    msgs = [SystemMessage(prompt("classify", BASE_DATE=W.BASE_DATE.isoformat(), PLANS=plans_table(plans),
+                                 POS=pos_table(pos) if pos else "(없음)"))]
     if previous:
         msgs.append(SystemMessage(prompt("classify_follow_up", PREV_QUESTION=previous["question"],
                                          PREV_WHATIF=json.dumps(previous["whatif_ops"], ensure_ascii=False))))
@@ -493,7 +509,8 @@ async def classify_intent(state: AgentState) -> dict:
         return {**out, "intent": "IMPACT", "whatif_ops": ops}
 
     previous = await previous_turn(state)
-    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0), previous)
+    pos = await load_pos(state) if llm is not None else []   # 규칙 분류(가짜 모델)는 발주 표를 쓰지 않는다
+    c, errors, turns = await classify_question(state["question"], plans, state.get("turn_count", 0), previous, pos)
     if turns > MAX_TURNS:
         raise LimitExceeded(f"모델 호출이 {MAX_TURNS}회를 넘었습니다.")
     out["turn_count"] = turns
@@ -503,7 +520,7 @@ async def classify_intent(state: AgentState) -> dict:
     extend = []
     if any(o.get("delay_days") or o.get("may_extend") for o in ops):
         # "약 1주 늦어진다" → 원래 입고 예정일 + 7일, "더 길어지면" → 1·4·12주 비교 대상 (decisions 6.50)
-        ops, extend, errors = W.resolve_delays(ops, await po_due_dates(state))
+        ops, extend, errors = W.resolve_delays(ops, {p["po_id"]: p["due_date"] for p in pos})
         if errors:
             return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
     ops = [W.normalize(o) for o in ops]
@@ -514,6 +531,8 @@ async def classify_intent(state: AgentState) -> dict:
     if previous and previous["whatif_ops"] and intent in ("IMPACT", "ADJUST") and (c.follow_up or (intent == "ADJUST" and not ops)):
         kept = [o for o in previous["whatif_ops"] if W.op_target(W.normalize(o)) not in {W.op_target(n) for n in ops}]
         ops = W.merge_ops(previous["whatif_ops"], ops)
+        # 장기화 비교도 이어받는다: "그럼 12주까지 가면?"에 1·4·12주를 다시 보인다 (decisions 6.51, 변형 V8)
+        extend = extend or [e for e in previous.get("extend") or [] if e["po_id"] in {o.get("po_id") for o in ops}]
         if kept:
             # 가정은 저장되지 않는다 — 무엇을 이어받았는지 답변에 밝힌다 (안전성 재현 1·3)
             inherited = "앞 질문의 가정을 이어서 계산했습니다: " + ", ".join(op_text(o, plans) for o in kept)
@@ -559,7 +578,8 @@ async def previous_turn(state: AgentState) -> dict | None:
         if not values:
             return None
         if values.get("whatif_ops") or values.get("intent") not in ("QA", "CLARIFY"):
-            return {"question": values.get("question", ""), "whatif_ops": values.get("whatif_ops") or []}
+            return {"question": values.get("question", ""), "whatif_ops": values.get("whatif_ops") or [],
+                    "extend": values.get("extend") or []}
         parent = values.get("parent_thread_id")
     return None
 
