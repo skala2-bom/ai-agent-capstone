@@ -2,13 +2,14 @@
 import re
 from datetime import date, timedelta
 from pydantic import BaseModel, Field
+from classification_feedback import issue
 
 
 class DelayMention(BaseModel):
     po_id: str | None = None
     item_name: str | None = Field(None, description="발주 번호가 없으면 질문의 부품명")
     original_due_date: str | None = Field(None, description="질문에 명시된 원래 입고일 YYYY-MM-DD. 없으면 null")
-    delay_days: int | None = Field(None, description="원래 입고일에서 늦어지는 일수. 1주=7일. 직접 날짜를 계산하지 않는다")
+    delay_days: int | None = Field(None, description="사용자가 기간을 직접 말한 경우만 지연 일수. 1주=7일. 새 입고일이 명시되면 null. 날짜 차이를 계산해서 채우지 않는다")
     new_due_date: str | None = Field(None, description="새 입고일이 명시된 경우만 YYYY-MM-DD. 상대 기간이면 null")
 
 
@@ -52,10 +53,17 @@ def stated_delay_days(question):
     return days
 
 
-def resolve(mentions, receipts, base):
+def resolve(mentions, receipts, base, issues=None):
     ops, errors, seen = [], [], set()
     for mention in mentions:
         d = mention.model_dump() if isinstance(mention, BaseModel) else mention
+        target = " · ".join(str(d[k]) for k in ("item_name", "po_id") if d.get(k)) or "입고 지연 대상"
+
+        def fail(code, message, field, action, *, kind="NEEDS_INPUT"):
+            errors.append(f"{target}: {message}")
+            if issues is not None:
+                issues.append(issue(code, message, target=target, field=field, value=d.get(field), action=action, kind=kind))
+
         candidates = [r for r in receipts if r.get("status") == "OPEN"]
         if d.get("po_id"):
             candidates = [r for r in candidates if r["po_id"].upper() == d["po_id"].upper()]
@@ -63,15 +71,21 @@ def resolve(mentions, receipts, base):
             key = name_key(d["item_name"])
             candidates = [r for r in candidates if key in {name_key(r.get("item_name")), name_key(r["item_id"])}]
         else:
-            errors.append("지연된 발주 번호 또는 부품명과 원래 입고일을 알려 주세요."); continue
+            fail("MISSING_RECEIPT", "입고 지연 대상을 찾을 정보가 없습니다.", "po_id", "지연된 발주 번호 또는 부품명과 원래 입고일을 알려 주세요.")
+            continue
         if d.get("original_due_date"):
             candidates = [r for r in candidates if r["due_date"] == d["original_due_date"]]
         if len(candidates) != 1:
             hint = ", ".join(f"{r['po_id']} ({r['due_date']}, {r['qty']}개)" for r in candidates[:8])
-            errors.append("지연된 발주를 하나로 정할 수 없습니다. 발주 번호를 알려 주세요." + (" 후보: " + hint if hint else " 원래 입고일과 현재 발주 상태를 확인하세요.")); continue
+            fail("AMBIGUOUS_RECEIPT" if candidates else "RECEIPT_NOT_FOUND",
+                 "지연된 발주를 하나로 정할 수 없습니다." + (" 후보: " + hint if hint else f" 원래 입고일 {d.get('original_due_date') or '미지정'}에 해당하는 미입고 발주가 없습니다."),
+                 "po_id", "발주 번호를 지정해 주세요." if candidates else "부품명·발주 번호·원래 입고일과 현재 발주 상태를 확인해 주세요.")
+            continue
         row = candidates[0]
+        target = f"{row.get('item_name', row['item_id'])} · {row['po_id']}"
         if row["po_id"] in seen:
-            errors.append("같은 발주에 여러 지연 조건이 있습니다. 적용할 조건 하나를 정해 주세요."); continue
+            fail("DUPLICATE_RECEIPT", "같은 발주에 여러 지연 조건이 있습니다.", "po_id", "해당 발주에 적용할 새 입고일 하나를 확인해 주세요.")
+            continue
         seen.add(row["po_id"])
         try:
             old = date.fromisoformat(row["due_date"])
@@ -81,13 +95,23 @@ def resolve(mentions, receipts, base):
             relative = old + timedelta(days=days) if days is not None else None
             explicit = date.fromisoformat(d["new_due_date"]) if d.get("new_due_date") else None
             if relative and explicit and relative != explicit:
-                raise ValueError()
+                fail("CONFLICTING_RECEIPT_DATES",
+                     f"현재 입고일 {old}에서 {days}일 지연으로 해석하면 {relative}이지만, 추출한 새 입고일은 {explicit}입니다.",
+                     "new_due_date", "입력한 새 입고일과 지연 기간이 일치하는지 확인해 주세요. 입력이 맞다면 같은 질문을 다시 시도해 주세요.",
+                     kind="INTERPRETATION_ERROR")
+                continue
             new = explicit or relative
-            if new is None or new <= old or new <= base:
+            if new is None:
+                fail("MISSING_RECEIPT_DATE", f"현재 입고일은 {old}이며, 새 입고일 또는 지연 기간이 필요합니다.",
+                     "new_due_date", f"예: {row['po_id']} 입고가 며칠 늦어지는지 또는 새 입고일을 알려 주세요.")
+                continue
+            if new <= old or new <= base:
                 raise ValueError()
             ops.append({"op": "request_due_date_change", "po_id": row["po_id"], "new_due_date": new.isoformat()})
         except (ValueError, TypeError, OverflowError):
-            errors.append(f"{row['po_id']}: 현재 입고일 {row['due_date']} 이후의 새 날짜 또는 정확한 지연 기간을 알려 주세요.")
+            fail("INVALID_RECEIPT_DATE",
+                 f"현재 입고일은 {row['due_date']}입니다. 추출한 새 입고일: {d.get('new_due_date') or '없음'}, 지연 일수: {d.get('delay_days') if d.get('delay_days') is not None else '없음'}.",
+                 "new_due_date", "현재 입고일 이후의 실제 날짜 또는 1~730일 사이의 지연 기간을 확인해 주세요.")
     return ops, errors
 
 

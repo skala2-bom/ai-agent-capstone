@@ -11,6 +11,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("SSE lifecycle", () => {
+  it.each([
+    ["NEEDS_INPUT", "추가 정보 필요"],
+    ["INTERPRETATION_ERROR", "질문 해석 실패"],
+  ])("terminates a %s response without displaying analysis complete", (kind, status) => {
+    const a = new EventAccumulator("T1");
+    a.accept(event(1, "DONE", { answer: "입고일을 확인해 주세요.", result: { intent: "CLARIFY", clarification: { kind } } }));
+    expect(a.status).toBe(status);
+    expect(a.terminal).toBe(true);
+    expect(a.answer).toBe("입고일을 확인해 주세요.");
+  });
   it("deduplicates replay by task/seq and replaces tokens with final answer", () => {
     const a = new EventAccumulator("T1");
     a.accept(event(1, "TOKEN", { text: "hello" }));

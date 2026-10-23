@@ -16,6 +16,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 50 | **질문 해석 실패 안내 (10/23, 로컬)** — 명시된 새 입고일과 AI가 덧붙인 지연 일수가 일치하면 날짜로 검증. 충돌·임의 날짜·발주 모호성은 차단. `CLARIFY`의 `DONE.result.clarification`에 실패 단계·대상·필드·추출값·다음 행동 추가 | 3.2 | 채팅·작업 이력에서 `NEEDS_INPUT`은 추가 정보 필요, `INTERPRETATION_ERROR`는 질문 해석 실패로 표시 | 내부 재시도 지시문과 사용자 안내 분리. 검증 시도는 agent 체크포인트에 저장. 기존 intent/whatif/impact, backend·DB 구조 유지 |
 | 49 | **구매 채팅에서 입고 지연→생산 요청 연결** — 부품·원래 입고일로 OPEN 발주를 찾고 상대 기간은 기존 due_date에 계산. `DONE.result.receipt_delay`는 미저장 분석 스냅샷이며 사실 이벤트가 아님. 전송 미리보기의 `requiresDelayConfirmation=true`이면 `confirmDelay=true`, `delayReason` 필수. 입고일·변경 이력·사실 이벤트·생산 요청을 한 트랜잭션으로 저장. 가정·모호한 발주·변경된 데이터는 차단 | [상세·검증](coordination-requests.md#7-구매-채팅에서-입고-지연-전송-1023) | 채팅 요청 버튼, 변경 전후·사유·명시 동의. DB 구조 변경 없음 | receipt_delays 추출·실제 발주 조회·코드 날짜 계산·snapshot. 기존 intent/whatif/impact 유지 |
 | 48 | **해결 요청이 분석만으로 끝나지 않게** — 이어 묻기는 바로 앞 질문이 규정 질문(QA)·되묻기(CLARIFY)면 **최대 3단계 거슬러 올라가** 가정을 찾는다. 해결 요청인데 풀 문제가 없으면 `DONE.answer` 첫 줄에 이유를 쓴다(가정이 있으면 "해결안을 만들지 않았습니다 · 이미 풀렸을 수 있습니다", 가정도 없으면 "어떤 변경에 대한 해결인지 알려 주세요"). "해결방안·해결책·해결안·어떻게 해결·대안 있어"도 해결 요청으로 본다. **API·이벤트 모양은 그대로** | decisions 6.48 | 없음 (답변 문구만 바뀜) | ✅ 반영함: `previous_turn`, `_adjust_answer`, `ADJUST_REQUEST`, `prompts/classify.md` 예시 |
 | 47 | **여유 있는 결품 해결안 + 팀장 조건 재제안** — `compare_options` 결품 대안이 딱 맞춘 안(첫 결품일·부족량)에 더해 **안전재고까지 채우는 안**과 **3일 일찍 받는 안**을 함께 낸다. 대안마다 `buffer{days, extra_qty}`, `safety_ok`(풀려던 생산에 안전재고 미만이 안 남음). 정렬·추천은 결품 해결 → 부작용 없음 → **안전재고까지** → 위험 → 비용. 요청에 선택 칸 `constraint{po_id?, new_due_date?, split_qty?}`를 주면 결품 대안을 그 조건으로만 만들고 못 지키는 이유는 `constraint_notes[]`(리드타임상 가장 빠른 가능일 등). 재요청(REPLAN)의 `args`가 이 조건이다 | 2.3, decisions 6.47, `eval/golden.json` SC1·SC2·SC4 대안 정답 갱신 | 🔶 팀원: [AI에게 재요청]에 원하는 입고일·분할 수량 입력칸, 대안 없음의 `outcome.detail` 표시 (패치 전달) | ✅ 재제안에서 조건을 계산 서비스에 넘기고 조건대로 계산된 첫 안을 코드가 고름. 🔶 팀원: `task_batch.py` REPLAN이 `args`를 `constraint`로 넘김 (패치 전달) |
@@ -555,6 +556,19 @@ HTTP 상태는 `NOT_FOUND` 404 · `PO_NOT_OPEN` 409 · `APPROVAL_REQUIRED` 403 �
 
 - 화면은 `result.impact`에서 결품·주의·과잉을 그린다. `impact`가 없으면 `result` 자체를 본다 (`ServerResult.vue`).
 - 금액은 agent가 질문자 역할대로 한 번, `GET /api/ai/tasks/{id}`로 다시 볼 때 backend가 보는 사람 역할대로 한 번 더 가린다.
+
+**질문 해석·확인 결과 (10/23, 계약 표 50번)**: `intent=CLARIFY`일 때만 선택 필드 `clarification`을 추가한다.
+`DONE`은 처리가 종료됐다는 이벤트이며, 이 경우 영향 분석 성공을 뜻하지 않는다. 기존 이벤트 종류·DB 상태는 유지한다.
+
+| 필드 | 의미 |
+|---|---|
+| `clarification.kind` | `NEEDS_INPUT`: 발주 후보가 여러 개이거나 필요한 정보가 없음. `INTERPRETATION_ERROR`: 추출값이 모순되거나 질문에 없는 조건을 생성함 |
+| `clarification.stage` | 현재 `CLASSIFY` — 대상·날짜 해석 검증 단계 |
+| `clarification.issues[]` | `{code, kind, target, field, value, message, action}`. 사용자에게 대상·이유·다음 행동 표시. `value`는 검증을 통과한 값이라는 뜻이 아님 |
+| `clarification.extracted` | 마지막 분류 결과의 의도·변경 조건·입고 언급·확인 요청. 디버깅용이며 적용 가능한 변경으로 사용하지 않음 |
+
+실패한 추출값을 `whatif`에 넣어 부분 실행하지 않는다. 일반 채팅 해석 실패는 `whatif=[]`, `impact=null`이며 실제 업무 변경이 없다.
+agent 체크포인트의 `classification_attempts`에는 재시도별 추출값과 문제 항목을 남긴다. 이전 작업의 기록을 소급 생성하지 않는다.
 
 AI 변경(계약 표 30번): 위 `{intent, whatif, impact}`의 이름과 모양은 그대로 유지한다.
 ADJUST의 `impact`는 **해결안 실행 전 최초 영향 분석**이고 `whatif`는 **사용자의 원래 가정**이다.

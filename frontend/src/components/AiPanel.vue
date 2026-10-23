@@ -14,6 +14,7 @@ import { sourceCards } from "../services/answer";
 import { useWorkspace } from "../stores/workspace";
 import { mode, request } from "../services/api";
 import { connect, EventAccumulator } from "../services/sse";
+import { taskStatus } from "../services/task-status";
 import { scenarios } from "../mocks/fixtures";
 import type { AgentEvent } from "../types";
 import { Sparkles, ArrowUp, PanelRightClose } from "lucide-vue-next";
@@ -259,7 +260,7 @@ async function openExisting(taskId: string) {
         return;
       }
       readOnlyTask.value = true;
-      status.value = ({DONE: "완료", FAILED: "실패", WAITING_APPROVAL: "승인 대기", RUNNING: "진행 중", QUEUED: "접수"} as Record<string, string>)[task.status] ?? task.status;
+      status.value = taskStatus(task.status, task.result);
       running.value = !["DONE", "FAILED"].includes(task.status);
       if (running.value) timer = setTimeout(fetchDetail, 3000);
     } catch (e) {

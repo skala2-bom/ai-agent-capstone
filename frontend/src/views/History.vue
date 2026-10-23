@@ -52,6 +52,8 @@ const rows = computed(() =>
       <option>승인 대기</option>
       <option>실행 대기</option>
       <option>완료</option>
+      <option>추가 정보 필요</option>
+      <option>질문 해석 실패</option>
       <option>실패</option></select
     ><input v-model="from" type="date" aria-label="이력 시작일" /><input
       v-model="to"
