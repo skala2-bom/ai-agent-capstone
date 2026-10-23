@@ -76,6 +76,27 @@ class ReceiptDelayTests(unittest.IsolatedAsyncioTestCase):
             _, errors, _ = await G.classify_question("11/31 와이파이칩 입고가 일주일 늦어졌어", [], receipts=ROWS)
         self.assertTrue(errors)
 
+    def test_calendar_days_are_not_relative_delay_durations(self):
+        self.assertEqual(D.stated_delay_days("11월 13일 입고가 늦어졌어"), set())
+        self.assertEqual(D.stated_delay_days("11/13 입고가 2주 늦어졌어"), {14})
+        self.assertEqual(D.stated_delay_days("2026-11-13 입고가 10일 늦어졌어"), {10})
+        self.assertEqual(D.stated_delay_days(QUESTION), {7})
+
+    async def test_calculated_receipt_date_does_not_authorize_an_invented_plan_date(self):
+        plans = [{"plan_id":"PP-05", "product_id":"FG-HUB", "product_name":"허브", "plan_date":"2026-12-14", "qty":400}]
+        parsed = W.Classification(intent="IMPACT", whatif=[W.WhatifOp(op="reschedule_plan", plan_id="PP-05", new_date="2026-11-20")],
+                                  receipt_delays=[D.DelayMention(item_name="와이파이칩", original_due_date="2026-11-13", delay_days=7)])
+        with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=parsed)):
+            _, errors, _ = await G.classify_question(QUESTION, plans, receipts=ROWS)
+        self.assertTrue(any("질문에 없는 날짜" in e and "reschedule_plan" in e for e in errors), errors)
+
+    async def test_model_cannot_invent_a_relative_duration_or_explicit_receipt_date(self):
+        for values in [dict(delay_days=7), dict(new_due_date="2026-11-20")]:
+            parsed = W.Classification(intent="IMPACT", receipt_delays=[D.DelayMention(po_id="PO-2609-002", **values)])
+            with patch.object(G, "llm", object()), patch.object(G.M, "invoke", AsyncMock(return_value=parsed)):
+                _, errors, _ = await G.classify_question("PO-2609-002 입고가 늦어졌어. 문제 있어?", [], receipts=ROWS)
+            self.assertTrue(errors and "질문에 없는" in errors[0], errors)
+
 
 if __name__ == "__main__":
     unittest.main()

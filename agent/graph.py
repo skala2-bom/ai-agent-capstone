@@ -414,7 +414,11 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
     previous는 이어 묻는 질문일 때 앞 작업의 질문·가정이다. 모델은 이번 질문에서 새로 바뀐 것만 뽑고
     follow_up을 정한다. 앞 가정과 합치는 건 classify_intent의 코드가 한다.
     """
+    # 이어 묻기에서 모델이 앞 가정을 다시 적어도 그 날짜는 질문에 있던 것이다
+    inherited_dates = [o[a] for o in (previous or {}).get("whatif_ops") or [] for a in W.DATE_ARGS if o.get(a)]
+
     def check(c: W.Classification) -> list[str]:
+        calculated_ops = []
         if receipts is not None and c.intent != "QA" and not c.receipt_delays and not c.follow_up:
             return [c.unclear or "입고 지연의 부품명·원래 입고일·기간을 receipt_delays에 추출해 주세요."]
         if c.receipt_delays:
@@ -426,6 +430,11 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
             resolved, errors = D.resolve(mentions, receipts, W.BASE_DATE)
             if errors:
                 return errors
+            for mention, op in zip(mentions, resolved):
+                if mention.delay_days is not None:
+                    if mention.delay_days not in D.stated_delay_days(question):
+                        return ["질문에 없는 지연 기간입니다. 기간을 지어내지 말고 정확한 기간 또는 새 입고일을 확인하세요."]
+                    calculated_ops.append(op)
             # Same PO must have one exact condition; never silently overwrite conflicting extraction.
             known = {o['po_id']: o for o in resolved}
             kept = []
@@ -437,7 +446,11 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
                     kept.append(op)
             c.whatif = kept + [W.WhatifOp(**o) for o in resolved]
         ops = [W.normalize(o) for o in c.whatif]
-        errors = W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
+        # Exempt only the exact PO/date computed from a stated duration and an actual receipt.
+        # An unrelated plan or PO with the same date must still pass main's date guard.
+        stated_ops = [o for o in ops if o not in calculated_ops]
+        errors = (W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
+                  or W.unstated_date_errors(question, stated_ops, inherited_dates))
         if not errors and ops and c.unclear:
             errors.append("유효한 whatif와 unclear가 함께 있습니다. 원래 생산일·제품으로 계획이 특정되는지 다시 확인하세요. "
                           "unclear에는 의도 선택 이유를 적지 않습니다. 정말 정보가 모자라면 해당 부분만 적으세요.")

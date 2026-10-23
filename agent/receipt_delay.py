@@ -38,6 +38,20 @@ def calendar_date(value, base):
     return d if d >= base else date(base.year + 1, month, day)
 
 
+def stated_delay_days(question):
+    """Only user-stated days/weeks may authorize a code-calculated receipt date.
+
+    Remove calendar dates so '11월 13일' cannot be misread as a 13-day duration.
+    This does not authorize any production date or another PO's date.
+    """
+    text = re.sub(r"\d{4}-\d{2}-\d{2}|\d{1,2}\s*/\s*\d{1,2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일", "", question)
+    days = {int(n) * (7 if unit.startswith("주") else 1)
+            for n, unit in re.findall(r"(?<![\d.])(\d+)\s*(주(?:일)?|일)", text)}
+    if re.search(r"일주일|한\s*주(?:일)?", text):
+        days.add(7)
+    return days
+
+
 def resolve(mentions, receipts, base):
     ops, errors, seen = [], [], set()
     for mention in mentions:
