@@ -114,13 +114,17 @@ class InternalApi {
         itemId = blankToNull(itemId);
         if (blankToNull(status) == null) status = "OPEN";
         if (itemId != null) getItem(itemId);
-        return m("purchase_orders", db.queryForList("""
+        List<Map<String, Object>> rows = db.queryForList("""
                 select po_id, po.item_id, i.name as item_name, po.supplier_id, s.name as supplier_name, qty, unit_price, qty * unit_price as amount,
                        order_date::text as order_date, due_date::text as due_date, status, parent_po_id
                 from purchase_order po join supplier s on s.supplier_id = po.supplier_id join item i on i.item_id = po.item_id
                 where status = ? and (cast(? as text) is null or po.item_id = ?)
                   and (cast(? as date) is null or due_date >= ?) and (cast(? as date) is null or due_date <= ?)
-                order by due_date, po_id""", status, itemId, itemId, from, from, to, to));
+                order by due_date, po_id""", status, itemId, itemId, from, from, to, to);
+        // 저장된 입고 지연 {from, to, days} (decisions 6.56, contracts 53). 없으면 칸이 없다
+        Map<String, Map<String, Object>> delays = impact.recordedDelays();
+        rows.forEach(r -> { if (delays.containsKey(r.get("po_id"))) r.put("recorded_delay", delays.get(r.get("po_id"))); });
+        return m("purchase_orders", rows);
     }
 
     // ------------------------------------------------------------------
