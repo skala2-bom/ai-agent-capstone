@@ -124,6 +124,8 @@ class AgentState(TypedDict, total=False):
     inherited: str | None                     # 이어 묻기로 앞 작업에서 이어받은 가정 (답변 맨 앞에 밝힌다, 6.44)
     failure: str | None                       # 도구 오류로 끝낼 때
     impact: dict | None                       # analyze_impact 결과 (변경 적용 후, 해결안 적용 전)
+    extend: list[dict]                        # 지연이 더 길어질 수 있는 발주 [{po_id, base_due}] (6.50)
+    scenarios: list[dict]                     # 장기화 대비 1·4·12주 결과 [{weeks, delay_days, due_dates, impact}]
     current_impact: dict | None               # 가장 최근 DB + 아직 적용되지 않은 사용자 가정
     current_ops: list[dict]
     scope: list[str]                          # 최초 질문의 대상(품목|규칙); 임의로 범위를 넓히지 않음
@@ -336,6 +338,14 @@ async def load_plans(state: dict) -> list[dict]:
     return plans
 
 
+async def po_due_dates(state: dict) -> dict[str, str]:
+    """아직 안 들어온 발주의 입고 예정일. 기간으로 말한 지연을 날짜로 바꿀 때 쓴다 (decisions 6.50)."""
+    ok, res = await call_tool(state, "list_receipts", {}, label="발주 입고 예정일 조회 중")
+    if not ok:
+        raise ToolUnavailable(res)
+    return {po["po_id"]: po["due_date"] for po in res["purchase_orders"]}
+
+
 def plans_table(plans: list[dict]) -> str:
     rows = [f"| {p['plan_id']} | {p['product_name']} ({p['product_id']}) | {p['plan_date']} | {p['qty']}대 |"
             for p in plans]
@@ -353,10 +363,19 @@ def item_label(e: dict) -> str:
     return e.get("item_name") or e["item_id"]
 
 
-def describe_shortage(s: dict, plans: list[dict]) -> str:
+def describe_shortage(s: dict, plans: list[dict], basis: bool = False) -> str:
     when = "지금 발주하면 제때 도착" if s.get("orderable") else "새 발주로는 늦음, 기존 발주 조정 필요"
-    return (f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))}: {item_label(s)} "
+    line = (f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))}: {item_label(s)} "
             f"{abs(s['projected_stock']):,}개 부족 · {when}")
+    return line + (f" ({basis_text(s['basis'], plans)})" if basis and s.get("basis") else "")
+
+
+def basis_text(b: dict, plans: list[dict]) -> str:
+    """결품 근거: 재고 + 그날까지 입고 − 그날까지 소요(생산별). backend 계산을 그대로 옮긴다 (decisions 6.50)"""
+    names = {p["plan_id"]: p["product_name"] for p in plans}
+    uses = " · ".join(f"{names.get(u['plan_id'], u['plan_id'])} {u['plan_id']} {u['qty']:,}" for u in b["uses"])
+    received = sum(r["qty"] for r in b["receipts"])
+    return f"재고 {b['on_hand']:,} + 입고 {received:,} − 소요 {sum(u['qty'] for u in b['uses']):,} [{uses}]"
 
 
 def lead_text(text: str) -> str:
@@ -390,7 +409,7 @@ def describe_impact(impact: dict, plans: list[dict]) -> str:
     모양은 "제목 n건:" 한 줄 + "- " 항목 줄, 구역 사이는 빈 줄. 화면이 이 모양을 목록으로 그린다 (decisions 6.27).
     """
     groups = [
-        ("결품", [describe_shortage(s, plans) for s in impact.get("shortages", [])]),
+        ("결품", [describe_shortage(s, plans, basis=True) for s in impact.get("shortages", [])]),
         ("주의", [f"{plan_label(plans, w.get('plan_id'), w.get('plan_date'))}: {item_label(w)} 재고 {w['projected_stock']:,}개 "
                   f"· 안전재고 {w['threshold']:,}개 미만" for w in impact.get("warnings", [])]),
         ("과잉", [f"{item_label(e)} {e['qty']:,}개 남음 · {e['date']} 기준, 앞으로 {e.get('window_days', 30)}일 쓸 양보다 많음"
@@ -416,7 +435,7 @@ async def classify_question(question: str, plans: list[dict], turns: int = 0,
     inherited_dates = [o[a] for o in (previous or {}).get("whatif_ops") or [] for a in W.DATE_ARGS if o.get(a)]
 
     def check(c: W.Classification) -> list[str]:
-        ops = [W.normalize(o) for o in c.whatif]
+        ops = [o.model_dump() for o in c.whatif]   # delay_days는 normalize 전에 봐야 한다 (6.50)
         errors = (W.validate_ops(ops, plans) or W.consistency_errors(question, ops, plans)
                   or W.unstated_date_errors(question, ops, inherited_dates))
         if not errors and ops and c.unclear:
@@ -480,7 +499,14 @@ async def classify_intent(state: AgentState) -> dict:
     out["turn_count"] = turns
     if errors or c.unclear:
         return {**out, "intent": "CLARIFY", "clarify": c.unclear or "; ".join(errors)}
-    ops = [W.normalize(o) for o in c.whatif]
+    ops = W.mark_extension(state["question"], [o.model_dump(exclude_none=True) for o in c.whatif])
+    extend = []
+    if any(o.get("delay_days") or o.get("may_extend") for o in ops):
+        # "약 1주 늦어진다" → 원래 입고 예정일 + 7일, "더 길어지면" → 1·4·12주 비교 대상 (decisions 6.50)
+        ops, extend, errors = W.resolve_delays(ops, await po_due_dates(state))
+        if errors:
+            return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
+    ops = [W.normalize(o) for o in ops]
     intent = c.intent
     notices, inherited = [], None
     # 이어 묻기 (decisions 6.44): "그럼 해결 방법 만들어 줘"처럼 변경을 다시 말하지 않거나 "거기에 …"처럼 덧붙이면
@@ -511,7 +537,8 @@ async def classify_intent(state: AgentState) -> dict:
             intent = "IMPACT"
             notices = ["확정된 입고 지연을 기준으로 분석했습니다. 생산계획은 부서 요청함에서 변경안을 검증한 뒤 확정하세요."]
     # notice는 해결안 실행 뒤 다시 쓰이므로(refresh_impact) 이어받은 가정은 따로 둔다
-    return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited}
+    return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited,
+            "extend": extend if intent == "IMPACT" else []}   # 장기화 비교는 분석만. 해결안은 확정 지연 기준 (6.50)
 
 
 MAX_PREVIOUS_TURNS = 3   # 가정을 찾아 거슬러 올라가는 앞 질문 수
@@ -607,11 +634,53 @@ async def tools(state: AgentState) -> dict:
                     evidence, error = await retrieve_sources(state, state["question"])
                     updates["evidence"] = evidence
                     updates["evidence_error"] = error
-            content = json.dumps(mask(res, state.get("role")), ensure_ascii=False) if ok else res
+                    if state.get("extend"):
+                        updates["scenarios"] = await delay_scenarios(state)
+            body = mask(res, state.get("role"))
+            if updates.get("scenarios"):
+                body = {**body, "scenarios": scenario_summary(updates["scenarios"], state["plans"])}
+            content = json.dumps(body, ensure_ascii=False) if ok else res
         else:
             content = f"이 경로에서 쓸 수 없는 도구입니다: {call['name']}"
         out_msgs.append(ToolMessage(tool_content(content), tool_call_id=call["id"], name=call["name"]))
     return {"messages": out_msgs, "tool_counts": counts, **updates}
+
+
+async def delay_scenarios(state: dict) -> list[dict]:
+    """장기화 대비: 대상 발주만 원래 입고 예정일 + 1·4·12주로 바꿔 각각 계산한다. 모델이 아니라 코드가 돈다 (6.50)."""
+    out = []
+    for days in W.SCENARIO_DAYS:
+        ops = W.scenario_ops(state.get("whatif_ops") or [], state["extend"], days)
+        ok, res = await call_tool(state, "analyze_impact", {"whatif": ops}, quiet=True)
+        if not ok:
+            return []   # 비교를 못 해도 통보 기준 분석은 그대로 답한다
+        due = {o["po_id"]: o["new_due_date"] for o in ops if o.get("po_id") in {e["po_id"] for e in state["extend"]}}
+        out.append({"weeks": days // 7, "delay_days": days, "due_dates": due, "impact": res})
+    return out
+
+
+def shortage_key(s: dict) -> tuple:
+    return s.get("item_id"), s.get("plan_id"), s.get("plan_date")
+
+
+def scenario_summary(scenarios: list[dict], plans: list[dict]) -> list[str]:
+    """기간마다 한 줄: 입고일, 결품 수, 앞 기간보다 새로 생긴 결품. "어디부터 무너지나"를 계산으로 보여 준다"""
+    lines, seen = [], set()
+    for sc in scenarios:
+        shortages = sc["impact"].get("shortages", [])
+        new = [s for s in shortages if shortage_key(s) not in seen]
+        seen |= {shortage_key(s) for s in shortages}
+        due = ", ".join(f"{po} 입고 {d}" for po, d in sc["due_dates"].items())
+        head = f"{sc['weeks']}주 지연({due}): 결품 {len(shortages)}건"
+        brief = lambda xs: ", ".join(f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))} {item_label(s)} "
+                                     f"{abs(s['projected_stock']):,}개" for s in xs)
+        if not shortages:
+            lines.append(head)
+        elif sc is scenarios[0]:
+            lines.append(f"{head} · {brief(shortages)}")
+        else:
+            lines.append(head + (f" · 새로 {brief(new)}" if new else " · 새로 생긴 결품 없음"))
+    return lines
 
 
 def after_agent(state: AgentState) -> str:
@@ -1236,6 +1305,10 @@ def respond(state: AgentState) -> dict:
             answer = "\n\n".join(x for x in (lead_text(answer), chain_note(impact, state.get("whatif_ops"), plans)) if x)
             if any(impact.get(k) for k in ("shortages", "warnings", "excesses")):
                 answer = (answer + "\n\n" if answer else "") + describe_impact(impact, plans)
+            if state.get("scenarios"):
+                lines = scenario_summary(state["scenarios"], plans)
+                answer += (f"\n\n장기화 대비 비교 {len(lines)}건:\n" + "\n".join("- " + x for x in lines)
+                           + "\n\n4주·12주는 협력사가 확정한 날짜가 아닌 장기화 대비 가정입니다.")
     if state.get("notice"):
         answer = f"({state['notice']})\n{answer}"
     if state.get("inherited"):
@@ -1257,6 +1330,8 @@ def respond(state: AgentState) -> dict:
         else:
             next_actions.append({"type": "REQUEST_ADJUST", "label": "구매팀에 해결 요청"})
     result = {"intent": intent, "whatif": state.get("whatif_ops") or [], "impact": impact or None}
+    if state.get("scenarios"):
+        result["scenarios"] = state["scenarios"]   # 통보 기준 impact는 그대로, 비교만 덧붙인다 (contracts 49)
     if state.get("coordination"):
         result["coordinationId"] = state["coordination"]["id"]
         result["plan_changes"] = state.get("plan_changes") or []

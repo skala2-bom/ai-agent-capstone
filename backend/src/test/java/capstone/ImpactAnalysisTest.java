@@ -112,6 +112,25 @@ class ImpactAnalysisTest {
         assertThat(postpone).containsEntry("type", "DUE_DATE_CHANGE").containsEntry("side_effects", List.of());
     }
 
+    /** decisions 6.50: 결품마다 근거(재고 + 그날까지 입고 − 그날까지 소요)를 주고, 그 합이 예상재고와 같다. 팀원 시나리오(MCU 1주 지연) */
+    @Test
+    @SuppressWarnings("unchecked")
+    void 결품_근거의_합은_예상재고와_같다() {
+        var r = run(op("request_due_date_change", "po_id", "PO-2610-106", "new_due_date", "2026-11-27"),
+                op("request_due_date_change", "po_id", "PO-2609-008", "new_due_date", "2026-12-04"));
+        assertThat(list(r, "shortages")).extracting(s -> s.get("item_id") + " " + s.get("plan_id") + " " + s.get("qty"))
+                .containsExactly("RELAY PP-03 1000", "MCU PP-04 500");
+        for (var s : list(r, "shortages")) {
+            var b = (Map<String, Object>) s.get("basis");
+            int in = ((List<Map<String, Object>>) b.get("receipts")).stream().mapToInt(x -> (int) x.get("qty")).sum();
+            int used = ((List<Map<String, Object>>) b.get("uses")).stream().mapToInt(x -> (int) x.get("qty")).sum();
+            assertThat((int) b.get("on_hand") + in - used).isEqualTo(s.get("projected_stock"));
+        }
+        // 늦어진 MCU 800개(12/4)는 11/30 근거의 입고에 없다
+        var mcu = (Map<String, Object>) list(r, "shortages").get(1).get("basis");
+        assertThat((List<Map<String, Object>>) mcu.get("receipts")).noneMatch(x -> "2026-12-04".equals(x.get("date")));
+    }
+
     /** decisions 6.47: 팀장 조건(날짜·분할 수량·발주)으로만 결품 대안을 만들고, 못 지키면 이유와 가장 빠른 가능일을 준다 */
     @Test
     void 팀장_조건으로만_결품_대안을_만들고_불가능하면_이유를_준다() {
