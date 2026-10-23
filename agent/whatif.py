@@ -139,6 +139,25 @@ def consistency_errors(question: str, ops: list[dict], plans: list[dict]) -> lis
     return errors
 
 
+MD_KO = re.compile(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일")
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def unstated_date_errors(question: str, ops: list[dict], allowed: list[str] = ()) -> list[str]:
+    """whatif의 날짜가 질문(이어 묻기면 앞 가정 포함)에 실제로 적혀 있는지 본다.
+
+    "허브 생산 좀 당겨 보면 어때?"처럼 날짜가 없는 질문에 실제 모델이 11/25를 채워 계산한 적이 있다
+    (평가셋 v2 Q17, 개선 전·후 모두). 날짜는 질문에서만 온다 — 없으면 되묻는다 (6.27과 같은 원칙).
+    """
+    try:
+        stated = {infer_date(*map(int, m)) for m in MD.findall(question) + MD_KO.findall(question)}
+    except ValueError:
+        return []   # 없는 월/일은 consistency_errors가 이미 알린다
+    stated |= set(ISO_DATE.findall(question)) | set(allowed)
+    return [f"{op['op']}: {arg} {op[arg]}는 질문에 없는 날짜임. 날짜를 지어내지 말고 unclear에 무엇이 빠졌는지 적어라"
+            for op in ops for arg in sorted(DATE_ARGS) if op.get(arg) and op[arg] not in stated]
+
+
 def op_target(op: dict) -> tuple:
     """같은 대상에 같은 종류의 변경인가를 가르는 열쇠. 이어 묻기에서 새 값이 앞 값을 덮어쓴다."""
     return (op.get("op"), op.get("plan_id") or op.get("po_id"))
