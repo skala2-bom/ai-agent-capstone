@@ -8,7 +8,7 @@
 >
 > **정한 사람**: 기술 선택은 교재와 평가표 기준으로 Claude가 정했다. 왜 그렇게 정했는지는 [decisions.md 6절](decisions.md). 바꾸고 싶으면 그 근거를 보고 뒤집으면 된다.
 >
-> **갱신**: 2026-10-22 — 아래 "최근 변경" 표의 44~49번 (Phase 2, 48·49번은 10/23). 2026-10-21 — 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
+> **갱신**: 2026-10-22 — 아래 "최근 변경" 표의 44~50번 (Phase 2, 48~50번은 10/23). 2026-10-21 — 30~43번. 표는 **번호가 큰(최근) 것부터** 적고, 뒤 결정으로 바뀐 행에는 "→ n번" 표시를 붙였다.
 
 ## 최근 변경 — 각 파트가 확인할 것 (10/20~10/22, 모든 파트)
 
@@ -16,6 +16,7 @@
 
 | # | 바뀐 것 | 어디 | A 할 일 | C 할 일 |
 |:-:|---|---|---|---|
+| 50 | **생산계획 변경 효과** — 영향 분석 질문이 생산계획을 바꾸고 다른 가정(입고 지연 등)도 있으면 `DONE.result.plan_effect{resolved[], new[], remaining[]}`를 **덧붙인다** (결품 항목 모양, remaining은 `before_qty` 추가). 그 계획 변경만 뺀 가정과 (부품, 생산계획) 단위로 비교한 것. 생산계획을 바꾼 영향 분석 답변 끝에 "생산계획은 아직 변경되지 않았습니다 …" 문장. 기존 칸은 그대로 | 3.2, decisions 6.52 | 답변 문장으로 표시됨(화면 변경 없음). 필요하면 `plan_effect`로 표 | ✅ 반영함: `plan_effect`·`effect_lines`, `restates_previous`, `classify_follow_up.md`·`impact.md` |
 | 49 | **공급 지연 장기화 비교 + 결품 근거** — `analyze_impact` 결품 항목에 `basis{on_hand, receipts[{date, qty}], uses[{plan_id, plan_date, qty}]}` 추가 (재고 + 그날까지 입고 − 그날까지 소요 = `projected_stock`). 질문이 "약 1주 늦어진다"처럼 기간만 말하면 agent가 **원래 입고 예정일 + 일수**로 날짜를 채운다(분류 칸 `delay_days`). "더 길어지면"을 물은 발주(`may_extend`)는 agent가 1·4·12주(7·28·84일)로 각각 계산해 `DONE.result.scenarios[{weeks, delay_days, due_dates, impact}]`를 **덧붙인다**. `impact`는 통보 기준 그대로이고, 장기화 비교에서는 해결안·승인 카드를 만들지 않는다. whatif 계약(op·인자)은 그대로 | 2.2, 3.2, decisions 6.50 | ✅ 반영함: `ServerResult.vue` 결품마다 근거 한 줄, 아래 "장기화 대비 비교" 표(새로 생긴 결품 표시) | ✅ 반영함: `WhatifOp.delay_days·may_extend`, `resolve_delays`·`scenario_ops`, `delay_scenarios`, `classify.md`·`impact.md` |
 | 48 | **해결 요청이 분석만으로 끝나지 않게** — 이어 묻기는 바로 앞 질문이 규정 질문(QA)·되묻기(CLARIFY)면 **최대 3단계 거슬러 올라가** 가정을 찾는다. 해결 요청인데 풀 문제가 없으면 `DONE.answer` 첫 줄에 이유를 쓴다(가정이 있으면 "해결안을 만들지 않았습니다 · 이미 풀렸을 수 있습니다", 가정도 없으면 "어떤 변경에 대한 해결인지 알려 주세요"). "해결방안·해결책·해결안·어떻게 해결·대안 있어"도 해결 요청으로 본다. **API·이벤트 모양은 그대로** | decisions 6.48 | 없음 (답변 문구만 바뀜) | ✅ 반영함: `previous_turn`, `_adjust_answer`, `ADJUST_REQUEST`, `prompts/classify.md` 예시 |
 | 47 | **여유 있는 결품 해결안 + 팀장 조건 재제안** — `compare_options` 결품 대안이 딱 맞춘 안(첫 결품일·부족량)에 더해 **안전재고까지 채우는 안**과 **3일 일찍 받는 안**을 함께 낸다. 대안마다 `buffer{days, extra_qty}`, `safety_ok`(풀려던 생산에 안전재고 미만이 안 남음). 정렬·추천은 결품 해결 → 부작용 없음 → **안전재고까지** → 위험 → 비용. 요청에 선택 칸 `constraint{po_id?, new_due_date?, split_qty?}`를 주면 결품 대안을 그 조건으로만 만들고 못 지키는 이유는 `constraint_notes[]`(리드타임상 가장 빠른 가능일 등). 재요청(REPLAN)의 `args`가 이 조건이다 | 2.3, decisions 6.47, `eval/golden.json` SC1·SC2·SC4 대안 정답 갱신 | 🔶 팀원: [AI에게 재요청]에 원하는 입고일·분할 수량 입력칸, 대안 없음의 `outcome.detail` 표시 (패치 전달) | ✅ 재제안에서 조건을 계산 서비스에 넘기고 조건대로 계산된 첫 안을 코드가 고름. 🔶 팀원: `task_batch.py` REPLAN이 `args`를 `constraint`로 넘김 (패치 전달) |

@@ -150,6 +150,28 @@ def mark_extension(question: str, ops: list[dict]) -> list[dict]:
     return [{**o, "may_extend": True} if any(o is x for x in pick) else o for o in ops]
 
 
+PERIOD = re.compile(r"\d+\s*주")
+
+
+def restates_previous(ops: list[dict], previous_ops: list[dict]) -> bool:
+    """이번 질문이 앞 질문의 가정을 그대로 다시 말하는가 ("릴레이가 11/27에 들어온다면 PP-03을 …").
+    그러면 앞 질문에 이어서 묻는 말이다 — 모델이 follow_up을 빠뜨려도 앞 가정(예: MCU 1주 지연)을 잃지 않게 (6.52)."""
+    prev = [normalize(o) for o in previous_ops]
+    return any(normalize(o) in prev for o in ops)
+
+
+def plan_effect(before: dict, after: dict) -> dict:
+    """생산계획을 바꾸기 전·후 결품 비교 (decisions 6.52). (부품, 생산계획) 단위로 맞춘다 — 일정을 옮기면 날짜가 바뀐다.
+
+    resolved: 전에 있었는데 사라진 결품 / new: 새로 생긴 결품 / remaining: 그대로 남은 결품(전 수량 before_qty 포함)"""
+    key = lambda s: (s.get("item_id"), s.get("plan_id"))
+    b = {key(s): s for s in before.get("shortages", [])}
+    a = {key(s): s for s in after.get("shortages", [])}
+    return {"resolved": [s for k, s in b.items() if k not in a],
+            "new": [s for k, s in a.items() if k not in b],
+            "remaining": [{**s, "before_qty": b[k].get("qty")} for k, s in a.items() if k in b]}
+
+
 def scenario_ops(ops: list[dict], extend: list[dict], days: int) -> list[dict]:
     """장기화 대상 발주만 '원래 입고 예정일 + days'로 바꾼 가정. 나머지 가정(확정 지연 등)은 그대로 둔다."""
     dates = {e["po_id"]: (date.fromisoformat(e["base_due"]) + timedelta(days=days)).isoformat() for e in extend}

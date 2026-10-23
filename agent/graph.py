@@ -126,6 +126,8 @@ class AgentState(TypedDict, total=False):
     impact: dict | None                       # analyze_impact 결과 (변경 적용 후, 해결안 적용 전)
     extend: list[dict]                        # 지연이 더 길어질 수 있는 발주 [{po_id, base_due}] (6.50)
     scenarios: list[dict]                     # 장기화 대비 1·4·12주 결과 [{weeks, delay_days, due_dates, impact}]
+    compare_base: list[dict]                  # 이번 질문의 생산계획 변경을 뺀 가정 (바꾸기 전 비교용, 6.52)
+    plan_effect: dict | None                  # {resolved, new, remaining} 생산계획 변경 전·후 결품 비교
     current_impact: dict | None               # 가장 최근 DB + 아직 적용되지 않은 사용자 가정
     current_ops: list[dict]
     scope: list[str]                          # 최초 질문의 대상(품목|규칙); 임의로 범위를 넓히지 않음
@@ -524,15 +526,19 @@ async def classify_intent(state: AgentState) -> dict:
         if errors:
             return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
     ops = [W.normalize(o) for o in ops]
+    own_plan = {W.op_target(o) for o in ops if o["op"] in W.PLAN_OPS}   # 이번 질문이 바꾸는 생산계획 (6.52)
     intent = c.intent
     notices, inherited = [], None
+    follow_up = c.follow_up or bool(previous and W.restates_previous(ops, previous["whatif_ops"]))
     # 이어 묻기 (decisions 6.44): "그럼 해결 방법 만들어 줘"처럼 변경을 다시 말하지 않거나 "거기에 …"처럼 덧붙이면
     # 앞 작업의 가정에 이번 변경을 얹는다. 새 주제(follow_up 아님)는 앞 가정을 쓰지 않는다
-    if previous and previous["whatif_ops"] and intent in ("IMPACT", "ADJUST") and (c.follow_up or (intent == "ADJUST" and not ops)):
+    if previous and previous["whatif_ops"] and intent in ("IMPACT", "ADJUST") and (follow_up or (intent == "ADJUST" and not ops)):
         kept = [o for o in previous["whatif_ops"] if W.op_target(W.normalize(o)) not in {W.op_target(n) for n in ops}]
         ops = W.merge_ops(previous["whatif_ops"], ops)
         # 장기화 비교도 이어받는다: "그럼 12주까지 가면?"에 1·4·12주를 다시 보인다 (decisions 6.51, 변형 V8)
-        extend = extend or [e for e in previous.get("extend") or [] if e["po_id"] in {o.get("po_id") for o in ops}]
+        # 기간·장기화를 다시 물을 때만이다. "PP-03을 11/28로 옮기면?"에는 비교를 다시 붙이지 않는다 (6.52)
+        if W.PERIOD.search(state["question"]) or W.EXTEND_REQUEST.search(state["question"]):
+            extend = extend or [e for e in previous.get("extend") or [] if e["po_id"] in {o.get("po_id") for o in ops}]
         if kept:
             # 가정은 저장되지 않는다 — 무엇을 이어받았는지 답변에 밝힌다 (안전성 재현 1·3)
             inherited = "앞 질문의 가정을 이어서 계산했습니다: " + ", ".join(op_text(o, plans) for o in kept)
@@ -555,9 +561,12 @@ async def classify_intent(state: AgentState) -> dict:
                 return {**out, "intent": "CLARIFY", "clarify": "; ".join(errors)}
             intent = "IMPACT"
             notices = ["확정된 입고 지연을 기준으로 분석했습니다. 생산계획은 부서 요청함에서 변경안을 검증한 뒤 확정하세요."]
+    # 다른 가정(입고 지연 등) 위에서 생산계획을 바꿔 보는 질문이면 바꾸기 전과 비교한다 (6.52)
+    compare_base = [o for o in ops if W.op_target(o) not in own_plan] if intent == "IMPACT" and own_plan else []
     # notice는 해결안 실행 뒤 다시 쓰이므로(refresh_impact) 이어받은 가정은 따로 둔다
     return {**out, "intent": intent, "whatif_ops": ops, "notice": " / ".join(notices) or None, "inherited": inherited,
-            "extend": extend if intent == "IMPACT" else []}   # 장기화 비교는 분석만. 해결안은 확정 지연 기준 (6.50)
+            "extend": extend if intent == "IMPACT" else [],   # 장기화 비교는 분석만. 해결안은 확정 지연 기준 (6.50)
+            "compare_base": compare_base}
 
 
 MAX_PREVIOUS_TURNS = 3   # 가정을 찾아 거슬러 올라가는 앞 질문 수
@@ -656,7 +665,13 @@ async def tools(state: AgentState) -> dict:
                     updates["evidence_error"] = error
                     if state.get("extend"):
                         updates["scenarios"] = await delay_scenarios(state)
+                    if state.get("compare_base"):
+                        ok2, base = await call_tool(state, "analyze_impact", {"whatif": state["compare_base"]}, quiet=True)
+                        if ok2:
+                            updates["plan_effect"] = W.plan_effect(base, res)
             body = mask(res, state.get("role"))
+            if updates.get("plan_effect"):
+                body = {**body, "plan_effect": effect_lines(updates["plan_effect"], state["plans"])}
             if updates.get("scenarios"):
                 body = {**body, "scenarios": scenario_summary(updates["scenarios"], state["plans"])}
             content = json.dumps(body, ensure_ascii=False) if ok else res
@@ -677,6 +692,14 @@ async def delay_scenarios(state: dict) -> list[dict]:
         due = {o["po_id"]: o["new_due_date"] for o in ops if o.get("po_id") in {e["po_id"] for e in state["extend"]}}
         out.append({"weeks": days // 7, "delay_days": days, "due_dates": due, "impact": res})
     return out
+
+
+def effect_lines(effect: dict, plans: list[dict]) -> list[str]:
+    """생산계획 변경 효과 3줄: 해소 · 새로 생긴 결품 · 그대로 남은 결품 (6.52). 계산 결과만 옮긴다"""
+    short = lambda s: f"{plan_label(plans, s.get('plan_id'), s.get('plan_date'))} {item_label(s)} {s['qty']:,}개"
+    return [f"해소된 결품: {', '.join(short(s) for s in effect['resolved']) or '없음'}",
+            f"새로 생긴 결품: {', '.join(short(s) for s in effect['new']) or '없음'}",
+            f"그대로 남은 결품: {', '.join(short(s) for s in effect['remaining']) or '없음'}"]
 
 
 def shortage_key(s: dict) -> tuple:
@@ -1322,9 +1345,16 @@ def respond(state: AgentState) -> dict:
         if intent == "IMPACT" and impact:
             # 목록은 모델이 옮겨 적지 않고 계산 결과에서 그대로 붙인다. 모델은 결론·설명 문장만 (prompts/impact.md).
             # 실제 모델이 6건 중 5건만 옮기고 "새 발주로는 늦음"을 "주문할 수 없다"로 바꿔 쓴 적이 있다 (decisions 6.27)
-            answer = "\n\n".join(x for x in (lead_text(answer), chain_note(impact, state.get("whatif_ops"), plans)) if x)
+            if state.get("plan_effect"):   # 다른 가정 위에서 계획을 바꿔 본 질문: 연쇄 결품 대신 바꾸기 전과 비교 (6.52)
+                lines = effect_lines(state["plan_effect"], plans)
+                note = f"이 생산계획 변경의 효과 {len(lines)}건:\n" + "\n".join("- " + x for x in lines)
+            else:
+                note = chain_note(impact, state.get("whatif_ops"), plans)
+            answer = "\n\n".join(x for x in (lead_text(answer), note) if x)
             if any(impact.get(k) for k in ("shortages", "warnings", "excesses")):
                 answer = (answer + "\n\n" if answer else "") + describe_impact(impact, plans)
+            if any(o.get("op") in W.PLAN_OPS for o in state.get("whatif_ops") or []):
+                answer += "\n\n생산계획은 아직 변경되지 않았습니다. 결과를 확인한 뒤 생산관리자가 생산계획 화면에서 저장해야 합니다."
             if state.get("scenarios"):
                 lines = scenario_summary(state["scenarios"], plans)
                 answer += (f"\n\n장기화 대비 비교 {len(lines)}건:\n" + "\n".join("- " + x for x in lines)
@@ -1352,6 +1382,8 @@ def respond(state: AgentState) -> dict:
     result = {"intent": intent, "whatif": state.get("whatif_ops") or [], "impact": impact or None}
     if state.get("scenarios"):
         result["scenarios"] = state["scenarios"]   # 통보 기준 impact는 그대로, 비교만 덧붙인다 (contracts 49)
+    if state.get("plan_effect"):
+        result["plan_effect"] = state["plan_effect"]   # 바꾸기 전과 비교 (contracts 50)
     if state.get("coordination"):
         result["coordinationId"] = state["coordination"]["id"]
         result["plan_changes"] = state.get("plan_changes") or []
