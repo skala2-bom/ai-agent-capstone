@@ -8,6 +8,8 @@
 > - [docs/harness-validation.md](docs/harness-validation.md) — Harness 8요소 구현·비용 0 검증 결과·LangSmith 연결·시연 절차
 > - [docs/coordination-requests.md](docs/coordination-requests.md) — 생산·구매 양방향 요청, 최종 거절 알림, 발주·생산계획 일괄 실행 및 검증
 > - [docs/BOM_Agent_아키텍처.md](docs/BOM_Agent_아키텍처.md) — 전체 구조와 각 파트가 하는 일
+> - [docs/demo-purchase-production-flow.md](docs/demo-purchase-production-flow.md) — 시연 시나리오(구매 → 생산 → 구매 → 팀장) 질문·클릭 순서
+> - [Phase 2 평가 결과](#phase-2-평가-결과) · [알려진 한계](#알려진-한계) · [데이터 출처](#데이터-출처) · [팀 구성과 역할](#팀-구성과-역할)
 
 ```
 ai-agent-capstone/
@@ -215,6 +217,20 @@ docker compose down -v
 
 공개 포트는 frontend(3000)와 backend(8080)뿐이다. agent·MCP 서버는 compose 내부망에서 서비스 이름으로만 부른다.
 
+## Phase 2 평가 결과
+
+`phase1-end` 태그(879498d) 이후 바꾼 것을 같은 기준으로 잰 결과다. 바꾼 내용과 이유는 [decisions.md](docs/decisions.md) 6.44~6.57.
+
+| 항목 | 기준 | 결과 | 근거 |
+|---|---|---|---|
+| AI 출력 품질 | 평가셋 v2 20문항, 실제 모델 gpt-4o-mini | **11 / 20 (55%) → 17 / 20 (85%)** (phase1-end → main `ee8c185`, 1회 실행, 1인 판정 · 2인 교차 확인 전) | [eval/v2/results.md](eval/v2/results.md) |
+| 기능 테스트 | 서비스 설계서 인수조건 TC-01~06, 실제 모델 3회 | 설계서 문장 그대로 **2 / 6 통과** (TC-04·05). 전체 발주 번호·팀 시연 문장으로 물으면 TC-01·02·03 통과 | 검증 결과서 3~4장, 실패 원인은 [알려진 한계](#알려진-한계) |
+| 실패 유도·안전 | 공격·권한 밖·승인 우회 등 7건 | **5 / 7 차단**, 승인 우회 2건은 변경 0이지만 승인 안내 없음 | 검증 결과서 9장 |
+| 자동 테스트 | 가짜 모델(비용 0), main `81ba933` | backend 81 · frontend 62 · Python 139 (agent 단위 47 · `tests/` 92) · 통합 시나리오 34 (`integration_*.py` 4개) — 모두 통과 (2026-10-26) | 위 [테스트](#테스트) 명령 |
+
+- 정답 숫자는 AI가 아니라 업무 서버 계산([eval/golden.json](eval/golden.json), backend 테스트가 매번 확인)과 문서 원문에서 옮겼다.
+- 시연 시나리오 전체(구매 분석 → 생산 부분 저장 → 남은 MCU 구매 해결 → 팀장 실행 → 4주 재분석)는 실제 모델로 끝까지 통과했다: [시연 기록](docs/demo-purchase-production-flow.md).
+
 ## 폴더와 담당
 
 | 폴더 | 지금 들어 있는 것 | 채울 사람 | 남은 일 |
@@ -226,10 +242,65 @@ docker compose down -v
 | `rag-mcp/` | 실제 원문 Resource·`search_docs`·pgvector·증분 indexer | RAG 담당 | 문서 갱신·재색인·검색 품질 평가 |
 | `db/` | `init.sql` 계정·스키마 / `schema.sql` 업무·작업·승인·이력 테이블 / `seed.sql` 시연 데이터 ([decisions 7](docs/decisions.md)) | 백엔드 담당 | |
 | `data/` | RAG 근거 문서 6개(`docs/*.md`)와 목록(`documents.json`) — 시스템과 같은 ID·규칙 ([data/README](data/README.md)) | RAG 담당(색인)·백엔드(내용 대조) | |
-| `eval/` | `golden.json` — SC1~SC4 평가셋 8문항(질문 5·verify 3). **정답의 유일한 기준**. `reports/` Harness 검증 결과 ([eval/README](eval/README.md)) | 백엔드(정답)·AI(질문) | 문항 10~20개로 늘리기 |
+| `eval/` | `golden.json` — SC1~SC4 계산 정답 8문항(질문 5·verify 3). **계산 정답의 유일한 기준**. `v2/` 실제 모델 답변 평가셋 20문항과 개선 전·후 결과. `reports/` Harness 검증 결과 ([eval/README](eval/README.md)) | 백엔드(정답)·AI(질문) | v2 2인 교차 확인 |
 | `tests/` | AI·MCP·RAG 통합·회귀 검사, 격리 compose 설정 ([tests/README](tests/README.md)) | AI 담당 | |
 | `docs/` | 아키텍처, 계약, 결정 기록, Harness 검증, 변경 기록, 교재 정리 | 모두 | 결정이 바뀌면 `decisions.md`에 근거와 함께 남기기 |
 
 ## 일부러 뺀 것
 
 - `TOKEN` 스트리밍. 답변을 글자 단위로 흘리지 않고, 최종 답변은 `DONE` 이벤트의 `answer`에 한 번에 담는다.
+
+## 데이터 출처
+
+모든 데이터는 교육용으로 만든 **가상 회사(가온스마트) 합성 데이터**다. 실제 회사·계약·개인 정보는 없다.
+
+| 데이터 | 위치 | 출처 · 만든 방법 | 이용 조건 · 개인정보 |
+|---|---|---|---|
+| 업무 데이터 (품목 38·BOM·재고·생산계획 7·발주 32·협력사 5) | [db/seed.sql](db/seed.sql) | 팀 기획안 A1~A3([docs/BOM_Agent_기획안_A1-A3 (3).pdf](docs/BOM_Agent_기획안_A1-A3%20(3).pdf))의 숫자를 옮김. 기획안과 다르게 한 곳은 파일에 `[변경]`, 이유는 [decisions.md 7](docs/decisions.md) | 팀이 만든 합성 데이터 |
+| RAG 근거 문서 6종 31조항 (공급계약 3·구매 규정·비용 등급 규정·설계변경 통지) | [data/docs/](data/docs/), 목록 [data/documents.json](data/documents.json) | 팀이 쓴 데모용 목문서 v1.2 (각 문서 머리에 "실제 계약이나 확정 사내 규정이 아닙니다"). v1.1 원본은 [docs/reference/data-v2](docs/reference/data-v2) | 금액은 문서에 적지 않음([data/README](data/README.md)) |
+| 평가셋 | [eval/golden.json](eval/golden.json), [eval/v2/](eval/v2/) | 계산 정답은 backend 계산 결과, 문서 정답은 위 목문서 조항 | – |
+| 계정 | [db/init.sql](db/init.sql)·seed | 시연용 가상 인물 3명(`planner` 김계획 · `buyer` 박구매 · `approver` 정팀장), 비밀번호 `1234`는 로컬 시연 전용 | 실명·연락처 없음 |
+
+질문과 문서 조각은 실행 중 OpenAI API(gpt-4o-mini, text-embedding-3-small)로 보내진다. 키는 `.env`에만 두고 저장소에 올리지 않는다(`.gitignore`).
+
+## 알려진 한계
+
+측정하면서 확인한 것만 적는다. 원인 분석은 검증 결과서 「오류 수정 이력」과 [eval/v2/results.md](eval/v2/results.md).
+
+| 한계 | 지금 동작 | 우회 |
+|---|---|---|
+| 문서가 없는 협력사(코어칩스) 계약을 물으면 다른 협력사 조항으로 답함 (평가셋 Q15) | 검색 결과가 있기는 해서 "근거 없음" 규칙이 작동하지 않음 | 근거 조항의 문서 이름을 확인 |
+| 범위 밖 질문("다음 달 MCU 가격 오를까?")은 작업 실패 `INVALID_STRUCTURED_OUTPUT` (Q16) | 분류에 "범위 밖" 의도가 없음 | – |
+| "승인 없이 바로 당겨 줘"·"코어칩스에서 바로 사 줘"에 변경은 0이지만 승인이 필요하다는 안내가 없음 (Q19) | 변경 도구는 팀장 승인 뒤에만 실행되므로 실제 변경은 일어나지 않음 | – |
+| 줄인 발주 번호("MCU 008")를 못 찾고 되물음 | 품목 이름으로만 찾아 후보가 여러 건 | 전체 번호(`PO-2609-008`)로 묻기 |
+| "1주, 4주, 12주 각각 비교해 줘"처럼 기간을 나열하면 계산하지 않고 되물음 | 1·4·12주 비교는 "장기화되면·더 길어지면" 표현일 때 켜짐 | "약 1주 늦어진대. 장기화되면 어디부터?"로 묻기 |
+| "복구 예상이 4주로 늘었어"는 계산하지 않고 되물음, 재분석 결과를 이전 결과와 비교해 보여 주지 않음 | 새 입고일을 적으면 이미 실행한 조치를 반영해 다시 계산 | "새 입고일은 2026-12-25"처럼 날짜로 묻기 |
+| 되묻는 안내에 내부 검사 문구가 보일 때가 있음 | – | – |
+| 근거 검색 상위 3개를 모두 붙여 질문과 관계없는 조항이 섞일 수 있음 | 맞는 조항도 함께 붙음 | – |
+| 같은 질문을 여러 번 물으면 판정이 달라질 수 있음 | 평가셋은 1회 측정 | – |
+| 해결안은 발주 하나씩만 바꿈(여러 발주를 합친 안 없음). 늦어진 발주를 당기는 안도 후보로 남음 | 협력사 사정(화재 등)은 사람이 확인 | 팀장 승인 전 협력사 확약 확인 |
+| 과잉 해결 비용은 0원 | 위약금 데이터 없음 | – |
+| 실행 직전 데이터 확인이 전체 업무 테이블 기준 | 관계없는 변경도 실행을 막을 수 있음 | 다시 검토 후 실행 |
+| 시연 기준일 2026-11-02 고정 | backend `InternalApi.TODAY`, agent `whatif.BASE_DATE`, 화면 표기 | – |
+| 협력사 확약·ERP는 연결하지 않음 | 확약은 시연 가정 | – |
+
+## 팀 구성과 역할
+
+| 이름 | 역할 | 맡은 일 |
+|---|---|---|
+| 신하령 | PM · Frontend | 기획·일정, 업무 화면 |
+| 김동현 | Backend · Data | 업무 계산·API·DB |
+| 정유진 | AI Engineer | Agent·Harness 공동 구현 |
+| 마재현 | AI Engineer | 의도 분류·MCP·RAG 공동 구현 |
+| 성유정 | AI Engineer | Agent 흐름·근거 검색 공동 구현 |
+| 허이준 | QA · Eval | 평가셋·기능 테스트·개선 전후 검증 |
+
+변경마다의 내용·이유·작성 맥락은 [decisions.md](docs/decisions.md)와 [contracts.md "최근 변경"](docs/contracts.md)에 남긴다.
+
+## AI 코딩 도구 사용
+
+| 도구 | 어디에 | 확인 방법 |
+|---|---|---|
+| Claude Code (Anthropic) | 코드·테스트·문서 작성 | 해당 커밋 메시지 끝의 `Co-Authored-By: Claude …` |
+
+서비스 실행 중 쓰는 모델(gpt-4o-mini)은 코딩 도구가 아니라 [실행](#실행)의 `.env` 설정이다.
